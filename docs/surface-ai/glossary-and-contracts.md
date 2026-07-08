@@ -27,6 +27,9 @@
 | `TaskGraph` | 1.4 | design/milestone-01-foundation/1.4-runtime.md | DAG 任务图，节点为 `TaskNode`，边隐含在节点的 `dependencies` 字段中，递归拓扑遍历驱动执行 |
 | `PipelineExecutor` | 1.4 | design/milestone-01-foundation/1.4-runtime.md | 把 `TaskGraph` 节点分派到其所属阶段 `WorkerPool` 的执行引擎，不做业务语义判断 |
 | `WorkerPool` | 1.4 | design/milestone-01-foundation/1.4-runtime.md | 固定线程数的工作线程池，一个 Pipeline 阶段（Capture/Inference/Retrieval/Reason/IO）绑定一个独立实例，启动时创建、运行期不动态伸缩 |
+| `Logger` | 1.6 | design/milestone-01-foundation/1.6-cross-cutting.md | 按类别（category）持有的日志入口，封装 `spdlog::async_logger` + 独立后台 IO 线程，`Trace`/`Debug` 与 `Warning`+ 分两级队列采用不同溢出策略 |
+| `ConfigStore` | 1.6 | design/milestone-01-foundation/1.6-cross-cutting.md | 封装 yaml-cpp 解析 + `ConfigSchema` 校验的配置加载/查询/热重载入口，启动期一次性加载校验，热重载失败保留旧配置生效 |
+| `ErrorCode 分类表` | 1.6 | design/milestone-01-foundation/1.6-cross-cutting.md | 汇总 1.1-1.5 已提交的 `Core_*`/`Lifecycle_*`/`Plugin_*`/`Runtime_*`/`Memory_*` 前缀并新增 `Infra_*`，规定模块前缀命名规则与追加纪律，不重新定义 `ErrorInfo`/`Result<T>` 本身 |
 
 ## 2. 核心接口签名表
 
@@ -58,3 +61,6 @@
 | `GpuStreamQueue` | 1.4 | design/milestone-01-foundation/1.4-runtime.md | `class GpuStreamQueue final { static auto Create(size_t stream_count, PinnedPool&) noexcept -> Result<unique_ptr<GpuStreamQueue>>; auto EnqueueAsyncCopy(PooledPtr<uint8_t>, size_t, CopyDirection, stop_token) noexcept -> Task<void>; }`（封装 `cudaStream_t` 池，host-device 拷贝中转缓冲复用 1.5 批次 `PinnedPool`；GPU 完成回调经由专用 GPU Callback Thread 转发 `resume()`，不在驱动线程上直接恢复协程） |
 | `TaskGraph` | 1.4 | design/milestone-01-foundation/1.4-runtime.md | `class TaskGraph final { auto AddNode(TaskNode) noexcept -> Result<void>; auto NodeAt(TaskId) const noexcept -> Result<const TaskNode*>; auto RunToCompletion(PipelineExecutor&, stop_token) noexcept -> Task<void>; }`（节点 `struct TaskNode { TaskId id; TypeId stage_id; std::function<Task<void>()> work; std::vector<TaskId> dependencies; }`，拓扑执行递归驱动） |
 | `PipelineExecutor` | 1.4 | design/milestone-01-foundation/1.4-runtime.md | `class PipelineExecutor final { explicit PipelineExecutor(TaskScheduler&) noexcept; auto Dispatch(TypeId stage_id, Task<void>, stop_token) noexcept -> Task<void>; }` |
+| `Logger` | 1.6 | design/milestone-01-foundation/1.6-cross-cutting.md | `class Logger final { static auto Get(std::string_view category) -> Logger&; static auto InitializeGlobalSinks(std::filesystem::path) -> Result<void>; void SetLevel(LogLevel) noexcept; template<typename... Args> void Log(LogLevel, fmt::format_string<Args...>, Args&&...) noexcept; auto DroppedCount() const noexcept -> uint64_t; }`（8192 容量异步队列，`Trace`/`Debug` 满时丢弃并计数，`Warning`+ 绝不丢弃） |
+| `ConfigStore` | 1.6 | design/milestone-01-foundation/1.6-cross-cutting.md | `class ConfigStore final { explicit ConfigStore(ConfigSchema) noexcept; auto Load(std::filesystem::path) -> Result<void>; template<typename T> auto Get(std::string_view key) const -> Result<T>; auto EnableHotReload(stop_token) -> Result<void>; }`（热重载校验失败保留旧配置，不回退默认值） |
+| `ConfigSchema` | 1.6 | design/milestone-01-foundation/1.6-cross-cutting.md | `class ConfigSchema final { auto RequireField(std::string field_path, FieldValidator) -> ConfigSchema&; auto Validate(const YAML::Node&) const -> Result<void>; }`（手写字段校验函数集合，JSON-Schema 等价校验，不引入独立 schema 库） |
