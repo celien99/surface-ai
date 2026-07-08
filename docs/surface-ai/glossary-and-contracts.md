@@ -17,6 +17,8 @@
 | `LifecycleState` | 1.2 | design/milestone-01-foundation/1.2-core-lifecycle.md | 进程级生命周期状态机，`Created→Initialized→Running→Stopped→Destroyed` 严格线性迁移 |
 | `Factory` | 1.2 | design/milestone-01-foundation/1.2-core-lifecycle.md | 无状态工厂，`Create()` 每次产出全新实例，与 `Registry` 的已注册单例查找语义互补 |
 | `Registry` | 1.2 | design/milestone-01-foundation/1.2-core-lifecycle.md | 通用的按 `TypeId` 存储已注册 `TInterface` 实例的表，与 `Context` 正交，供 1.3 插件体系实例化为 `Registry<IPlugin>` 复用 |
+| `Plugin` | 1.3 | design/milestone-01-foundation/1.3-core-plugin-system.md | 动态库（`.so`）粒度的可插拔单元，随附 `plugin.yaml` 清单，区别于 1.2 批次编译期粒度的 `Module` |
+| `PluginManifest` | 1.3 | design/milestone-01-foundation/1.3-core-plugin-system.md | `plugin.yaml` 反序列化后的内存表示，含版本（`SemVer`）、能力标签、依赖声明、许可凭证 |
 
 ## 2. 核心接口签名表
 
@@ -31,3 +33,9 @@
 | `Context` | 1.2 | design/milestone-01-foundation/1.2-core-lifecycle.md | `class Context { auto RegisterModule(unique_ptr<IModule>) -> Result<void>; template<Reflectable T> requires derived_from<T, IService> auto Register(shared_ptr<T>) -> Result<void>; template<Reflectable T> requires derived_from<T, IService> auto Resolve() const -> Result<shared_ptr<T>>; auto Initialize() -> Result<void>; auto Start() -> Result<void>; auto Stop() -> Result<void>; auto CurrentState() const noexcept -> LifecycleState; }` |
 | `Factory<TInterface>` | 1.2 | design/milestone-01-foundation/1.2-core-lifecycle.md | `template<typename TInterface> class Factory { virtual auto Create() -> Result<unique_ptr<TInterface>> = 0; }` |
 | `Registry<TInterface>` | 1.2 | design/milestone-01-foundation/1.2-core-lifecycle.md | `template<typename TInterface> class Registry { auto Register(TypeId, shared_ptr<TInterface>) -> Result<void>; auto Resolve(TypeId) const -> Result<shared_ptr<TInterface>>; }`（本批次定稿签名，1.3 批次实例化 `Registry<IPlugin>` 直接复用，不重新定义） |
+| `IPlugin` | 1.3 | design/milestone-01-foundation/1.3-core-plugin-system.md | `class IPlugin : public IModule, public IReflectable { virtual auto GetManifest() const noexcept -> const PluginManifest& = 0; }` |
+| `PluginManager` | 1.3 | design/milestone-01-foundation/1.3-core-plugin-system.md | `class PluginManager { auto DiscoverManifests(path) -> Result<void>; auto Load(const std::string&) -> Result<void>; auto Resolve(TypeId) const -> Result<shared_ptr<IPlugin>>; }`（内部持有 `Registry<IPlugin>` 实例，实例化复用 1.2 批次模板，不重新定义） |
+| `ModuleManager` | 1.3 | design/milestone-01-foundation/1.3-core-plugin-system.md | `class ModuleManager { explicit ModuleManager(Context&); auto RegisterBuiltin(unique_ptr<IModule>) -> Result<void>; }`（管理编译期静态链接内建模块，与运行期动态加载的 `PluginManager` 边界见 1.3 批次 3. Design） |
+| `VersionManager` | 1.3 | design/milestone-01-foundation/1.3-core-plugin-system.md | `class VersionManager { static auto CheckCompatible(const VersionRange&, const SemVer&) noexcept -> Result<void>; }` |
+| `LicenseManager` | 1.3 | design/milestone-01-foundation/1.3-core-plugin-system.md | `class LicenseManager { auto Validate(std::string_view license_token) const -> Result<void>; }` |
+| `CapabilityManager` | 1.3 | design/milestone-01-foundation/1.3-core-plugin-system.md | `class CapabilityManager { auto RegisterKnownCapability(std::string) -> Result<void>; auto Validate(const std::vector<std::string>&) const -> Result<void>; }` |
