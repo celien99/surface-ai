@@ -24,6 +24,9 @@
 | `TensorPool` | 1.5 | design/milestone-01-foundation/1.5-memory.md | 按张量业务用途命名的 `GpuPool`/`PinnedPool` 实例（非独立类型），与 `ImagePool` 同理，仅构造参数不同 |
 | `GpuPool` | 1.5 | design/milestone-01-foundation/1.5-memory.md | `IMemoryPool` 在设备显存上的具体实现，内部封装 `cudaMalloc`/`cudaFree`，启动期一次性预分配 |
 | `PinnedPool` | 1.5 | design/milestone-01-foundation/1.5-memory.md | `IMemoryPool` 在锁页主机内存上的具体实现，内部封装 `cudaHostAlloc`/`cudaFreeHost`，启动期一次性预分配 |
+| `TaskGraph` | 1.4 | design/milestone-01-foundation/1.4-runtime.md | DAG 任务图，节点为 `TaskNode`，边隐含在节点的 `dependencies` 字段中，递归拓扑遍历驱动执行 |
+| `PipelineExecutor` | 1.4 | design/milestone-01-foundation/1.4-runtime.md | 把 `TaskGraph` 节点分派到其所属阶段 `WorkerPool` 的执行引擎，不做业务语义判断 |
+| `WorkerPool` | 1.4 | design/milestone-01-foundation/1.4-runtime.md | 固定线程数的工作线程池，一个 Pipeline 阶段（Capture/Inference/Retrieval/Reason/IO）绑定一个独立实例，启动时创建、运行期不动态伸缩 |
 
 ## 2. 核心接口签名表
 
@@ -49,3 +52,9 @@
 | `PinnedPool` | 1.5 | design/milestone-01-foundation/1.5-memory.md | `class PinnedPool final : public IMemoryPool { static auto Create(MemoryPoolConfig, ArenaAllocator&) noexcept -> Result<unique_ptr<PinnedPool>>; }`（封装 `cudaHostAlloc`/`cudaFreeHost`，启动期一次性预分配，运行期不再调用） |
 | `ArenaAllocator` | 1.5 | design/milestone-01-foundation/1.5-memory.md | `class ArenaAllocator final { explicit ArenaAllocator(size_t capacity_bytes) noexcept; template<typename T, typename... Args> auto Construct(Args&&...) noexcept -> Result<T*>; }`（池元数据独立分配来源，与业务数据 slab 区域不重叠） |
 | `PooledPtr<T>` | 1.5 | design/milestone-01-foundation/1.5-memory.md | `template<typename T> class PooledPtr final { auto Get() const noexcept -> T*; auto UseCount() const noexcept -> int; }`（内部 `std::atomic<int>` 引用计数，非 `std::shared_ptr`，析构时归还池而非 `delete`；仅可由 `IMemoryPool::Acquire` 构造） |
+| `TaskScheduler` | 1.4 | design/milestone-01-foundation/1.4-runtime.md | `class TaskScheduler final { explicit TaskScheduler(Registry<WorkerPool>&) noexcept; auto Submit(TypeId stage_id, coroutine_handle<>) noexcept -> Result<void>; }`（有界队列 + 拒绝新任务背压策略，队列满返回 `Runtime_QueueFull`） |
+| `Task<T>` | 1.4 | design/milestone-01-foundation/1.4-runtime.md | `template<typename T> using Task = std::coroutine_handle<TaskPromise<T>>;`（本框架所有异步工作函数的统一返回类型，`TaskPromise<T>` 持有 `Result<T>` 结果与 `std::stop_token`） |
+| `WorkerPool` | 1.4 | design/milestone-01-foundation/1.4-runtime.md | `class WorkerPool final { WorkerPool(size_t thread_count, size_t queue_capacity) noexcept; auto TryEnqueue(coroutine_handle<>) noexcept -> Result<void>; auto ThreadCount() const noexcept -> size_t; }`（固定线程数，构造后不支持动态调整） |
+| `GpuStreamQueue` | 1.4 | design/milestone-01-foundation/1.4-runtime.md | `class GpuStreamQueue final { static auto Create(size_t stream_count, PinnedPool&) noexcept -> Result<unique_ptr<GpuStreamQueue>>; auto EnqueueAsyncCopy(PooledPtr<uint8_t>, size_t, CopyDirection, stop_token) noexcept -> Task<void>; }`（封装 `cudaStream_t` 池，host-device 拷贝中转缓冲复用 1.5 批次 `PinnedPool`；GPU 完成回调经由专用 GPU Callback Thread 转发 `resume()`，不在驱动线程上直接恢复协程） |
+| `TaskGraph` | 1.4 | design/milestone-01-foundation/1.4-runtime.md | `class TaskGraph final { auto AddNode(TaskNode) noexcept -> Result<void>; auto RunToCompletion(PipelineExecutor&, stop_token) noexcept -> Task<void>; }`（节点 `struct TaskNode { TaskId id; std::function<Task<void>()> work; std::vector<TaskId> dependencies; }`，拓扑执行递归驱动） |
+| `PipelineExecutor` | 1.4 | design/milestone-01-foundation/1.4-runtime.md | `class PipelineExecutor final { explicit PipelineExecutor(TaskScheduler&) noexcept; auto Dispatch(TypeId stage_id, Task<void>, stop_token) noexcept -> Task<void>; }` |
