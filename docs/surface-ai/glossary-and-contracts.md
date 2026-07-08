@@ -64,3 +64,13 @@
 | `Logger` | 1.6 | design/milestone-01-foundation/1.6-cross-cutting.md | `class Logger final { static auto Get(std::string_view category) -> Logger&; static auto InitializeGlobalSinks(std::filesystem::path) -> Result<void>; void SetLevel(LogLevel) noexcept; template<typename... Args> void Log(LogLevel, fmt::format_string<Args...>, Args&&...) noexcept; auto DroppedCount() const noexcept -> uint64_t; }`（8192 容量异步队列，`Trace`/`Debug` 满时丢弃并计数，`Warning`+ 绝不丢弃） |
 | `ConfigStore` | 1.6 | design/milestone-01-foundation/1.6-cross-cutting.md | `class ConfigStore final { explicit ConfigStore(ConfigSchema) noexcept; auto Load(std::filesystem::path) -> Result<void>; template<typename T> auto Get(std::string_view key) const -> Result<T>; auto EnableHotReload(stop_token) -> Result<void>; }`（热重载校验失败保留旧配置，不回退默认值） |
 | `ConfigSchema` | 1.6 | design/milestone-01-foundation/1.6-cross-cutting.md | `class ConfigSchema final { auto RequireField(std::string field_path, FieldValidator) -> ConfigSchema&; auto Validate(const YAML::Node&) const -> Result<void>; }`（手写字段校验函数集合，JSON-Schema 等价校验，不引入独立 schema 库） |
+
+## 里程碑 1 复核记录
+
+- 复核日期：2026-07-08
+- 覆盖批次：1.1, 1.2, 1.3, 1.5, 1.4, 1.6（按实际执行顺序）
+- 结构校验：6 份设计文档（1.1-1.6）均为 14 节结构，编号与顺序一致。
+- 交叉引用校验：1.4 引用的 `GpuPool`/`PinnedPool`（来自 1.5）、`Registry<TInterface>`（来自 1.2）签名逐字核对一致；1.6 汇总的 `Core_*`/`Lifecycle_*`/`Plugin_*`/`Runtime_*`/`Memory_*` 错误码前缀与 1.1-1.5 各自文档中实际使用的具体成员名逐一核对一致，无改名、无冲突；1.1 中 `ErrorCode` 片段的截断注释（"完整分类表由1.6批次补完"）与 1.6 的汇总表内容一致，非遗留 bug。
+- 概念归属唯一性校验：概念归属表与接口签名表各自内部均无重复归属的概念/接口名称（同一名称同时出现在两张表中属于设计上允许的"概念+接口"配对，非重复）。
+- 结论：6 份设计文档满足里程碑 1 的全部结构与一致性要求，可作为后续里程碑（2-7）设计文档的接口基线。
+- 遗留事项：里程碑 1 spec 验证点（"启动空 task graph 走通调度/内存/日志/配置闭环"）需在后续代码实现阶段验证，本阶段仅完成设计文档；1.6 任务报告中提到的 1.1 `ErrorCode` 截断片段已在本次复核中确认为一致，非遗留问题。
