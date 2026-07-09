@@ -47,13 +47,25 @@ private:
         std::atomic<int> ref_count;
     };
 
-    static auto PopFreeList(std::atomic<Node*>& head) noexcept -> Node*;
-    static void PushFreeList(std::atomic<Node*>& head, Node* node) noexcept;
+    // Head pointer plus a monotonically increasing tag, per 1.5-memory.md §9:
+    // a bare atomic<Node*> head is vulnerable to ABA (a thread's stale cached
+    // `next` can be mistaken for still-valid state after other threads pop
+    // and re-push the same node). Packing a tag alongside the pointer into
+    // one atomically-compared 16-byte struct closes that window — any
+    // intervening push/pop changes the tag, so the CAS fails and retries
+    // instead of committing on a coincidentally-matching pointer value.
+    struct TaggedHead {
+        Node* pointer = nullptr;
+        std::uint64_t tag = 0;
+    };
+
+    static auto PopFreeList(std::atomic<TaggedHead>& head) noexcept -> Node*;
+    static void PushFreeList(std::atomic<TaggedHead>& head, Node* node) noexcept;
 
     sai::memory::MemoryPoolConfig config_;
     std::vector<std::uint8_t> region_;  // std::malloc'd stand-in for cudaMalloc'd device memory.
     std::vector<Node> nodes_;
-    std::atomic<Node*> free_list_head_{nullptr};
+    std::atomic<TaggedHead> free_list_head_{};
     std::atomic<std::size_t> available_count_;
 };
 

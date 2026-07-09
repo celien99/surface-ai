@@ -16,30 +16,34 @@ HostTestPool::HostTestPool(sai::memory::MemoryPoolConfig config) noexcept
         nodes_[i].ref_count.store(0, std::memory_order_relaxed);
         nodes_[i].next = (i + 1 < config.slab_count) ? &nodes_[i + 1] : nullptr;
     }
-    free_list_head_.store(config.slab_count > 0 ? &nodes_[0] : nullptr, std::memory_order_relaxed);
+    free_list_head_.store(TaggedHead{config.slab_count > 0 ? &nodes_[0] : nullptr, 0},
+                           std::memory_order_relaxed);
 }
 
 HostTestPool::~HostTestPool() noexcept = default;
 
 // Single CAS retry loop, no nested branching — reused verbatim from
-// 1.5-memory.md §9's PopFreeList shape.
-auto HostTestPool::PopFreeList(std::atomic<Node*>& head) noexcept -> Node* {
-    Node* old_head = head.load(std::memory_order_acquire);
-    while (old_head != nullptr &&
-           !head.compare_exchange_weak(old_head, old_head->next, std::memory_order_acq_rel,
-                                        std::memory_order_acquire)) {
-        // old_head is refreshed to the latest observed head by CAS; retry.
+// 1.5-memory.md §9's PopFreeList shape (tagged head, closes the ABA window).
+auto HostTestPool::PopFreeList(std::atomic<TaggedHead>& head) noexcept -> Node* {
+    TaggedHead old_head = head.load(std::memory_order_acquire);
+    while (old_head.pointer != nullptr &&
+           !head.compare_exchange_weak(
+               old_head, TaggedHead{old_head.pointer->next, old_head.tag + 1},
+               std::memory_order_acq_rel, std::memory_order_acquire)) {
+        // old_head is refreshed to the latest observed {pointer, tag} by CAS; retry.
     }
-    return old_head;
+    return old_head.pointer;
 }
 
 // Single CAS retry loop, no nested branching — reused verbatim from
-// 1.5-memory.md §9's PushFreeList shape.
-void HostTestPool::PushFreeList(std::atomic<Node*>& head, Node* node) noexcept {
-    Node* old_head = head.load(std::memory_order_acquire);
+// 1.5-memory.md §9's PushFreeList shape (tagged head, closes the ABA window).
+void HostTestPool::PushFreeList(std::atomic<TaggedHead>& head, Node* node) noexcept {
+    TaggedHead old_head = head.load(std::memory_order_acquire);
+    TaggedHead new_head;
     do {
-        node->next = old_head;
-    } while (!head.compare_exchange_weak(old_head, node, std::memory_order_acq_rel,
+        node->next = old_head.pointer;
+        new_head = TaggedHead{node, old_head.tag + 1};
+    } while (!head.compare_exchange_weak(old_head, new_head, std::memory_order_acq_rel,
                                           std::memory_order_acquire));
 }
 
