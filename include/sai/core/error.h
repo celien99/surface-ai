@@ -17,6 +17,10 @@ enum class ErrorCode : std::uint32_t {
     Memory_ArenaExhausted,
     Memory_RequestExceedsSlabSize,
     Memory_PoolExhausted,
+    Plugin_VersionIncompatible,
+    Plugin_CapabilityUnsupported,
+    Plugin_LicenseInvalid,
+    Plugin_CircularDependency,
     // The full cross-module error code taxonomy is completed by batch 1.6,
     // out of scope for this scaffold.
 };

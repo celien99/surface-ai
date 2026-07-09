@@ -1,0 +1,7 @@
+find_package(GTest CONFIG REQUIRED)
+
+add_executable(sai_plugin_manifest_validators_test manifest_validators_test.cpp)
+target_link_libraries(sai_plugin_manifest_validators_test PRIVATE sai::plugin GTest::gtest_main)
+
+include(GoogleTest)
+gtest_discover_tests(sai_plugin_manifest_validators_test)
