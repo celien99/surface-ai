@@ -6,3 +6,7 @@ target_link_libraries(sai_core_object_resource_test PRIVATE GTest::gtest_main)
 
 include(GoogleTest)
 gtest_discover_tests(sai_core_object_resource_test)
+
+add_executable(sai_core_type_registry_test type_registry_test.cpp)
+target_link_libraries(sai_core_type_registry_test PRIVATE sai::core GTest::gtest_main)
+gtest_discover_tests(sai_core_type_registry_test)
