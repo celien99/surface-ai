@@ -2,6 +2,7 @@ find_package(tl-expected CONFIG REQUIRED)
 
 add_library(sai_core STATIC
     type_registry.cpp
+    context.cpp
 )
 add_library(sai::core ALIAS sai_core)
 

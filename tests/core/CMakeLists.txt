@@ -16,3 +16,7 @@ find_package(GTest CONFIG REQUIRED)
 add_executable(sai_core_registry_factory_test registry_factory_test.cpp)
 target_link_libraries(sai_core_registry_factory_test PRIVATE sai::core GTest::gmock_main)
 gtest_discover_tests(sai_core_registry_factory_test)
+
+add_executable(sai_core_context_lifecycle_test context_lifecycle_test.cpp)
+target_link_libraries(sai_core_context_lifecycle_test PRIVATE sai::core GTest::gtest_main)
+gtest_discover_tests(sai_core_context_lifecycle_test)

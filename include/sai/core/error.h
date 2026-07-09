@@ -13,7 +13,7 @@ enum class ErrorCode : std::uint32_t {
     Core_ConstructionFailed,
     Core_TypeAlreadyRegistered,
     Core_TypeNotFound,
-    // Lifecycle_* is added by Task 5 (Context) when it needs its own error code.
+    Lifecycle_RegisterAfterAssembly,
     // The full cross-module error code taxonomy is completed by batch 1.6,
     // out of scope for this scaffold.
 };
