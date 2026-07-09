@@ -59,6 +59,16 @@ private:
         std::uint64_t tag = 0;
     };
 
+    // 1.5-memory.md §12: this scheme must be genuinely lock-free on the
+    // target platforms, with no silent runtime fallback to an internal
+    // mutex. is_always_lock_free is a compile-time guarantee (unlike the
+    // runtime is_lock_free() check on one instance) that every instance of
+    // atomic<TaggedHead> on this platform/ABI compiles to a real lock-free
+    // CAS, so a toolchain/ABI change that would break that guarantee fails
+    // the build instead of silently degrading.
+    static_assert(std::atomic<TaggedHead>::is_always_lock_free,
+                  "TaggedHead must be lock-free per 1.5-memory.md §12 — no silent fallback to a mutex");
+
     static auto PopFreeList(std::atomic<TaggedHead>& head) noexcept -> Node*;
     static void PushFreeList(std::atomic<TaggedHead>& head, Node* node) noexcept;
 
