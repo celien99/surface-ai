@@ -35,23 +35,23 @@ Design docs follow a fixed, non-negotiable 14-section structure (see any file in
 
 Decided in `docs/superpowers/specs/2026-07-07-surface-ai-framework-phased-plan-design.md` section 2 — do not introduce alternatives outside this table without updating that spec first:
 
-| Concern | Choice |
-|---|---|
-| Target platform | Ubuntu 22.04 x64 + NVIDIA GPU (Windows/ARM64 = future compat target, not optimized for now) |
-| Inference backend | TensorRT (FP16/INT8, dynamic shape, multi-GPU) |
-| Vector search | FAISS (in-process, optional faiss-gpu) |
-| Rule engine | self-built AST expression engine + YAML storage (no Lua — avoids arbitrary code execution) |
-| Config format | YAML (yaml-cpp) |
-| Concurrency | C++20 coroutines (`co_await`) + fixed per-stage worker pools; GPU work via CUDA Stream + callback resuming the coroutine. No Fiber, no hard-real-time scheduler. |
-| Logging | spdlog, async sinks |
-| Dependency management | vcpkg (manifest mode); CUDA/TensorRT vendor SDKs installed manually |
-| Error handling | `tl::expected` (aliased as `Result<T>`) is the default; exceptions only for construction/static-init failure |
-| Testing | GoogleTest + gmock |
-| GUI | Qt 6 |
-| PLC comms | OPC UA (open62541) |
-| Camera acquisition | GenICam / GigE Vision |
-| Knowledge metadata store | SQLite (in-process) |
-| Deployment | Docker + systemd, nvidia-container-toolkit |
+| Concern                  | Choice                                                                                                                                                           |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Target platform          | Ubuntu 22.04 x64 + NVIDIA GPU (Windows/ARM64 = future compat target, not optimized for now)                                                                      |
+| Inference backend        | TensorRT (FP16/INT8, dynamic shape, multi-GPU)                                                                                                                   |
+| Vector search            | FAISS (in-process, optional faiss-gpu)                                                                                                                           |
+| Rule engine              | self-built AST expression engine + YAML storage (no Lua — avoids arbitrary code execution)                                                                       |
+| Config format            | YAML (yaml-cpp)                                                                                                                                                  |
+| Concurrency              | C++20 coroutines (`co_await`) + fixed per-stage worker pools; GPU work via CUDA Stream + callback resuming the coroutine. No Fiber, no hard-real-time scheduler. |
+| Logging                  | spdlog, async sinks                                                                                                                                              |
+| Dependency management    | vcpkg (manifest mode); CUDA/TensorRT vendor SDKs installed manually                                                                                              |
+| Error handling           | `tl::expected` (aliased as `Result<T>`) is the default; exceptions only for construction/static-init failure                                                     |
+| Testing                  | GoogleTest + gmock                                                                                                                                               |
+| GUI                      | Qt 6                                                                                                                                                             |
+| PLC comms                | OPC UA (open62541)                                                                                                                                               |
+| Camera acquisition       | GenICam / GigE Vision                                                                                                                                            |
+| Knowledge metadata store | SQLite (in-process)                                                                                                                                              |
+| Deployment               | Docker + systemd, nvidia-container-toolkit                                                                                                                       |
 
 ## Milestone structure
 
@@ -81,3 +81,19 @@ If asked to implement this scaffold, follow that design doc's class names, metho
 ## Language
 
 Design docs and specs in this repo are written in Chinese (see existing docs under `docs/`). Match that when writing or editing design documents. Code identifiers, comments, and commit messages are in English (see existing commit history and interface signatures).
+
+## Git 提交规范
+
+约定式提交 + Gitmoji。格式：`<type>(<scope>): <emoji> <中文描述>`，emoji 与描述间**必须有一个空格**，直接用字符不用 `:code:`。允许的 type/emoji（**严禁自造**）：
+
+- `feat`: ✨ 新功能
+- `fix`: 🐛 修复 Bug
+- `chore`: 🔧 构建/工具/依赖/日常
+- `refactor`: ♻️ 重构（无新功能无修复）
+- `docs`: 📝 仅文档/注释
+- `style`: 💄 不影响含义的格式
+- `perf`: ⚡ 性能优化
+- `test`: ✅ 测试
+- `ci`: 💚 CI/CD 配置
+
+示例：`fix(cpp): 🐛 修复 frame_by_index 使用 std::map 字母序导致取错帧`
