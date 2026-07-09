@@ -14,6 +14,9 @@ enum class ErrorCode : std::uint32_t {
     Core_TypeAlreadyRegistered,
     Core_TypeNotFound,
     Lifecycle_RegisterAfterAssembly,
+    Memory_ArenaExhausted,
+    Memory_RequestExceedsSlabSize,
+    Memory_PoolExhausted,
     // The full cross-module error code taxonomy is completed by batch 1.6,
     // out of scope for this scaffold.
 };

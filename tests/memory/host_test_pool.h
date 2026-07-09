@@ -1,0 +1,60 @@
+#pragma once
+
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
+#include <vector>
+
+#include <sai/core/error.h>
+#include <sai/memory/memory_pool.h>
+#include <sai/memory/pooled_ptr.h>
+
+namespace sai::test {
+
+// Test-only IMemoryPool implementation backed by plain std::malloc'd host
+// memory, standing in for the real GpuPool/PinnedPool (Task 2's CUDA-gated
+// deliverable) so PooledPtr<uint8_t>'s reference-counting and pool-return
+// behavior can be exercised against a real pool on this machine. Uses the
+// same slab + lock-free free-list design 1.5-memory.md §9 specifies for the
+// real pools, just without cudaMalloc. Lives under tests/memory/ only — not
+// a public library type, not installed, not part of include/.
+class HostTestPool final : public sai::memory::IMemoryPool {
+public:
+    explicit HostTestPool(sai::memory::MemoryPoolConfig config) noexcept;
+    ~HostTestPool() noexcept override;
+
+    HostTestPool(const HostTestPool&) = delete;
+    HostTestPool& operator=(const HostTestPool&) = delete;
+    HostTestPool(HostTestPool&&) = delete;
+    HostTestPool& operator=(HostTestPool&&) = delete;
+
+    [[nodiscard]] auto Acquire(std::size_t bytes) noexcept
+        -> sai::Result<sai::memory::PooledPtr<std::uint8_t>> override;
+    void Release(sai::memory::PooledPtr<std::uint8_t>& handle) noexcept override;
+
+    [[nodiscard]] auto SlabSize() const noexcept -> std::size_t override;
+    [[nodiscard]] auto SlabCount() const noexcept -> std::size_t override;
+    [[nodiscard]] auto AvailableSlabCount() const noexcept -> std::size_t override;
+
+private:
+    // One node per slab: next pointer for the lock-free free-list stack,
+    // the slab's data pointer, and the refcount slot PooledPtr instances
+    // point at. Pre-allocated at construction time, never freed individually
+    // — a node is always either on the free list or held by some PooledPtr.
+    struct Node {
+        Node* next;
+        std::uint8_t* slab_ptr;
+        std::atomic<int> ref_count;
+    };
+
+    static auto PopFreeList(std::atomic<Node*>& head) noexcept -> Node*;
+    static void PushFreeList(std::atomic<Node*>& head, Node* node) noexcept;
+
+    sai::memory::MemoryPoolConfig config_;
+    std::vector<std::uint8_t> region_;  // std::malloc'd stand-in for cudaMalloc'd device memory.
+    std::vector<Node> nodes_;
+    std::atomic<Node*> free_list_head_{nullptr};
+    std::atomic<std::size_t> available_count_;
+};
+
+}  // namespace sai::test

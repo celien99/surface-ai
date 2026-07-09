@@ -1,0 +1,11 @@
+find_package(GTest CONFIG REQUIRED)
+
+add_executable(sai_memory_arena_allocator_test arena_allocator_test.cpp)
+target_link_libraries(sai_memory_arena_allocator_test PRIVATE sai::memory GTest::gtest_main)
+
+include(GoogleTest)
+gtest_discover_tests(sai_memory_arena_allocator_test)
+
+add_executable(sai_memory_pooled_ptr_test pooled_ptr_test.cpp host_test_pool.cpp)
+target_link_libraries(sai_memory_pooled_ptr_test PRIVATE sai::memory GTest::gtest_main)
+gtest_discover_tests(sai_memory_pooled_ptr_test)
