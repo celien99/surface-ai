@@ -11,7 +11,8 @@
 
 #include <spdlog/async.h>
 #include <spdlog/details/thread_pool.h>
-#include <spdlog/sinks/rotating_file_sink.h>
+
+#include <sai/infra/daily_and_size_sink.h>
 
 namespace sai::infra {
 
@@ -81,7 +82,7 @@ auto Logger::InitializeGlobalSinks(std::filesystem::path log_dir) -> Result<void
         std::filesystem::create_directories(log_dir);
         spdlog::init_thread_pool(kQueueCapacity, kBackgroundThreads);
         auto file = (log_dir / "surface-ai.log").string();
-        global.sinks.push_back(std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+        global.sinks.push_back(std::make_shared<DailyAndSizeRotatingFileSink_mt>(
             file, kMaxFileSize, kMaxFiles));
         global.initialized = true;
         return {};

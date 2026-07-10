@@ -10,6 +10,12 @@ target_link_libraries(sai_infra_config_store_test
     PRIVATE sai::infra GTest::gtest_main
 )
 
+add_executable(sai_infra_daily_and_size_sink_test daily_and_size_sink_test.cpp)
+target_link_libraries(sai_infra_daily_and_size_sink_test
+    PRIVATE sai::infra GTest::gtest_main
+)
+
 include(GoogleTest)
 gtest_discover_tests(sai_infra_logger_test)
 gtest_discover_tests(sai_infra_config_store_test)
+gtest_discover_tests(sai_infra_daily_and_size_sink_test)
