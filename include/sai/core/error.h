@@ -24,6 +24,7 @@ enum class ErrorCode : std::uint32_t {
     Runtime_QueueFull,
     Runtime_Cancelled,
     Runtime_NodeNotFound,
+    Infra_LogSinkInitFailed,
     // The full cross-module error code taxonomy is completed by batch 1.6,
     // out of scope for this scaffold.
 };

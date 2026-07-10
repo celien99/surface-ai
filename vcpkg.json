@@ -4,6 +4,7 @@
   "dependencies": [
     "tl-expected",
     "gtest",
-    "yaml-cpp"
+    "yaml-cpp",
+    "spdlog"
   ]
 }

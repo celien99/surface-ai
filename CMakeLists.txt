@@ -18,3 +18,6 @@ add_subdirectory(tests/plugin)
 
 add_subdirectory(src/runtime)
 add_subdirectory(tests/runtime)
+
+add_subdirectory(src/infra)
+add_subdirectory(tests/infra)
