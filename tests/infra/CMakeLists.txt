@@ -5,5 +5,11 @@ target_link_libraries(sai_infra_logger_test
     PRIVATE sai::infra GTest::gtest_main
 )
 
+add_executable(sai_infra_config_store_test config_store_test.cpp)
+target_link_libraries(sai_infra_config_store_test
+    PRIVATE sai::infra GTest::gtest_main
+)
+
 include(GoogleTest)
 gtest_discover_tests(sai_infra_logger_test)
+gtest_discover_tests(sai_infra_config_store_test)

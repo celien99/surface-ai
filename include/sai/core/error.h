@@ -25,6 +25,11 @@ enum class ErrorCode : std::uint32_t {
     Runtime_Cancelled,
     Runtime_NodeNotFound,
     Infra_LogSinkInitFailed,
+    Infra_ConfigFileNotFound,       // ConfigStore::Load 指定路径不存在
+    Infra_ConfigParseError,         // yaml-cpp 解析阶段失败（YAML 语法错误）
+    Infra_ConfigValidationFailed,   // ConfigSchema::Validate 未通过
+    Infra_ConfigKeyNotFound,        // ConfigStore::Get<T> 查询的键不存在
+    Infra_ConfigKeyTypeMismatch,    // 键存在但无法转换为请求的 T
     // The full cross-module error code taxonomy is completed by batch 1.6,
     // out of scope for this scaffold.
 };
