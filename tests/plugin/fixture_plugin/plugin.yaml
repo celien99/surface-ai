@@ -1,0 +1,9 @@
+name: sai.test.fixture-plugin
+library_path: fixture_plugin
+version:
+  major: 1
+  minor: 0
+  patch: 0
+capabilities: []
+dependencies: []
+license_token: fixture-plugin-license-token
