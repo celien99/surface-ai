@@ -189,6 +189,14 @@ auto PluginManager::LoadSingle(const PluginManifest& manifest) -> Result<void> {
                     // Register()'d into plugin_registry_, so converting it to
                     // IModule& below is a reference conversion only, no
                     // ownership transfer.
+                    // load_order_ is appended only after OnStart succeeds. If
+                    // OnInitialize or OnStart fails here, the instance stays in
+                    // plugin_registry_ (still Resolve-able) but is NOT in
+                    // load_order_, so Shutdown() will not call OnStop on it even
+                    // though OnInitialize may already have run. This asymmetry is
+                    // deliberate — consistent with 1.2's "no automatic rollback
+                    // on assembly failure" decision; ~PluginManager still reclaims
+                    // the instance via the exported DestroyPlugin path.
                     return instance->OnInitialize(context_)
                         .and_then([instance, this, type_id] {
                             return instance->OnStart(context_)

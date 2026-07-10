@@ -118,4 +118,30 @@ TEST(LoggerTest, DropCounterIsMonotonicUnderFlood) {
               << std::endl;
 }
 
+// SetLevel must round-trip: a level raised above a message's severity filters
+// it out, and lowering the level lets a subsequent same-severity message through.
+// Exercises the atomic min_level_ store/load across the SetLevel -> Log boundary.
+TEST(LoggerTest, SetLevelRoundTripsFilterDecision) {
+    ASSERT_TRUE(Logger::InitializeGlobalSinks(TestLogDir()).has_value());
+
+    Logger& logger = Logger::Get("SetLevelRoundTripCategory");
+
+    const std::string suppressed_token = "SUPPRESSED_AT_ERROR_LEVEL_d4e5f6";
+    const std::string admitted_token = "ADMITTED_AT_DEBUG_LEVEL_d4e5f6";
+
+    // Raise the threshold to Error: a Warning message is now below it and must
+    // be short-circuited before enqueue.
+    logger.SetLevel(LogLevel::Error);
+    logger.Log(LogLevel::Warning, "{}", suppressed_token);
+
+    // Lower the threshold to Debug: a Debug message now passes and reaches disk.
+    logger.SetLevel(LogLevel::Debug);
+    logger.Log(LogLevel::Error, "{}", admitted_token);
+
+    ASSERT_TRUE(WaitForToken(admitted_token, std::chrono::seconds(3)))
+        << "message at/above the lowered threshold must reach the sink";
+    EXPECT_EQ(ReadLogFile().find(suppressed_token), std::string::npos)
+        << "message below the raised threshold must be filtered out";
+}
+
 }  // namespace

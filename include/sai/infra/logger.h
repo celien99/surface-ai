@@ -67,7 +67,7 @@ public:
     template <typename... Args>
     void Log(LogLevel level, fmt::format_string<Args...> fmt_str,
              Args&&... args) noexcept {
-        if (level < min_level_) {
+        if (level < min_level_.load(std::memory_order_relaxed)) {
             return;
         }
         const auto& tier = (level >= LogLevel::Warning) ? block_tier_ : drop_tier_;
@@ -85,7 +85,9 @@ private:
            std::shared_ptr<spdlog::async_logger> drop_tier) noexcept;
 
     std::string category_;
-    LogLevel min_level_ = LogLevel::Info;
+    // Read on the Log() hot path, written by SetLevel() from another thread;
+    // atomic makes concurrent level changes a well-defined operation, not a race.
+    std::atomic<LogLevel> min_level_{LogLevel::Info};
     std::shared_ptr<spdlog::async_logger> block_tier_;  // Warning 及以上，block
     std::shared_ptr<spdlog::async_logger> drop_tier_;   // Trace/Debug，overrun_oldest
     std::atomic<std::uint64_t> dropped_count_{0};

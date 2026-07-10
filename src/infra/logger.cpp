@@ -117,7 +117,9 @@ auto Logger::Get(std::string_view category) -> Logger& {
     return *raw;
 }
 
-void Logger::SetLevel(LogLevel level) noexcept { min_level_ = level; }
+void Logger::SetLevel(LogLevel level) noexcept {
+    min_level_.store(level, std::memory_order_relaxed);
+}
 
 auto Logger::DroppedCount() const noexcept -> std::uint64_t {
     // spdlog centralizes overrun accounting in the shared thread_pool (there is
