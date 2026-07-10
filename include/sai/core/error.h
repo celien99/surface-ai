@@ -21,6 +21,9 @@ enum class ErrorCode : std::uint32_t {
     Plugin_CapabilityUnsupported,
     Plugin_LicenseInvalid,
     Plugin_CircularDependency,
+    Runtime_QueueFull,
+    Runtime_Cancelled,
+    Runtime_NodeNotFound,
     // The full cross-module error code taxonomy is completed by batch 1.6,
     // out of scope for this scaffold.
 };

@@ -15,3 +15,6 @@ add_subdirectory(tests/memory)
 
 add_subdirectory(src/plugin)
 add_subdirectory(tests/plugin)
+
+add_subdirectory(src/runtime)
+add_subdirectory(tests/runtime)
