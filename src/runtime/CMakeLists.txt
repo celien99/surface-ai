@@ -3,6 +3,8 @@ find_package(Threads REQUIRED)
 add_library(sai_runtime STATIC
     worker_pool.cpp
     task_scheduler.cpp
+    pipeline_executor.cpp
+    task_graph.cpp
 )
 add_library(sai::runtime ALIAS sai_runtime)
 
