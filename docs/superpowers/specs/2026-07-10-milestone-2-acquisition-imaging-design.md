@@ -104,9 +104,9 @@ class IDevice : public IPlugin {
 public:
     enum class State { Disconnected, Connected, Acquiring, Error };
 
-    [[nodiscard]] virtual auto Connect() -> Result<void> = 0;
-    [[nodiscard]] virtual auto Disconnect() -> Result<void> = 0;
-    [[nodiscard]] auto IsConnected() const noexcept -> bool = 0;
+    [[nodiscard]] virtual auto Connect() noexcept -> Result<void> = 0;
+    [[nodiscard]] virtual auto Disconnect() noexcept -> Result<void> = 0;
+    [[nodiscard]] virtual auto IsConnected() const noexcept -> bool = 0;
     [[nodiscard]] virtual auto SerialNumber() const noexcept -> std::string_view = 0;
     [[nodiscard]] virtual auto CurrentState() const noexcept -> State = 0;
 };
@@ -129,17 +129,17 @@ class ICamera : public IDevice {
 public:
     enum class TriggerMode { Software, Hardware, FreeRun };
 
-    [[nodiscard]] auto SetTriggerMode(TriggerMode mode) -> Result<void> = 0;
-    [[nodiscard]] auto StartAcquisition() -> Result<void> = 0;
-    [[nodiscard]] auto StopAcquisition() -> Result<void> = 0;
+    [[nodiscard]] virtual auto SetTriggerMode(TriggerMode mode) noexcept -> Result<void> = 0;
+    [[nodiscard]] virtual auto StartAcquisition() noexcept -> Result<void> = 0;
+    [[nodiscard]] virtual auto StopAcquisition() noexcept -> Result<void> = 0;
 
     // 回调在采集线程内调用，实现方必须立即返回，仅做 Push，不得阻塞。
     using FrameCallback = std::function<void(RawImage)>;
-    [[nodiscard]] auto RegisterFrameCallback(FrameCallback callback) -> Result<void> = 0;
+    [[nodiscard]] virtual auto RegisterFrameCallback(FrameCallback callback) noexcept -> Result<void> = 0;
 
-    [[nodiscard]] auto SetExposureTime(std::chrono::microseconds us) -> Result<void> = 0;
-    [[nodiscard]] auto SetGain(float db) noexcept -> Result<void> = 0;
-    [[nodiscard]] auto SetROI(Rect region) -> Result<void> = 0;
+    [[nodiscard]] virtual auto SetExposureTime(std::chrono::microseconds us) noexcept -> Result<void> = 0;
+    [[nodiscard]] virtual auto SetGain(float db) noexcept -> Result<void> = 0;
+    [[nodiscard]] virtual auto SetROI(Rect region) noexcept -> Result<void> = 0;
 };
 
 }  // namespace sai::device
@@ -154,16 +154,61 @@ namespace sai::device {
 
 // 工业光源控制器通常是多通道物理盒子，每条产线上的光照条件不理想 —
 // 此接口适配现实中的硬件能力，不支持假设具有实验室级别的均匀精确调光。
-class ILightController final : public IDevice {
+class ILightController : public IDevice {
 public:
     enum class StrobeMode { Continuous, OnTrigger, Off };
 
-    [[nodiscard]] auto ChannelCount() const noexcept -> int = 0;
-    [[nodiscard]] auto SetIntensity(int channel, float intensity) noexcept -> Result<void> = 0;
-    [[nodiscard]] auto GetIntensity(int channel) const noexcept -> Result<float> = 0;
-    [[nodiscard]] auto Enable(int channel) noexcept -> Result<void> = 0;
-    [[nodiscard]] auto Disable(int channel) noexcept -> Result<void> = 0;
-    [[nodiscard]] auto SetStrobeMode(int channel, StrobeMode mode) noexcept -> Result<void> = 0;
+    [[nodiscard]] virtual auto ChannelCount() const noexcept -> int = 0;
+    [[nodiscard]] virtual auto SetIntensity(int channel, float intensity) noexcept -> Result<void> = 0;
+    [[nodiscard]] virtual auto GetIntensity(int channel) const noexcept -> Result<float> = 0;
+    [[nodiscard]] virtual auto Enable(int channel) noexcept -> Result<void> = 0;
+    [[nodiscard]] virtual auto Disable(int channel) noexcept -> Result<void> = 0;
+    [[nodiscard]] virtual auto SetStrobeMode(int channel, StrobeMode mode) noexcept -> Result<void> = 0;
+};
+
+}  // namespace sai::device
+```
+
+```cpp
+// ring_buffer.h — 相机回调线程 → WorkerPool 线程之间的帧缓冲
+#pragma once
+#include <cstddef>
+#include <mutex>
+#include <optional>
+#include <vector>
+
+namespace sai::device {
+
+// 固定容量的环形缓冲，满时覆盖最旧元素（见 3.3 Design：丢旧帧比背压更可接受）。
+// 单生产者（FrameCallback，采集线程）、单/多消费者（WorkerPool 线程）均安全；
+// T 要求可移动（RawImage 等 Image 子类满足）。容量在构造时固定，运行期不重新分配。
+template <typename T>
+class RingBuffer final {
+public:
+    explicit RingBuffer(std::size_t capacity) noexcept;
+
+    // 回调线程内调用：capacity 已满时覆盖最旧的未消费元素并递增 dropped_count_，
+    // 不阻塞、不返回错误——本类不对外暴露背压路径。
+    auto Push(T item) noexcept -> void;
+
+    // Worker 线程内调用：缓冲为空返回 std::nullopt，不阻塞等待。
+    [[nodiscard]] auto TryPop() noexcept -> std::optional<T>;
+
+    [[nodiscard]] auto Capacity() const noexcept -> std::size_t { return capacity_; }
+    [[nodiscard]] auto Size() const noexcept -> std::size_t;
+    [[nodiscard]] auto DroppedCount() const noexcept -> std::size_t { return dropped_count_; }
+
+    RingBuffer(const RingBuffer&) = delete;
+    auto operator=(const RingBuffer&) -> RingBuffer& = delete;
+
+private:
+    std::vector<std::optional<T>> slots_;
+    std::size_t capacity_;
+    std::size_t head_ = 0;  // 下一个 Push 写入位
+    std::size_t tail_ = 0;  // 下一个 TryPop 读取位
+    std::size_t count_ = 0;
+    std::size_t dropped_count_ = 0;
+    mutable std::mutex mutex_;  // 容量小（帧级，通常 <= 8），互斥锁足够，不引入无锁结构
 };
 
 }  // namespace sai::device
@@ -203,7 +248,9 @@ public:
 ### 3.6 Data Structure
 
 ```cpp
-// Rect — 设备层和影像层共用
+// Rect — 定义于 device.h（IDevice/ICamera 同一头文件内，故 3.4 的 camera.h 通过其
+// #include <sai/device/device.h> 已可见 Rect，无需单独 include）；设备层和影像层共用，
+// 4.6 的 sai::image::Rect 是本类型的 using 别名。
 struct Rect {
     std::size_t x = 0;
     std::size_t y = 0;
@@ -330,7 +377,7 @@ co_await gpu_queue.EnqueueAsyncCopy(transit, size, HostToDevice, token);
 
 // DtoH 路径
 co_await gpu_queue.EnqueueAsyncCopy(transit, size, DeviceToHost, token);
-auto result = SurfaceImage::FromPinned(transit); // ← 排空（调用方职责）
+auto result = SurfaceImage::FromPinned(std::move(transit), meta); // ← 排空（调用方职责）
 ```
 
 ### 4.4 Interfaces
@@ -362,14 +409,20 @@ struct ImageMeta {
     std::uint32_t frame_index = 0;
 };
 
-// Image 继承 Resource（1.1）——像素缓冲独占所有权，移动不拷贝
+// Image 继承 Resource（1.1）——像素缓冲独占所有权，移动不拷贝。
+// 抽象基类：构造函数 protected，只能通过 RawImage/SurfaceImage/GpuImage 的具名工厂函数间接构造，
+// 跨类型的通用消费路径（PreprocessFn/ROI::Apply/IImporter::ImportImage）统一以
+// std::unique_ptr<Image> 传递，避免按值传递切片丢失子类私有的 owner_pool_。
 class Image : public Resource {
 public:
     [[nodiscard]] auto Meta() const noexcept -> const ImageMeta& { return meta_; }
     [[nodiscard]] auto Data() const noexcept -> const std::uint8_t* { return data_; }
     [[nodiscard]] auto Data() noexcept -> std::uint8_t* { return data_; }
     [[nodiscard]] auto SizeBytes() const noexcept -> std::size_t { return size_bytes_; }
-    auto Release() noexcept -> void;
+
+    // Resource（1.1）纯虚契约：data_ != nullptr 即视为持有有效缓冲。
+    [[nodiscard]] auto IsValid() const noexcept -> bool override { return data_ != nullptr; }
+    auto Release() noexcept -> void override;
 
 protected:
     Image(std::uint8_t* data, std::size_t size_bytes, ImageMeta meta) noexcept;
@@ -393,6 +446,8 @@ class RawImage final : public Image {
 public:
     [[nodiscard]] static auto FromPool(IMemoryPool& pool, ImageMeta meta) noexcept
         -> Result<RawImage>;
+    // 调用方自持有缓冲（例如测试夹具/内存映射文件），本实例不持有 PooledPtr，
+    // 析构时不触发任何池归还——data 的生命周期完全由调用方管理。
     [[nodiscard]] static auto FromBuffer(std::uint8_t* data, std::size_t size_bytes,
                                          ImageMeta meta) noexcept -> RawImage;
 
@@ -403,9 +458,12 @@ public:
     auto operator=(const RawImage&) -> RawImage& = delete;
 
 private:
-    RawImage(std::uint8_t* data, std::size_t size_bytes, ImageMeta meta,
-             IMemoryPool* owner_pool) noexcept;
-    IMemoryPool* owner_pool_ = nullptr;
+    // 持有实际的 PooledPtr<uint8_t> 句柄（而非裸 IMemoryPool* + 裸数据指针）——
+    // IMemoryPool::Release 要求传入具体句柄以定位 slab 元数据中的引用计数槽，
+    // 裸指针无法归还给池；FromBuffer 路径下 buffer_ 保持默认空句柄。
+    explicit RawImage(sai::memory::PooledPtr<std::uint8_t> buffer, ImageMeta meta) noexcept;
+    RawImage(std::uint8_t* data, std::size_t size_bytes, ImageMeta meta) noexcept;  // FromBuffer 专用
+    sai::memory::PooledPtr<std::uint8_t> buffer_{};
 };
 
 }  // namespace sai::image
@@ -422,7 +480,7 @@ class SurfaceImage final : public Image {
 public:
     [[nodiscard]] static auto FromPool(IMemoryPool& pool, ImageMeta meta) noexcept
         -> Result<SurfaceImage>;
-    [[nodiscard]] static auto FromPinned(PooledPtr<std::uint8_t> pinned) noexcept
+    [[nodiscard]] static auto FromPinned(PooledPtr<std::uint8_t> pinned, ImageMeta meta) noexcept
         -> SurfaceImage;
 
     SurfaceImage(SurfaceImage&&) noexcept = default;
@@ -432,9 +490,9 @@ public:
     auto operator=(const SurfaceImage&) -> SurfaceImage& = delete;
 
 private:
-    SurfaceImage(std::uint8_t* data, std::size_t size_bytes, ImageMeta meta,
-                 IMemoryPool* owner_pool) noexcept;
-    IMemoryPool* owner_pool_ = nullptr;
+    // 见 raw_image.h 同名注释：持有 PooledPtr<uint8_t> 而非裸指针，析构自动归还池。
+    explicit SurfaceImage(sai::memory::PooledPtr<std::uint8_t> buffer, ImageMeta meta) noexcept;
+    sai::memory::PooledPtr<std::uint8_t> buffer_{};
 };
 
 }  // namespace sai::image
@@ -459,9 +517,10 @@ public:
     auto operator=(const GpuImage&) -> GpuImage& = delete;
 
 private:
-    GpuImage(std::uint8_t* device_data, std::size_t size_bytes, ImageMeta meta,
-             IMemoryPool* owner_pool) noexcept;
-    IMemoryPool* owner_pool_ = nullptr;
+    // 见 raw_image.h 同名注释：持有 PooledPtr<uint8_t>（底层为 GpuPool 分配的设备内存），
+    // 析构自动归还池，不裸持有 IMemoryPool 指针。
+    explicit GpuImage(sai::memory::PooledPtr<std::uint8_t> device_buffer, ImageMeta meta) noexcept;
+    sai::memory::PooledPtr<std::uint8_t> buffer_{};
 };
 
 }  // namespace sai::image
@@ -471,14 +530,19 @@ private:
 // preprocess.h — 预处理步骤
 #pragma once
 #include <functional>
+#include <memory>
 #include <vector>
 #include <sai/core/error.h>
 #include <sai/image/image.h>
 
 namespace sai::image {
 
-// 预处理步骤：Image → Image，失败返回错误
-using PreprocessFn = std::function<auto(Image) -> Result<Image>>;
+// 预处理步骤：unique_ptr<Image> → unique_ptr<Image>，失败返回错误。
+// 按 unique_ptr 传递而非按值传递 Image——Image 是抽象基类且构造函数 protected，
+// 按值传递会切片并丢失 RawImage/SurfaceImage/GpuImage 各自持有的 PooledPtr<uint8_t>
+// （池归还所必需），unique_ptr<Image> 保留动态类型与所有权，无切片风险。
+using PreprocessFn =
+    std::function<auto(std::unique_ptr<Image>) -> Result<std::unique_ptr<Image>>>;
 
 // 将 steps 顺序串联，任一步骤失败则短路返回
 [[nodiscard]] auto Compose(std::vector<PreprocessFn> steps) -> PreprocessFn;
@@ -527,7 +591,8 @@ struct ROI {
     std::vector<Rect> regions;
     [[nodiscard]] auto IsEmpty() const noexcept -> bool { return regions.empty(); }
     [[nodiscard]] auto BoundingBox() const noexcept -> Rect;
-    [[nodiscard]] static auto Apply(const Image& src, const ROI& roi) -> Result<Image>;
+    [[nodiscard]] static auto Apply(const Image& src, const ROI& roi)
+        -> Result<std::unique_ptr<Image>>;
 };
 
 }  // namespace sai::image
@@ -648,6 +713,7 @@ WorkerPool 线程 → PreprocessChain:
 #include <string_view>
 #include <vector>
 #include <sai/core/error.h>
+#include <sai/device/device.h>  // Rect
 #include <sai/image/surface_image.h>
 #include <sai/plugin/plugin.h>
 
@@ -673,7 +739,8 @@ class IExporter : public IPlugin {
 public:
     [[nodiscard]] virtual auto Export(const InspectionResult& result,
                                       std::filesystem::path output_dir,
-                                      const SurfaceImage* annotated_image) -> Result<void> = 0;
+                                      const SurfaceImage* annotated_image) noexcept
+        -> Result<void> = 0;
     [[nodiscard]] virtual auto FormatName() const noexcept -> std::string_view = 0;
 };
 
@@ -684,7 +751,9 @@ public:
 // importer.h — 导入插件接口
 #pragma once
 #include <filesystem>
+#include <memory>
 #include <string_view>
+#include <yaml-cpp/yaml.h>
 #include <sai/core/error.h>
 #include <sai/image/image.h>
 #include <sai/plugin/plugin.h>
@@ -694,7 +763,7 @@ namespace sai::io {
 class IImporter : public IPlugin {
 public:
     [[nodiscard]] virtual auto ImportImage(std::filesystem::path file_path) noexcept
-        -> Result<Image> = 0;
+        -> Result<std::unique_ptr<Image>> = 0;
     [[nodiscard]] virtual auto ImportMetadata(std::filesystem::path file_path) noexcept
         -> Result<YAML::Node> = 0;
     [[nodiscard]] virtual auto FormatName() const noexcept -> std::string_view = 0;
@@ -711,7 +780,8 @@ class JsonExporter final : public IExporter {
 public:
     [[nodiscard]] auto Export(const InspectionResult& result,
                               std::filesystem::path output_dir,
-                              const SurfaceImage* annotated_image) -> Result<void> override;
+                              const SurfaceImage* annotated_image) noexcept
+        -> Result<void> override;
     [[nodiscard]] auto FormatName() const noexcept -> std::string_view override
     { return "json_report"; }
 
@@ -729,7 +799,8 @@ private:
 // basic_importer.h — 默认导入实现
 class BasicImporter final : public IImporter {
 public:
-    [[nodiscard]] auto ImportImage(std::filesystem::path) noexcept -> Result<Image> override;
+    [[nodiscard]] auto ImportImage(std::filesystem::path) noexcept
+        -> Result<std::unique_ptr<Image>> override;
     [[nodiscard]] auto ImportMetadata(std::filesystem::path) noexcept -> Result<YAML::Node> override;
     [[nodiscard]] auto FormatName() const noexcept -> std::string_view override
     { return "basic_import"; }
