@@ -21,3 +21,6 @@ add_subdirectory(tests/runtime)
 
 add_subdirectory(src/infra)
 add_subdirectory(tests/infra)
+
+add_subdirectory(src/device)
+add_subdirectory(tests/device)

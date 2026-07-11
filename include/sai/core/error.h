@@ -30,8 +30,9 @@ enum class ErrorCode : std::uint32_t {
     Infra_ConfigValidationFailed,   // ConfigSchema::Validate 未通过
     Infra_ConfigKeyNotFound,        // ConfigStore::Get<T> 查询的键不存在
     Infra_ConfigKeyTypeMismatch,    // 键存在但无法转换为请求的 T
-    // The full cross-module error code taxonomy is completed by batch 1.6,
-    // out of scope for this scaffold.
+    Device_ConnectionFailed,
+    Device_NotConnected,
+    Device_AcquisitionInProgress,
 };
 
 struct ErrorInfo {
