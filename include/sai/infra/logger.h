@@ -10,6 +10,7 @@
 
 #include <spdlog/async_logger.h>
 #include <spdlog/common.h>
+#include <spdlog/details/thread_pool.h>
 #include <spdlog/fmt/fmt.h>
 #include <spdlog/spdlog.h>
 
@@ -79,10 +80,14 @@ public:
 
     [[nodiscard]] auto DroppedCount() const noexcept -> std::uint64_t;
 
+    [[nodiscard]] static auto DroppedCount(std::string_view category)
+        -> std::uint64_t;
+
 private:
     Logger(std::string category,
            std::shared_ptr<spdlog::async_logger> block_tier,
-           std::shared_ptr<spdlog::async_logger> drop_tier) noexcept;
+           std::shared_ptr<spdlog::async_logger> drop_tier,
+           std::shared_ptr<spdlog::details::thread_pool> drop_pool) noexcept;
 
     std::string category_;
     // Read on the Log() hot path, written by SetLevel() from another thread;
@@ -90,7 +95,7 @@ private:
     std::atomic<LogLevel> min_level_{LogLevel::Info};
     std::shared_ptr<spdlog::async_logger> block_tier_;  // Warning 及以上，block
     std::shared_ptr<spdlog::async_logger> drop_tier_;   // Trace/Debug，overrun_oldest
-    std::atomic<std::uint64_t> dropped_count_{0};
+    std::shared_ptr<spdlog::details::thread_pool> drop_pool_;
 };
 
 }  // namespace sai::infra

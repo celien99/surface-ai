@@ -18,9 +18,9 @@ namespace sai::infra {
 
 namespace {
 
-// Process-global shared sink set + init guard. Both tiers of every category
-// share this one sink set and the one spdlog::thread_pool created below, so the
-// whole process has a single background IO thread pool (see design §9).
+// Process-global shared sink set + init guard. All tiers of every category
+// share this sink set; the block tier shares one spdlog::thread_pool initialized
+// below, while each category's drop tier gets its own per-category pool (D2).
 struct GlobalState {
     std::mutex init_mutex;
     bool initialized = false;
@@ -46,12 +46,14 @@ auto Categories() noexcept -> CategoryTable& {
     return table;
 }
 
-auto MakeTier(std::string name, spdlog::async_overflow_policy policy)
+auto MakeTier(std::string name,
+              std::shared_ptr<spdlog::details::thread_pool> pool,
+              spdlog::async_overflow_policy policy)
     -> std::shared_ptr<spdlog::async_logger> {
     auto& global = Global();
     auto logger = std::make_shared<spdlog::async_logger>(
         std::move(name), global.sinks.begin(), global.sinks.end(),
-        spdlog::thread_pool(), policy);
+        std::move(pool), policy);
     // Level gating is owned by Logger::min_level_; let spdlog pass everything
     // through so the two policies are the only routing spdlog performs.
     logger->set_level(spdlog::level::trace);
@@ -67,10 +69,12 @@ constexpr std::size_t kMaxFiles = 10;
 
 Logger::Logger(std::string category,
                std::shared_ptr<spdlog::async_logger> block_tier,
-               std::shared_ptr<spdlog::async_logger> drop_tier) noexcept
+               std::shared_ptr<spdlog::async_logger> drop_tier,
+               std::shared_ptr<spdlog::details::thread_pool> drop_pool) noexcept
     : category_(std::move(category)),
       block_tier_(std::move(block_tier)),
-      drop_tier_(std::move(drop_tier)) {}
+      drop_tier_(std::move(drop_tier)),
+      drop_pool_(std::move(drop_pool)) {}
 
 auto Logger::InitializeGlobalSinks(std::filesystem::path log_dir) -> Result<void> {
     auto& global = Global();
@@ -108,12 +112,18 @@ auto Logger::Get(std::string_view category) -> Logger& {
     if (auto it = table.entries.find(key); it != table.entries.end()) {
         return *it->second;
     }
-    auto block = MakeTier(key + ":block", spdlog::async_overflow_policy::block);
-    auto drop = MakeTier(key + ":drop", spdlog::async_overflow_policy::overrun_oldest);
+    auto block_pool = spdlog::thread_pool();  // shared pool for block tier
+    auto drop_pool = std::make_shared<spdlog::details::thread_pool>(
+        kQueueCapacity, kBackgroundThreads);
+    auto block = MakeTier(key + ":block", block_pool,
+                          spdlog::async_overflow_policy::block);
+    auto drop = MakeTier(key + ":drop", drop_pool,
+                         spdlog::async_overflow_policy::overrun_oldest);
     // Warning+ is low-frequency and must survive a crash: flush it to disk on
     // every message. Trace/Debug stays buffered (high-frequency, loss-tolerant).
     block->flush_on(spdlog::level::warn);
-    auto* raw = new Logger(key, std::move(block), std::move(drop));
+    auto* raw = new Logger(key, std::move(block), std::move(drop),
+                           std::move(drop_pool));
     table.entries.emplace(std::move(key), std::unique_ptr<Logger>(raw));
     return *raw;
 }
@@ -123,13 +133,17 @@ void Logger::SetLevel(LogLevel level) noexcept {
 }
 
 auto Logger::DroppedCount() const noexcept -> std::uint64_t {
-    // spdlog centralizes overrun accounting in the shared thread_pool (there is
-    // no per-logger drop signal in its public API); surface that number. Only
-    // drop_tier_ (overrun_oldest) can increment it — block_tier_ never overruns.
-    if (auto pool = spdlog::thread_pool()) {
-        return static_cast<std::uint64_t>(pool->overrun_counter());
+    // Each Logger instance owns its drop tier's thread_pool, so overrun_counter()
+    // is genuinely per-category. (Milestone-1 used a single shared pool, which
+    // made the counter process-wide — debt D2.)
+    if (drop_pool_) {
+        return static_cast<std::uint64_t>(drop_pool_->overrun_counter());
     }
-    return dropped_count_.load(std::memory_order_relaxed);
+    return 0;
+}
+
+auto Logger::DroppedCount(std::string_view category) -> std::uint64_t {
+    return Get(category).DroppedCount();
 }
 
 }  // namespace sai::infra
