@@ -2,6 +2,8 @@ find_package(tl-expected CONFIG REQUIRED)
 
 add_library(sai_embedding STATIC
     embedding.cpp
+    dimension_reducer.cpp
+    feature_cache.cpp
     patch_embedder.cpp
     global_embedder.cpp
 )
