@@ -30,3 +30,5 @@ add_subdirectory(tests/image)
 
 add_subdirectory(src/io)
 add_subdirectory(tests/io)
+
+add_subdirectory(tests/integration)

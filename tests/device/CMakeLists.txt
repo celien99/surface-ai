@@ -12,5 +12,5 @@ add_executable(sai_device_interface_test
     fake_camera.cpp
     fake_light_controller.cpp
 )
-target_link_libraries(sai_device_interface_test PRIVATE sai::device GTest::gtest_main)
+target_link_libraries(sai_device_interface_test PRIVATE sai::device sai::image GTest::gtest_main)
 gtest_discover_tests(sai_device_interface_test)

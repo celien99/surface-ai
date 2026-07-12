@@ -1,6 +1,10 @@
 #include "fake_camera.h"
 
+#include <cstdint>
+#include <vector>
+
 #include <sai/core/error.h>
+#include <sai/image/raw_image.h>
 
 namespace sai::test {
 
@@ -116,6 +120,40 @@ auto FakeCamera::SetGain(float db) noexcept -> Result<void> {
 
 auto FakeCamera::SetROI(device::Rect region) noexcept -> Result<void> {
     roi_ = region;
+    return {};
+}
+
+auto FakeCamera::TriggerSoftware() noexcept -> Result<void> {
+    if (state_ != State::Acquiring) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Device_NotConnected,
+            "must be acquiring to trigger software frame",
+            std::source_location::current(),
+        });
+    }
+    if (!frame_callback_) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Device_NotConnected,
+            "no frame callback registered",
+            std::source_location::current(),
+        });
+    }
+
+    // Build a small BayerRG8 8×8 test pattern: pixel (r,c) = (r*8+c)*4, range [0,252].
+    std::vector<std::uint8_t> bytes(64);
+    for (std::size_t r = 0; r < 8; ++r) {
+        for (std::size_t c = 0; c < 8; ++c) {
+            bytes[r * 8 + c] = static_cast<std::uint8_t>((r * 8 + c) * 4);
+        }
+    }
+
+    sai::image::ImageMeta meta;
+    meta.width = 8;
+    meta.height = 8;
+    meta.channels = 1;
+    meta.pixel_format = sai::image::PixelFormat::BayerRG8;
+
+    frame_callback_(sai::image::RawImage::FromOwnedBuffer(std::move(bytes), meta));
     return {};
 }
 

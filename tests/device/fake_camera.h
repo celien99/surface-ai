@@ -37,6 +37,9 @@ public:
     [[nodiscard]] auto SetGain(float db) noexcept -> Result<void> override;
     [[nodiscard]] auto SetROI(device::Rect region) noexcept -> Result<void> override;
 
+    // --- Test hook ---
+    [[nodiscard]] auto TriggerSoftware() noexcept -> Result<void>;
+
     // --- Test accessors ---
     [[nodiscard]] auto GetTriggerMode() const noexcept -> TriggerMode { return trigger_mode_; }
     [[nodiscard]] auto GetExposureTime() const noexcept -> std::chrono::microseconds { return exposure_time_; }

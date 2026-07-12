@@ -5,9 +5,11 @@
 
 #include <sai/device/device.h>
 
-namespace sai::device {
-
+namespace sai::image {
 class RawImage;  // forward — defined in batch 2.2
+}
+
+namespace sai::device {
 
 class ICamera : public IDevice {
 public:
@@ -17,7 +19,7 @@ public:
     [[nodiscard]] virtual auto StartAcquisition() noexcept -> Result<void> = 0;
     [[nodiscard]] virtual auto StopAcquisition() noexcept -> Result<void> = 0;
 
-    using FrameCallback = std::function<void(RawImage)>;
+    using FrameCallback = std::function<void(sai::image::RawImage)>;
     [[nodiscard]] virtual auto RegisterFrameCallback(FrameCallback callback) noexcept -> Result<void> = 0;
 
     [[nodiscard]] virtual auto SetExposureTime(std::chrono::microseconds us) noexcept -> Result<void> = 0;
