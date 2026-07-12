@@ -6,6 +6,7 @@
     "gtest",
     "yaml-cpp",
     "spdlog",
-    "nlohmann-json"
+    "nlohmann-json",
+    "faiss"
   ]
 }

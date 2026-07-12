@@ -1,0 +1,426 @@
+// patch_core_test.cpp — Task 8: FeatureBank + PatchCore::Detect 测试
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <vector>
+
+#include <gtest/gtest.h>
+
+#include <sai/core/context.h>
+#include <sai/detection/detection_result.h>
+#include <sai/detection/feature_bank.h>
+#include <sai/detection/patch_core.h>
+#include <sai/embedding/embedding.h>
+
+// 白盒测试用前向声明（patch_core.cpp 内部函数，非公开 API）
+// 必须放在全局作用域以避免与匿名命名空间内的 sai::detection 名称冲突。
+namespace sai::detection {
+auto BilinearUpsample(const float* src, std::size_t src_h, std::size_t src_w,
+                      std::size_t dst_h, std::size_t dst_w) -> std::vector<float>;
+auto GaussianBlur(const float* src, std::size_t h, std::size_t w,
+                  std::size_t sigma) -> std::vector<float>;
+auto ConnectedComponents(const float* binary, std::size_t h, std::size_t w,
+                         const float* scores, float threshold)
+    -> std::vector<RegionProposal>;
+}  // namespace sai::detection
+
+namespace {
+
+namespace fs = std::filesystem;
+
+// 写入 N×dim 的 float32 矩阵到临时文件（little-endian，行主序）
+auto WriteFloatMatrix(const fs::path& path, const std::vector<float>& data) -> void {
+    std::ofstream file(path, std::ios::binary);
+    ASSERT_TRUE(file.is_open());
+    file.write(reinterpret_cast<const char*>(data.data()),
+               static_cast<std::streamsize>(data.size() * sizeof(float)));
+}
+
+// 创建包含 1 个样本向量的临时 coreset 文件，返回路径和向量数据。
+struct TempCoreset {
+    fs::path path;
+    std::vector<float> data;
+    std::size_t dim;
+};
+auto MakeTempCoreset() -> TempCoreset {
+    TempCoreset cs;
+    cs.dim = 4;
+    cs.data = {1.0F, 0.0F, 0.0F, 0.0F};  // 单个样本，维度 4
+    auto tmp = fs::temp_directory_path() / "test_coreset_f32.bin";
+    // 如果文件已存在则取唯一文件名
+    cs.path = tmp;
+    int suffix = 0;
+    while (fs::exists(cs.path)) {
+        cs.path = tmp.parent_path() / ("test_coreset_f32_" + std::to_string(++suffix) + ".bin");
+    }
+    WriteFloatMatrix(cs.path, cs.data);
+    return cs;
+}
+
+// ── FeatureBank ─────────────────────────────────────────────────
+
+TEST(FeatureBankTest, LoadFromFileNumSamplesAndDim) {
+    auto cs = MakeTempCoreset();
+    auto bank = sai::detection::FeatureBank::LoadFromFile(cs.path, cs.dim);
+    ASSERT_TRUE(bank.has_value()) << "LoadFromFile failed: " << bank.error().message;
+    EXPECT_EQ(bank->NumSamples(), 1U);
+    EXPECT_EQ(bank->Dim(), cs.dim);
+}
+
+TEST(FeatureBankTest, LoadFromFileNonExistentReturnsError) {
+    auto result = sai::detection::FeatureBank::LoadFromFile("/nonexistent/path.bin", 4);
+    EXPECT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, sai::ErrorCode::Detection_FeatureBankLoadFailed);
+}
+
+TEST(FeatureBankTest, LoadFromFileWrongFileSizeReturnsError) {
+    // 文件大小不是 dim*sizeof(float) 的整数倍
+    std::vector<float> bad_data = {1.0F, 2.0F};  // 2 floats, dim=3 → 不匹配
+    auto path = fs::temp_directory_path() / "test_bad_size.bin";
+    WriteFloatMatrix(path, bad_data);
+    auto result = sai::detection::FeatureBank::LoadFromFile(path, 3);
+    EXPECT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, sai::ErrorCode::Detection_FeatureBankLoadFailed);
+    fs::remove(path);
+}
+
+TEST(FeatureBankTest, SearchExactMatchReturnsZeroDistance) {
+    auto cs = MakeTempCoreset();
+    auto bank = sai::detection::FeatureBank::LoadFromFile(cs.path, cs.dim);
+    ASSERT_TRUE(bank.has_value());
+
+    // 查询与 coreset 中唯一向量完全相同的向量
+    std::vector<float> query = {1.0F, 0.0F, 0.0F, 0.0F};
+    auto distances = bank->Search(query.data(), 1, 1);
+    ASSERT_EQ(distances.size(), 1U);
+    EXPECT_NEAR(distances[0], 0.0F, 1e-4F);
+}
+
+TEST(FeatureBankTest, SearchDistantQueryReturnsPositiveDistance) {
+    auto cs = MakeTempCoreset();
+    auto bank = sai::detection::FeatureBank::LoadFromFile(cs.path, cs.dim);
+    ASSERT_TRUE(bank.has_value());
+
+    // 查询与 coreset 向量完全不同的向量
+    std::vector<float> query = {0.0F, 0.0F, 1.0F, 1.0F};
+    auto distances = bank->Search(query.data(), 1, 1);
+    ASSERT_EQ(distances.size(), 1U);
+    // L2 距离: (1-0)^2 + (0-0)^2 + (0-1)^2 + (0-1)^2 = 1 + 0 + 1 + 1 = 3
+    EXPECT_NEAR(distances[0], 3.0F, 1e-4F);
+}
+
+TEST(FeatureBankTest, SearchMultiQueryMultiK) {
+    // coreset: 2 个 2 维向量
+    std::vector<float> coreset = {0.0F, 0.0F, 10.0F, 0.0F};
+    auto path = fs::temp_directory_path() / "test_multi.f32.bin";
+    WriteFloatMatrix(path, coreset);
+    auto bank = sai::detection::FeatureBank::LoadFromFile(path, 2);
+    ASSERT_TRUE(bank.has_value());
+    EXPECT_EQ(bank->NumSamples(), 2U);
+
+    // 查询 2 个向量，各找 2 个最近邻
+    // query0=(1,0) → nearest: (0,0) d=1, (10,0) d=81
+    // query1=(9,0) → nearest: (10,0) d=1, (0,0) d=81
+    std::vector<float> queries = {1.0F, 0.0F, 9.0F, 0.0F};
+    auto distances = bank->Search(queries.data(), 2, 2);
+    ASSERT_EQ(distances.size(), 4U);  // 2 queries × 2 neighbors
+    EXPECT_NEAR(distances[0], 1.0F, 1e-4F);   // query0, neighbor0
+    EXPECT_NEAR(distances[1], 81.0F, 1e-4F);  // query0, neighbor1
+    EXPECT_NEAR(distances[2], 1.0F, 1e-4F);   // query1, neighbor0
+    EXPECT_NEAR(distances[3], 81.0F, 1e-4F);  // query1, neighbor1
+    fs::remove(path);
+}
+
+// ── Bilinear Upsample ───────────────────────────────────────────
+
+TEST(UpsampleTest, TwoByTwoToFourByFour) {
+    // 2×2 源，四个角为 0,1,2,3
+    std::vector<float> src = {0.0F, 1.0F, 2.0F, 3.0F};  // row0: 0,1; row1: 2,3
+    auto dst = sai::detection::BilinearUpsample(src.data(), 2, 2, 4, 4);
+    ASSERT_EQ(dst.size(), 16U);
+
+    // 角点应精确等于源值
+    EXPECT_FLOAT_EQ(dst[0], 0.0F);                      // (0,0)
+    EXPECT_FLOAT_EQ(dst[3], 1.0F);                      // (0,3)
+    EXPECT_FLOAT_EQ(dst[12], 2.0F);                     // (3,0)
+    EXPECT_FLOAT_EQ(dst[15], 3.0F);                     // (3,3)
+
+    // 中心点应大致等于平均值
+    float center = dst[5];  // ~(1,1) 映射
+    EXPECT_GE(center, 0.0F);
+    EXPECT_LE(center, 3.0F);
+}
+
+TEST(UpsampleTest, SameSizeIsIdentity) {
+    std::vector<float> src = {5.0F, 2.0F, 7.0F, 3.0F};
+    auto dst = sai::detection::BilinearUpsample(src.data(), 2, 2, 2, 2);
+    ASSERT_EQ(dst.size(), 4U);
+    for (std::size_t i = 0; i < 4; ++i) {
+        EXPECT_FLOAT_EQ(dst[i], src[i]);
+    }
+}
+
+// ── Connected Components ────────────────────────────────────────
+
+TEST(ConnectedComponentsTest, EmptyMaskReturnsZeroRegions) {
+    std::vector<float> binary = {0.0F, 0.0F, 0.0F, 0.0F};
+    std::vector<float> scores = {0.0F, 0.0F, 0.0F, 0.0F};
+    auto regions = sai::detection::ConnectedComponents(binary.data(), 2, 2, scores.data(), 0.5F);
+    EXPECT_TRUE(regions.empty());
+}
+
+TEST(ConnectedComponentsTest, SingleComponentBboxCorrect) {
+    // 2×2 mask: 右下角一个像素为 1
+    std::vector<float> binary = {0.0F, 0.0F, 0.0F, 1.0F};
+    std::vector<float> scores = {0.0F, 0.0F, 0.0F, 0.9F};
+    auto regions = sai::detection::ConnectedComponents(binary.data(), 2, 2, scores.data(), 0.5F);
+    ASSERT_EQ(regions.size(), 1U);
+    EXPECT_EQ(regions[0].bounding_box.x, 1U);
+    EXPECT_EQ(regions[0].bounding_box.y, 1U);
+    EXPECT_EQ(regions[0].bounding_box.width, 1U);
+    EXPECT_EQ(regions[0].bounding_box.height, 1U);
+    EXPECT_FLOAT_EQ(regions[0].max_anomaly_score, 0.9F);
+    EXPECT_FLOAT_EQ(regions[0].mean_anomaly_score, 0.9F);
+    EXPECT_EQ(regions[0].area_pixels, 1U);
+}
+
+TEST(ConnectedComponentsTest, DisconnectedComponents) {
+    // 3×3 mask: 左上角 (0,0) 和右下角 (2,2) 各为一个 1
+    // 0 0 0
+    // 0 1 0   ← center is 0
+    // 0 0 0
+    // Wait, let me make it clearer:
+    // row0: 1 0 0
+    // row1: 0 0 0
+    // row2: 0 0 1
+    std::vector<float> binary = {1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F};
+    std::vector<float> scores = {0.8F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.6F};
+    auto regions = sai::detection::ConnectedComponents(binary.data(), 3, 3, scores.data(), 0.5F);
+    ASSERT_EQ(regions.size(), 2U);
+    // 按 max_score 降序排：0.8 在前，0.6 在后
+    EXPECT_FLOAT_EQ(regions[0].max_anomaly_score, 0.8F);
+    EXPECT_FLOAT_EQ(regions[1].max_anomaly_score, 0.6F);
+}
+
+TEST(ConnectedComponentsTest, FourConnectedNeighborJoins) {
+    // 3×3 mask 中两个水平相邻的 1 应合并为一个 region
+    // row0: 0 0 0
+    // row1: 1 1 0
+    // row2: 0 0 0
+    std::vector<float> binary = {0.0F, 0.0F, 0.0F, 1.0F, 1.0F, 0.0F, 0.0F, 0.0F, 0.0F};
+    std::vector<float> scores = {0.0F, 0.0F, 0.0F, 0.7F, 0.9F, 0.0F, 0.0F, 0.0F, 0.0F};
+    auto regions = sai::detection::ConnectedComponents(binary.data(), 3, 3, scores.data(), 0.5F);
+    ASSERT_EQ(regions.size(), 1U);
+    EXPECT_EQ(regions[0].bounding_box.x, 0U);
+    EXPECT_EQ(regions[0].bounding_box.y, 1U);
+    EXPECT_EQ(regions[0].bounding_box.width, 2U);
+    EXPECT_EQ(regions[0].bounding_box.height, 1U);
+    EXPECT_FLOAT_EQ(regions[0].max_anomaly_score, 0.9F);
+    EXPECT_FLOAT_EQ(regions[0].mean_anomaly_score, 0.8F);  // (0.7+0.9)/2
+    EXPECT_EQ(regions[0].area_pixels, 2U);
+}
+
+// ── GaussianBlur ─────────────────────────────────────────────────
+
+TEST(GaussianBlurTest, SigmaZeroIsIdentity) {
+    std::vector<float> src = {0.0F, 1.0F, 2.0F, 3.0F};
+    auto dst = sai::detection::GaussianBlur(src.data(), 2, 2, 0);
+    ASSERT_EQ(dst.size(), 4U);
+    for (std::size_t i = 0; i < 4; ++i) {
+        EXPECT_NEAR(dst[i], src[i], 1e-4F);
+    }
+}
+
+TEST(GaussianBlurTest, BlurPreservesRange) {
+    // 3×3: 中心为 1.0，其余为 0
+    std::vector<float> src = {0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 0.0F};
+    auto dst = sai::detection::GaussianBlur(src.data(), 3, 3, 1);
+    ASSERT_EQ(dst.size(), 9U);
+    // 模糊后中心值降低，邻域值升高，但都应在 [0,1] 内
+    for (std::size_t i = 0; i < 9; ++i) {
+        EXPECT_GE(dst[i], 0.0F);
+        EXPECT_LE(dst[i], 1.0F);
+    }
+    // 中心仍然应该是最大点
+    float center_val = dst[4];
+    for (std::size_t i = 0; i < 9; ++i) {
+        EXPECT_LE(dst[i], center_val + 1e-6F);
+    }
+}
+
+// ── PatchCore::Detect ───────────────────────────────────────────
+
+}  // namespace
+
+class PatchCoreDetectTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        // 创建简单的 coreset：1 个 4 维向量
+        std::vector<float> coreset = {0.5F, 0.5F, 0.5F, 0.5F};
+        coreset_path_ = fs::temp_directory_path() / "test_patchcore_coreset.bin";
+        WriteFloatMatrix(coreset_path_, coreset);
+
+        sai::detection::PatchCore::Config cfg;
+        cfg.feature_bank_path = coreset_path_;
+        cfg.image_width = 28;
+        cfg.image_height = 28;
+        cfg.patch_size = 14;
+        cfg.embed_dim = 4;  // 匹配 coreset 维度
+        cfg.k_nearest = 1;
+        cfg.anomaly_threshold = 0.5F;
+        cfg.gaussian_sigma = 1;
+
+        patch_core_ = std::make_unique<sai::detection::PatchCore>(cfg);
+    }
+
+    void TearDown() override {
+        fs::remove(coreset_path_);
+    }
+
+    fs::path coreset_path_;
+    std::unique_ptr<sai::detection::PatchCore> patch_core_;
+    sai::Context ctx_;
+};
+
+TEST_F(PatchCoreDetectTest, InitializeSucceeds) {
+    auto result = patch_core_->Initialize(ctx_);
+    ASSERT_TRUE(result.has_value()) << result.error().message;
+}
+
+TEST_F(PatchCoreDetectTest, DetectWithValidEmbeddingReturnsResult) {
+    auto init_result = patch_core_->Initialize(ctx_);
+    ASSERT_TRUE(init_result.has_value());
+
+    // 创建 2×2 patch grid 的 embedding（28/14=2）
+    // 4 个 patch 向量，每个 4 维
+    sai::embedding::EmbeddingMeta meta;
+    meta.model_name = "DINOv3";
+    meta.type = sai::embedding::EmbeddingType::Patch;
+    meta.dim = 4;
+    meta.count = 4;
+    meta.grid = {2, 2};
+
+    std::vector<float> data = {
+        0.5F, 0.5F, 0.5F, 0.5F,   // patch (0,0)
+        0.5F, 0.5F, 0.5F, 0.5F,   // patch (0,1)
+        0.5F, 0.5F, 0.5F, 0.5F,   // patch (1,0)
+        0.9F, 0.9F, 0.9F, 0.9F,   // patch (1,1) — 异常
+    };
+    auto embedding = sai::embedding::Embedding::FromCpu(std::move(data), std::move(meta));
+
+    auto result = patch_core_->Detect(embedding);
+    ASSERT_TRUE(result.has_value()) << result.error().message;
+
+    const auto& det = result.value();
+    // AnomalyMap 应为 2×2
+    EXPECT_EQ(det.anomaly_map.grid_h, 2U);
+    EXPECT_EQ(det.anomaly_map.grid_w, 2U);
+    EXPECT_EQ(det.anomaly_map.scores.size(), 4U);
+    // 异常分数在 [0,1]
+    for (auto s : det.anomaly_map.scores) {
+        EXPECT_GE(s, 0.0F);
+        EXPECT_LE(s, 1.0F);
+    }
+    // 图像级分数 >= 0
+    EXPECT_GE(det.image_level_score, 0.0F);
+}
+
+TEST_F(PatchCoreDetectTest, DetectInvalidPatchGridReturnsError) {
+    auto init_result = patch_core_->Initialize(ctx_);
+    ASSERT_TRUE(init_result.has_value());
+
+    // grid 与 config 不匹配：config 期望 2×2，此处给 3×3
+    sai::embedding::EmbeddingMeta meta;
+    meta.model_name = "DINOv3";
+    meta.type = sai::embedding::EmbeddingType::Patch;
+    meta.dim = 4;
+    meta.count = 9;
+    meta.grid = {3, 3};
+
+    std::vector<float> data(9 * 4, 0.5F);
+    auto embedding = sai::embedding::Embedding::FromCpu(std::move(data), std::move(meta));
+
+    auto result = patch_core_->Detect(embedding);
+    EXPECT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, sai::ErrorCode::Detection_InvalidPatchGrid);
+}
+
+TEST_F(PatchCoreDetectTest, DetectBatchReturnsMultipleResults) {
+    auto init_result = patch_core_->Initialize(ctx_);
+    ASSERT_TRUE(init_result.has_value());
+
+    sai::embedding::EmbeddingMeta meta;
+    meta.model_name = "DINOv3";
+    meta.type = sai::embedding::EmbeddingType::Patch;
+    meta.dim = 4;
+    meta.count = 4;
+    meta.grid = {2, 2};
+
+    std::vector<float> data1 = {0.5F, 0.5F, 0.5F, 0.5F, 0.5F, 0.5F, 0.5F, 0.5F,
+                                0.5F, 0.5F, 0.5F, 0.5F, 0.5F, 0.5F, 0.5F, 0.5F};
+    auto emb1 = sai::embedding::Embedding::FromCpu(std::move(data1), meta);
+
+    meta.grid = {2, 2};
+    meta.count = 4;
+    std::vector<float> data2 = {0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F,
+                                0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F, 0.9F};
+    auto emb2 = sai::embedding::Embedding::FromCpu(std::move(data2), meta);
+
+    std::array<const sai::embedding::Embedding*, 2> ptrs = {&emb1, &emb2};
+    auto results = patch_core_->DetectBatch(ptrs);
+    ASSERT_TRUE(results.has_value());
+    EXPECT_EQ(results.value().size(), 2U);
+}
+
+TEST_F(PatchCoreDetectTest, AllBelowThresholdReturnsNoRegions) {
+    sai::detection::PatchCore::Config cfg;
+    cfg.feature_bank_path = coreset_path_;
+    cfg.image_width = 28;
+    cfg.image_height = 28;
+    cfg.patch_size = 14;
+    cfg.embed_dim = 4;
+    cfg.k_nearest = 1;
+    cfg.anomaly_threshold = 999.0F;  // 极高阈值，不生成 region
+    cfg.gaussian_sigma = 0;
+
+    auto pc = sai::detection::PatchCore(cfg);
+    auto init_result = pc.Initialize(ctx_);
+    ASSERT_TRUE(init_result.has_value());
+
+    sai::embedding::EmbeddingMeta meta;
+    meta.model_name = "DINOv3";
+    meta.type = sai::embedding::EmbeddingType::Patch;
+    meta.dim = 4;
+    meta.count = 4;
+    meta.grid = {2, 2};
+
+    std::vector<float> data(16, 0.5F);
+    auto embedding = sai::embedding::Embedding::FromCpu(std::move(data), std::move(meta));
+
+    auto result = pc.Detect(embedding);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_TRUE(result.value().regions.empty());
+}
+
+TEST_F(PatchCoreDetectTest, ModelNameReturnsPatchCore) {
+    EXPECT_EQ(patch_core_->ModelName(), "PatchCore");
+}
+
+// 测试未初始化的 PatchCore 调用 Detect
+TEST_F(PatchCoreDetectTest, DetectWithoutInitializeReturnsError) {
+    sai::embedding::EmbeddingMeta meta;
+    meta.model_name = "DINOv3";
+    meta.type = sai::embedding::EmbeddingType::Patch;
+    meta.dim = 4;
+    meta.count = 4;
+    meta.grid = {2, 2};
+
+    std::vector<float> data(16, 0.5F);
+    auto embedding = sai::embedding::Embedding::FromCpu(std::move(data), std::move(meta));
+
+    auto result = patch_core_->Detect(embedding);
+    EXPECT_FALSE(result.has_value());
+}

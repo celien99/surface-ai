@@ -1,15 +1,14 @@
-// patch_core.h — 批次 3.3 PatchCore 检测器（声明 + Config，无 Detect 实现体）
+// patch_core.h — 批次 3.3 PatchCore 检测器
 #pragma once
 
 #include <filesystem>
+#include <memory>
 #include <string_view>
 
 #include <sai/detection/detector.h>
+#include <sai/detection/feature_bank.h>
 
 namespace sai::detection {
-
-// 前向声明——FeatureBank 在 Task 8 的 feature_bank.h 中完整定义
-class FeatureBank;
 
 // PatchCore：基于 coreset k-NN 的工业异常检测算法
 //
@@ -31,11 +30,9 @@ public:
 
     [[nodiscard]] auto Initialize(sai::Context& ctx) noexcept -> Result<void> override;
 
-    // 声明但不定义（Task 8 实现）——Task 7 仅提供接口骨架
     [[nodiscard]] auto Detect(const sai::embedding::Embedding& embedding) noexcept
         -> Result<DetectionResult> override;
 
-    // 声明但不定义（Task 8 实现）
     [[nodiscard]] auto DetectBatch(
         std::span<const sai::embedding::Embedding* const> embeddings) noexcept
         -> Result<std::vector<DetectionResult>> override;
@@ -49,8 +46,7 @@ public:
 
 private:
     Config cfg_;
-    // Task 7 使用指针（FeatureBank 仅前向声明），Task 8 切回值语义
-    FeatureBank* feature_bank_ = nullptr;
+    std::unique_ptr<FeatureBank> feature_bank_;
 };
 
 inline PatchCore::PatchCore(Config cfg) noexcept
