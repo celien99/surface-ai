@@ -65,6 +65,43 @@
 | `Logger` | 1.6 | design/milestone-01-foundation/1.6-cross-cutting.md | `class Logger final { static auto Get(std::string_view category) -> Logger&; static auto InitializeGlobalSinks(std::filesystem::path) -> Result<void>; void SetLevel(LogLevel) noexcept; template<typename... Args> void Log(LogLevel, fmt::format_string<Args...>, Args&&...) noexcept; auto DroppedCount() const noexcept -> uint64_t; }`（8192 容量异步队列，`Trace`/`Debug` 满时丢弃并计数，`Warning`+ 绝不丢弃） |
 | `ConfigStore` | 1.6 | design/milestone-01-foundation/1.6-cross-cutting.md | `class ConfigStore final { explicit ConfigStore(ConfigSchema) noexcept; auto Load(std::filesystem::path) -> Result<void>; template<typename T> auto Get(std::string_view key) const -> Result<T>; auto EnableHotReload(stop_token) -> Result<void>; }`（热重载校验失败保留旧配置，不回退默认值） |
 | `ConfigSchema` | 1.6 | design/milestone-01-foundation/1.6-cross-cutting.md | `class ConfigSchema final { auto RequireField(std::string field_path, FieldValidator) -> ConfigSchema&; auto Validate(const YAML::Node&) const -> Result<void>; }`（手写字段校验函数集合，JSON-Schema 等价校验，不引入独立 schema 库） |
+| `DailyAndSizeRotatingFileSink` | 2.0 | specs/2026-07-10-milestone-2-acquisition-imaging-design.md §7 | `template<typename Mutex> class DailyAndSizeRotatingFileSink final : public spdlog::sinks::base_sink<Mutex>` — 按天+100MB 双条件轮转 sink，偿还 M1 债务 D3 |
+| `IDevice` | 2.1 | specs/2026-07-10-milestone-2-acquisition-imaging-design.md §3.4 | `class IDevice : public IPlugin` — 设备统一抽象，`enum class State {Disconnected,Connected,Acquiring,Error}`，`Connect/Disconnect/IsConnected/SerialNumber/CurrentState` |
+| `ICamera` | 2.1 | specs/2026-07-10-milestone-2-acquisition-imaging-design.md §3.4 | `class ICamera : public IDevice` — `enum class TriggerMode {Software,Hardware,FreeRun}`，`using FrameCallback = std::function<void(RawImage)>`，`SetTriggerMode/StartAcquisition/StopAcquisition/RegisterFrameCallback/SetExposureTime/SetGain/SetROI` |
+| `ILightController` | 2.1 | specs/2026-07-10-milestone-2-acquisition-imaging-design.md §3.4 | `class ILightController : public IDevice` — `enum class StrobeMode {Continuous,OnTrigger,Off}`，`ChannelCount/SetIntensity/GetIntensity/Enable/Disable/SetStrobeMode` |
+| `Rect` | 2.1 | specs/2026-07-10-milestone-2-acquisition-imaging-design.md §3.6 | `struct Rect {std::size_t x,y,width,height; Area()->size_t; IsEmpty()->bool;}` — 定义于 `sai::device`，`sai::image::Rect` 为 using 别名 |
+| `RingBuffer<T>` | 2.1 | specs/2026-07-10-milestone-2-acquisition-imaging-design.md §3.4 | `template<typename T> class RingBuffer final` — 固定容量环形缓冲，满时覆盖最旧元素，互斥锁守护 |
+| `Image` | 2.2 | specs/2026-07-10-milestone-2-acquisition-imaging-design.md §4.4 | `class Image : public Resource` — 图像抽象基类，`Meta/Data(const+mutable)/SizeBytes`，move-only，`PixelFormat` 枚举 |
+| `RawImage` | 2.2 | specs/2026-07-10-milestone-2-acquisition-imaging-design.md §4.4 | `class RawImage final : public Image` — 相机原始帧，`FromPool/FromBuffer/FromOwnedBuffer`（FromOwnedBuffer 为追加的 owning-without-pool 工厂） |
+| `SurfaceImage` | 2.2 | specs/2026-07-10-milestone-2-acquisition-imaging-design.md §4.4 | `class SurfaceImage final : public Image` — 预处理完毕帧，`FromPool/FromPinned/FromOwnedBuffer` |
+| `GpuImage` | 2.2 | specs/2026-07-10-milestone-2-acquisition-imaging-design.md §4.4 | `class GpuImage final : public Image` — 显存驻留帧，`FromPool(GpuPool&)`，CUDA 门控 |
+| `PreprocessFn` | 2.2 | specs/2026-07-10-milestone-2-acquisition-imaging-design.md §4.4 | `using PreprocessFn = std::function<auto(std::unique_ptr<Image>)->Result<std::unique_ptr<Image>>>;` — 预处理步骤自由函数，`Compose` 递归串联 |
+| `ROI` | 2.2 | specs/2026-07-10-milestone-2-acquisition-imaging-design.md §4.6 | `struct ROI {vector<Rect> regions; IsEmpty/BoundingBox/Apply;}` — Apply 裁剪首个 region（多 region 合成延后） |
+| `IExporter` | 2.3 | specs/2026-07-10-milestone-2-acquisition-imaging-design.md §5.4 | `class IExporter : public IPlugin` — 导出插件接口，`Export(InspectionResult&,path,SurfaceImage*)->Result<void>`，`FormatName()` |
+| `IImporter` | 2.3 | specs/2026-07-10-milestone-2-acquisition-imaging-design.md §5.4 | `class IImporter : public IPlugin` — 导入插件接口，`ImportImage(path)->Result<unique_ptr<Image>>`，`ImportMetadata(path)->Result<YAML::Node>`，`FormatName()` |
+| `JsonExporter` | 2.3 | specs/2026-07-10-milestone-2-acquisition-imaging-design.md §5.4 | `class JsonExporter final : public IExporter` — 内置 JSON 报告导出，nlohmann-json，标注图暂用 PPM 占位 |
+| `BasicImporter` | 2.3 | specs/2026-07-10-milestone-2-acquisition-imaging-design.md §5.4 | `class BasicImporter final : public IImporter` — 内置 YAML 元数据 + PPM 图像导入 |
+| `DefectRecord` | 2.3 | specs/2026-07-10-milestone-2-acquisition-imaging-design.md §5.4 | `struct DefectRecord {string label,severity; float confidence; Rect location; string evidence_path;}` |
+| `InspectionResult` | 2.3 | specs/2026-07-10-milestone-2-acquisition-imaging-design.md §5.4 | `struct InspectionResult {string sku_id,serial_number; system_clock::time_point timestamp; vector<DefectRecord> defects; string verdict;}` |
+
+## 里程碑 2 偏差记录（2026-07-12）
+
+| 偏差编号 | 类型 | 描述 | 处置 |
+|----------|------|------|------|
+| D2-a | FromOwnedBuffer 追加 | `RawImage`/`SurfaceImage` 追加 `FromOwnedBuffer(vector<uint8_t>, ImageMeta)` 工厂 — 预处理/ROI/Importer 需要无池的 owning 分配（冻结签名无 pool 参数），纯粹追加修改 | 计划内，投入代码 |
+| D2-b | MakeFlatField 参数类型 | spec §4.4 声明的 `Image correction_frame` 按值传参无法编译（Image 抽象、move-only 且 ctor protected）→ 改为 `const Image&`，捕获为 `const Image*`，调用方保活 | 编译必需，投入代码 |
+| D2-c | MakeHDR 单帧语义 | `MakeHDR(num_exposures)` 返回仅接收一个 `Image` 的 `PreprocessFn`——无法融合多帧。实现为单帧 min-max 对比拉伸；真正多曝光融合需多输入 API，延后至 Future Extension | 类型限制，投入代码 |
+| D2-d | 标注图 PPM 占位 | `JsonExporter::Export` 在 `annotated_image != nullptr` 时写 PPM 而非 PNG——本里程碑不引入 PNG 库，PPM 可移植且可测试 | 依赖延后，投入代码 |
+| D2-e | D2 修复——per-category drop pool | 将 1.6 §9 的"单共享 thread_pool"改为每类别独立 drop-tier pool——M2 spec §7 显式授权修复 | 债务清偿，投入代码 |
+| D2-f | Image 基类显式 move | 冻结 defaulted move 会将原始 `data_` 指针复制到移动后目标——移动源报告 `IsValid()==true` 但持有悬空指针。显式 move ctor/assign 将源 `data_` 置 nullptr | 正确性修复，投入代码 |
+| D2-g | Release() 重写于子类 | `Release()` 在 `RawImage`/`SurfaceImage` 中重写以同时归还池 slab 并清空 `owned_bytes_` | 编译必需，投入代码 |
+| D2-h | surface_image.h 追加 `#include <memory_pool.h>` | 该头文件需要 `PooledPtr` 完整定义而不仅仅是前向声明——冻结设计未提及此 include，但缺少则无法编译 | 编译必需，投入代码 |
+| D2-i | ROI Apply 单 region 裁剪 | `ROI::Apply` 仅裁剪首个 region——多 region 合成延后 | 计划内，投入代码 |
+| D2-j | RingBuffer 零容量保护 | `RingBuffer::Push` 在容量为 0 时未持锁自增 `dropped_count_`——在生产中不可能出现，属过度防御 | 待定（最终审查时判定） |
+| D2-k | `NowTm()` 在构造函数中虚调用 | `DailyAndSizeRotatingFileSink` 在构造函数中调用 `NowTm()` 以设定初始日期——总是解析为基类版本，对子类不可见 | Minor，记录供参考 |
+| D2-l | `BoundingBox` 对 `front()` 进行冗余比较 | 循环中包含首个 region，无害 | Minor |
+| D2-m | `Release()` 中 `shrink_to_fit()` | `Release()` 在 clear 之外还调用了 `shrink_to_fit()`——非正确性所需 | Minor |
+| D2-n | 时间戳序列化依赖平台 | `system_clock::time_point` 序列化为 epoch 计数——macOS 单位为 μs，Linux 单位为 ns，跨平台 JSON 数值不可移植 | Minor，M3 考察 |
 
 ## 里程碑 1 复核记录
 
