@@ -38,6 +38,8 @@ enum class ErrorCode : std::uint32_t {
     Image_PreprocessFailed,
     Io_ExportPathCreateFailed,
     Io_SerializationFailed,
+    Io_ImportFileNotFound,
+    Io_ImportParseFailed,
 };
 
 struct ErrorInfo {
