@@ -30,6 +30,10 @@ using PreprocessFn =
 // 构造函数 protected 且只可移动，按值传递会切片。改为 `const Image&`（Task 11 记录的批准偏差）：
 // 校正帧只读、启动时加载一次、长期存活，故在返回的 lambda 中以 const Image* 捕获。
 // 调用方必须保证校正帧在整条链的生命周期内保持存活。
+
+// ⚠️ 生命周期警告：返回的 PreprocessFn 持有指向 correction_frame 的原始指针。
+// 若调用方在返回的 PreprocessFn 仍存活（例如已 Composed 入链）时析构 correction_frame，
+// 将导致 use-after-free。校正帧的生存期必须长于整条预处理链的生存期。
 [[nodiscard]] auto MakeFlatField(const Image& correction_frame) -> PreprocessFn;
 
 struct CalibrationParams {

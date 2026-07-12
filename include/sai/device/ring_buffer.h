@@ -56,7 +56,10 @@ public:
         return count_;
     }
 
-    [[nodiscard]] auto DroppedCount() const noexcept -> std::size_t { return dropped_count_; }
+    [[nodiscard]] auto DroppedCount() const noexcept -> std::size_t {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return dropped_count_;
+    }
 
     RingBuffer(const RingBuffer&) = delete;
     auto operator=(const RingBuffer&) -> RingBuffer& = delete;
