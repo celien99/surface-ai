@@ -34,4 +34,7 @@ add_subdirectory(tests/io)
 add_subdirectory(src/inference)
 add_subdirectory(tests/inference)
 
+add_subdirectory(src/embedding)
+add_subdirectory(tests/embedding)
+
 add_subdirectory(tests/integration)
