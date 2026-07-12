@@ -27,3 +27,6 @@ add_subdirectory(tests/device)
 
 add_subdirectory(src/image)
 add_subdirectory(tests/image)
+
+add_subdirectory(src/io)
+add_subdirectory(tests/io)

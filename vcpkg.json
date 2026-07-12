@@ -5,6 +5,7 @@
     "tl-expected",
     "gtest",
     "yaml-cpp",
-    "spdlog"
+    "spdlog",
+    "nlohmann-json"
   ]
 }

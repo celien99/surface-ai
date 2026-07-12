@@ -36,6 +36,8 @@ enum class ErrorCode : std::uint32_t {
     Image_UnsupportedPixelFormat,
     Image_DimensionMismatch,
     Image_PreprocessFailed,
+    Io_ExportPathCreateFailed,
+    Io_SerializationFailed,
 };
 
 struct ErrorInfo {
