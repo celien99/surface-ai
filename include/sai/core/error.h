@@ -40,6 +40,15 @@ enum class ErrorCode : std::uint32_t {
     Io_SerializationFailed,
     Io_ImportFileNotFound,
     Io_ImportParseFailed,
+    Inference_EngineLoadFailed,
+    Inference_EngineExecutionFailed,
+    Inference_InvalidBinding,
+    Inference_ReloadFailed,
+    Inference_ModelConfigMismatch,
+    Embedding_NotGpuImage,
+    Embedding_DimensionMismatch,
+    Detection_FeatureBankLoadFailed,
+    Detection_InvalidPatchGrid,
 };
 
 struct ErrorInfo {
