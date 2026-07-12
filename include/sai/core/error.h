@@ -35,6 +35,7 @@ enum class ErrorCode : std::uint32_t {
     Device_AcquisitionInProgress,
     Image_UnsupportedPixelFormat,
     Image_DimensionMismatch,
+    Image_PreprocessFailed,
 };
 
 struct ErrorInfo {

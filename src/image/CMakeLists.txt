@@ -3,6 +3,7 @@ add_library(sai_image STATIC
     raw_image.cpp
     surface_image.cpp
     roi.cpp
+    preprocess.cpp
 )
 add_library(sai::image ALIAS sai_image)
 
