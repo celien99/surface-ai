@@ -33,6 +33,8 @@ enum class ErrorCode : std::uint32_t {
     Device_ConnectionFailed,
     Device_NotConnected,
     Device_AcquisitionInProgress,
+    Image_UnsupportedPixelFormat,
+    Image_DimensionMismatch,
 };
 
 struct ErrorInfo {

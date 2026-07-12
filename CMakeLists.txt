@@ -24,3 +24,6 @@ add_subdirectory(tests/infra)
 
 add_subdirectory(src/device)
 add_subdirectory(tests/device)
+
+add_subdirectory(src/image)
+add_subdirectory(tests/image)
