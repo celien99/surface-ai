@@ -57,6 +57,11 @@ public:
     [[nodiscard]] auto Data() noexcept -> std::uint8_t* { return data_; }
     [[nodiscard]] auto SizeBytes() const noexcept -> std::size_t { return size_bytes_; }
 
+    // 查询图像是否驻留在 GPU 显存中。
+    // 基类返回 false；GpuImage 子类重写返回 true。
+    // 用于 Embedder::Extract 的 GPU guard——无需 dynamic_cast 或 RTTI。
+    [[nodiscard]] virtual auto IsGpuImage() const noexcept -> bool { return false; }
+
     // Resource（1.1）纯虚契约：data_ != nullptr 即视为持有有效缓冲。
     [[nodiscard]] auto IsValid() const noexcept -> bool override { return data_ != nullptr; }
     auto Release() noexcept -> void override;

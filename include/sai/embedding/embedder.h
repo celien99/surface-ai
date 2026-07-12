@@ -1,0 +1,80 @@
+// embedder.h — IEmbedder 接口与 PatchEmbedder / GlobalEmbedder（批次 3.2）
+#pragma once
+
+#include <span>
+#include <string_view>
+#include <vector>
+
+#include <sai/core/error.h>
+#include <sai/core/object.h>
+#include <sai/embedding/embedding.h>
+#include <sai/image/image.h>
+#include <sai/inference/clip_adapter.h>
+#include <sai/inference/dino_v3_adapter.h>
+
+namespace sai::embedding {
+
+// IEmbedder——统一特征提取接口。不派生自 IService/IModule；
+// Embedder 是算法组件，由 Detector 或 Pipeline 直接持有。
+// 输入为基类 Image 引用，实现层负责校验 GPU 存储类型。
+class IEmbedder : public sai::Object {
+public:
+    [[nodiscard]] virtual auto Extract(const sai::image::Image& image) noexcept
+        -> Result<Embedding> = 0;
+
+    [[nodiscard]] virtual auto ExtractBatch(std::span<const sai::image::Image* const> images) noexcept
+        -> Result<std::vector<Embedding>> = 0;
+
+    [[nodiscard]] virtual auto ModelName() const noexcept -> std::string_view = 0;
+};
+
+// PatchEmbedder — DINOv3 adapter → patch feature grid → Embedding。
+// move-only，持有 DinoV3Adapter。Extract 仅在输入为 GpuImage 时有效。
+class PatchEmbedder final : public IEmbedder {
+public:
+    [[nodiscard]] static auto Create(sai::inference::DinoV3Adapter adapter) noexcept
+        -> Result<PatchEmbedder>;
+
+    [[nodiscard]] auto Extract(const sai::image::Image& image) noexcept
+        -> Result<Embedding> override;
+    [[nodiscard]] auto ExtractBatch(std::span<const sai::image::Image* const> images) noexcept
+        -> Result<std::vector<Embedding>> override;
+    [[nodiscard]] auto ModelName() const noexcept -> std::string_view override
+    { return "DINOv3"; }
+
+    PatchEmbedder(PatchEmbedder&&) noexcept;
+    auto operator=(PatchEmbedder&&) noexcept -> PatchEmbedder&;
+    PatchEmbedder(const PatchEmbedder&) = delete;
+    auto operator=(const PatchEmbedder&) -> PatchEmbedder& = delete;
+
+private:
+    explicit PatchEmbedder(sai::inference::DinoV3Adapter adapter) noexcept;
+    sai::inference::DinoV3Adapter adapter_;
+    bool has_adapter_ = true;
+};
+
+// GlobalEmbedder — CLIP adapter → [CLS] token → Embedding。
+// move-only，持有 ClipAdapter。Extract 仅在输入为 GpuImage 时有效。
+class GlobalEmbedder final : public IEmbedder {
+public:
+    [[nodiscard]] static auto Create(sai::inference::ClipAdapter adapter) noexcept
+        -> Result<GlobalEmbedder>;
+
+    [[nodiscard]] auto Extract(const sai::image::Image& image) noexcept
+        -> Result<Embedding> override;
+    [[nodiscard]] auto ExtractBatch(std::span<const sai::image::Image* const> images) noexcept
+        -> Result<std::vector<Embedding>> override;
+    [[nodiscard]] auto ModelName() const noexcept -> std::string_view override { return "CLIP"; }
+
+    GlobalEmbedder(GlobalEmbedder&&) noexcept;
+    auto operator=(GlobalEmbedder&&) noexcept -> GlobalEmbedder&;
+    GlobalEmbedder(const GlobalEmbedder&) = delete;
+    auto operator=(const GlobalEmbedder&) -> GlobalEmbedder& = delete;
+
+private:
+    explicit GlobalEmbedder(sai::inference::ClipAdapter adapter) noexcept;
+    sai::inference::ClipAdapter adapter_;
+    bool has_adapter_ = true;
+};
+
+}  // namespace sai::embedding

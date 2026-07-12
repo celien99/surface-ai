@@ -24,6 +24,7 @@ public:
     GpuImage(const GpuImage&) = delete;
     auto operator=(const GpuImage&) -> GpuImage& = delete;
 
+    [[nodiscard]] auto IsGpuImage() const noexcept -> bool override { return true; }
     auto Release() noexcept -> void override;
 
 private:
