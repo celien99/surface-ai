@@ -1,3 +1,21 @@
+### 3.12 ErrorCode
+
+M3 引入 `Inference_*` / `Embedding_*` / `Detection_*` 错误码前缀（append-only，追加在 M2 的 `Io_ImportParseFailed` 之后）：
+
+| 错误码 | 含义 | 触发条件 |
+|--------|------|---------|
+| `Inference_EngineLoadFailed` | engine 文件加载失败 | 文件不存在/损坏/版本不兼容 |
+| `Inference_EngineExecutionFailed` | 推理执行失败 | TensorRT enqueue 返回非零 status |
+| `Inference_InvalidBinding` | I/O binding 与 engine 不匹配 | 名称/形状/数据类型不一致 |
+| `Inference_ReloadFailed` | 热重载失败 | 新 engine 反序列化或校验失败 |
+| `Inference_ModelConfigMismatch` | adapter 配置与 engine 不匹配 | patch_size/embed_dim 不一致 |
+| `Embedding_NotGpuImage` | 输入非 GPU 图像 | Extract 收到 SurfaceImage（CPU）而非 GpuImage |
+| `Embedding_DimensionMismatch` | 降维输入 dim 与 params 不匹配 | PCA/Whitening 输入向量维度错误 |
+| `Detection_FeatureBankLoadFailed` | coreset 文件加载失败 | 文件不存在/格式错误 |
+| `Detection_InvalidPatchGrid` | embedding grid 与配置不匹配 | Detect 输入的 grid_h/w 与 Config 不一致 |
+
+以上 9 个错误码按表内顺序追加。M1 的 `error.h` 附加规则同样适用——永不重排、永不碰其他批次的成员。
+
 # Surface AI Framework —— 里程碑 3 AI 推理核心 设计文档
 
 > Status: Draft
@@ -42,7 +60,9 @@
 └── 3.3 Detector（统一接口 + PatchCore）
 ```
 
-执行顺序：**3.1 设计 → 3.1 代码 → 3.2 设计 → 3.2 代码 → 3.3 设计 → 3.3 代码 → 最终整体回顾**
+执行顺序：**3.1 设计 → 3.1 review（检查接口与 glossary-and-contracts.md 一致性）→ 3.1 代码 → 3.2 设计 → 3.2 review → 3.2 代码 → 3.3 设计 → 3.3 review → 3.3 代码 → 最终整体回顾**
+
+每个批次的设计阶段产出冻结接口后，必须经过一次 review 检查——验证接口与 glossary-and-contracts.md 的已有契约无冲突、各层依赖方向正确、新增 ErrorCode 追加顺序正确——再进入代码阶段。此闸门避免设计缺陷流入实现阶段后返工。
 
 ### 1.3 项目锚点
 
@@ -75,7 +95,7 @@
 | 3.2 | `SurfaceImage`、`GpuImage`、`Image`、`PixelFormat`（2.2） | 推理输入图像 |
 | 3.2 | `PinnedPool`（1.5） | DtoH 中转缓冲 |
 | 3.2 | `WorkerPool`（1.4） | 批量特征提取并行化 |
-| 3.3 | `Device::Rect`（2.1） | RegionProposal 边界框 |
+| 3.3 | `sai::device::Rect`（2.1） | RegionProposal 边界框 |
 | 3.3 | `InspectionResult`、`DefectRecord`（2.3） | 检测结果 → 缺陷记录映射（M5 时触发） |
 
 ---
@@ -139,6 +159,12 @@ public:
 
     [[nodiscard]] virtual auto Reload(const std::filesystem::path& engine_path) noexcept
         -> Result<void> = 0;
+
+    // 更新指定 I/O tensor 的设备端地址——adapter 每帧可能从 GpuPool 分配/复用不同 slab，
+    // TensorRT 需要知道当前帧的数据位置。name 在 Load() 的 bindings 中首次注册，此处仅更新地址。
+    [[nodiscard]] virtual auto SetTensorAddress(const std::string& name,
+                                                  void* device_ptr) noexcept -> Result<void> = 0;
+
 
     [[nodiscard]] virtual auto InputBindings() const noexcept
         -> const std::vector<TensorBinding>& = 0;
@@ -205,6 +231,14 @@ namespace sai::inference {
 
 class MockEngine final : public IInferenceEngine {
 public:
+    // 测试数据注入：每次 Infer()/InferAsync() 调用后，对每个 output binding 调用此回调。
+    // 回调签名为 void(std::string_view name, void* device_ptr, std::size_t size_bytes)，
+    // 测试代码将预期数据 memcpy 到 device_ptr 中，模拟 TensorRT 的推理输出。
+    using OutputFillCallback =
+        std::function<void(std::string_view name, void* device_ptr, std::size_t size_bytes)>;
+
+    auto SetOutputFillCallback(OutputFillCallback callback) noexcept -> void;
+
     [[nodiscard]] auto Load(const std::filesystem::path&,
                              std::vector<TensorBinding> inputs,
                              std::vector<TensorBinding> outputs) noexcept
@@ -212,12 +246,14 @@ public:
     [[nodiscard]] auto Infer() noexcept -> Result<void> override;
     [[nodiscard]] auto InferAsync(cudaStream_t) noexcept -> Result<void> override;
     [[nodiscard]] auto Reload(const std::filesystem::path&) noexcept -> Result<void> override;
+    [[nodiscard]] auto SetTensorAddress(const std::string&, void*) noexcept -> Result<void> override;
     [[nodiscard]] auto InputBindings() const noexcept -> const std::vector<TensorBinding>& override;
     [[nodiscard]] auto OutputBindings() const noexcept -> const std::vector<TensorBinding>& override;
 
 private:
     std::vector<TensorBinding> inputs_;
     std::vector<TensorBinding> outputs_;
+    OutputFillCallback output_fill_;
 };
 
 }  // namespace sai::inference
@@ -272,6 +308,9 @@ struct Sam2Config { std::filesystem::path engine_path; std::size_t image_size; }
 struct SegmentationMask { float* device_ptr; std::size_t height; std::size_t width; };
 
 class Sam2Adapter {
+    // 当前 Infer 签名为占位——仅支持 mask prompt（const GpuImage&）。
+    // M5 将扩展为 variant<PointPrompt, BoxPrompt, MaskPrompt> 以覆盖 SAM2 的三种 prompt 类型。
+    // 见 §5.12 Future Extension。
 public:
     [[nodiscard]] static auto Create(IInferenceEngine& engine,
                                       const Sam2Config& cfg) noexcept -> Result<Sam2Adapter>;
@@ -403,14 +442,14 @@ Pipeline Worker 线程（M6）
 | EngineState | 堆（`shared_ptr`） | `atomic` swap 后旧 context 随引用计数释放 |
 | Adapter 实例 | 栈/堆（调用方持有） | 与 engine 实例等长 |
 
-### 3.12 Future Extension
+### 3.13 Future Extension
 
 - 更多推理后端：`OnnxRuntimeEngine` 实现同一 `IInferenceEngine` 接口（已定义 `TensorBinding` 为与后端无关的形状描述）
 - FP8 精度：TensorRT v10+ 原生支持，通过 `DinoV3Config` 加 `precision` 字段即可
 - 多 GPU model parallelism：多个 `TensorRtEngine` 实例，每个绑定不同 `device_ordinal`
 - 更多模型 adapter：`EfficientAD`、`DeepLabv3+`、`InternImage` 等，复用同一 `IInferenceEngine` + 工厂函数模式
 
-### 3.13 Best Practice
+### 3.14 Best Practice
 
 - ✅ 所有 I/O tensor buffer 从 `GpuPool` 分配——启动期预分配，运行期不调 `cudaMalloc`
 - ✅ Engine 路径从 `ConfigStore` 的 YAML 加载——不硬编码
@@ -418,7 +457,7 @@ Pipeline Worker 线程（M6）
 - ✅ adapter 的 `Infer()` 校验输入图像尺寸/格式匹配 engine 的 optimization profile
 - ✅ 热重载在推理执行间隙进行——不中断正在进行的 inference
 
-### 3.14 Anti Pattern
+### 3.15 Anti Pattern
 
 - ❌ 在 `InferAsync` 后立即 `cudaStreamSynchronize`——应走协程挂起+回调恢复，不阻塞 Worker
 - ❌ 假设所有模型在同一 device ordinal——每个 engine 实例绑定独立 ordinal
@@ -446,7 +485,7 @@ Pipeline Worker 线程（M6）
 
 **为什么 Embedding 支持双存储（GPU/CPU）**：DINOv3 产出的 patch features 在 GPU 端被 PatchCore 的 k-NN 直接消费——不做 DtoH 就能搜索，零额外拷贝。CLIP 产出的 global embedding 被 M4 Knowledge 索引（FAISS）——也需要 GPU 端直接建索引。但 FeatureCache 需要 CPU 端存储（LRU 使用 `std::vector<float>`），PCA 拟合也需要 CPU 端。双存储让消费者按需选择——GPU 路径零拷贝，CPU 路径通过 `ToCpuAsync()` 按需搬移。
 
-**为什么 IEmbedder 不从 IService/IModule 派生**：Embedder 是算法组件而非框架模块——它不在 `Context` 的 DI 体系中注册，而是由 Detector（3.3）直接持有和使用。它与 `PreprocessFn`（2.2）的地位类似——一个 type-erased 的函数对象，生命周期由调用方管理。
+**为什么 IEmbedder 不从 IService/IModule 派生**：Embedder 是算法组件而非框架模块——它不在 `Context` 的 DI 体系中注册，而是由 Detector（3.3）或 Pipeline（M6）直接持有和使用。它与 `PreprocessFn`（2.2）的地位类似——生命周期由调用方管理（作为局部对象或 `unique_ptr<IEmbedder>`），不在 Context 中注册。
 
 **为什么 DimensionReducer 的 Fit/Reduce 分离**：PCA 和 Whitening 的参数（components、mean、transform）是离线标定阶段（calibration pipeline）计算并持久化到 YAML 或 bin 文件的。运行期 `Reduce` 只需要矩阵乘法——无需每帧重新拟合。`Fit*` 是静态方法，产出的参数对象由 `ConfigStore` 或 `IImporter` 加载后构造 `DimensionReducer`。
 
@@ -463,6 +502,9 @@ Pipeline Worker 线程（M6）
 #include <stop_token>
 #include <sai/core/error.h>
 #include <sai/image/image.h>
+
+namespace sai::memory { class PinnedPool; }
+namespace sai::runtime { class GpuStreamQueue; template<typename T> struct Task; }
 
 namespace sai::embedding {
 
@@ -517,6 +559,8 @@ namespace sai::embedding {
 
 class IEmbedder : public sai::Object {
 public:
+    // 接受基类引用——实现层负责校验是否为 GPU 端图像（检查 Image 的存储类型）。
+    // 非 GPU 图像应返回 Embedding_NotGpuImage 错误。
     [[nodiscard]] virtual auto Extract(const sai::image::Image& image) noexcept
         -> Result<Embedding> = 0;
 
@@ -597,6 +641,12 @@ public:
     [[nodiscard]] static auto FitWhitening(const std::vector<Embedding>& samples,
                                             std::size_t target_dim) noexcept -> Result<WhiteningParams>;
 
+
+    // 用已拟合的 PCA 或 Whitening 参数构造——参数通常从标定文件（calibration.yaml）或
+    // IImporter 加载，运行期不重新拟合。
+    explicit DimensionReducer(PcaParams params) noexcept;
+    explicit DimensionReducer(WhiteningParams params) noexcept;
+
     [[nodiscard]] auto Reduce(const Embedding& input) noexcept -> Result<Embedding>;
     [[nodiscard]] auto ReduceBatch(const std::vector<Embedding>& inputs) noexcept
         -> Result<std::vector<Embedding>>;
@@ -623,7 +673,9 @@ class FeatureCache final {
 public:
     explicit FeatureCache(std::size_t max_entries) noexcept : max_entries_(max_entries) {}
 
-    [[nodiscard]] auto Get(std::uint64_t key) const noexcept -> std::optional<Embedding>;
+    // 返回指向缓存中 Embedding 的只读指针——不 move 出缓存，保留 LRU 条目。
+    // 指针仅在下次 Put（可能淘汰该条目）之前有效；若需延长生命周期，调用方自行拷贝。
+    [[nodiscard]] auto Get(std::uint64_t key) noexcept -> const Embedding*;
     auto Put(std::uint64_t key, Embedding value) noexcept -> void;
     [[nodiscard]] auto HitRate() const noexcept -> float;
     [[nodiscard]] auto Size() const noexcept -> std::size_t;
@@ -636,8 +688,8 @@ private:
     std::size_t max_entries_;
     std::list<LruItem> lru_;
     std::unordered_map<std::uint64_t, decltype(lru_)::iterator> index_;
-    std::size_t hits_ = 0;
-    std::size_t misses_ = 0;
+    std::atomic<std::size_t> hits_{0};
+    std::atomic<std::size_t> misses_{0};
     mutable std::mutex mutex_;
 };
 
@@ -707,7 +759,7 @@ Inference Worker 线程
 |------|------|
 | DINOv3 单帧 Extract（不含推理） | < 0.1ms（纯 GPU 指针包装） |
 | CLIP 单帧 Extract（不含推理） | < 0.1ms |
-| DtoH 搬移（256×256×1024 float32, PCIe 3.0） | < 50ms |
+| DtoH 搬移（256×256×1024 float32, PCIe 3.0 x16, 含 pinned memory + CUDA API overhead） | < 50ms |
 | PCA Reduce（256×256 → 256×128, CPU） | < 5ms |
 | Pooling（Average, 256×256 → 1×1024） | < 1ms |
 | FeatureCache Get（LRU 命中） | < 1μs（hash + splice） |
@@ -881,8 +933,8 @@ public:
         float anomaly_threshold = 0.8F;
         std::size_t k_nearest = 1;
         std::size_t gaussian_sigma = 4;
-        std::size_t image_width = 224;
-        std::size_t image_height = 224;
+        std::size_t image_width = 518;
+        std::size_t image_height = 518;
         std::size_t patch_size = 14;
         std::size_t embed_dim = 1024;
     };
@@ -1053,7 +1105,7 @@ M3 提供以下接口给后续里程碑消费：
 ## 8. 与前置/后续里程碑的关系
 
 - M1：M3 依赖 M1 的 `GpuPool`/`PinnedPool`（显存/锁页内存分配）、`GpuStreamQueue`（异步推理回调）、`WorkerPool`（批量并行）、`ConfigStore`（模型路径/binding 配置）
-- M2：M3 消费 M2 的 `SurfaceImage`/`GpuImage`（推理输入）、`Device::Rect`（RegionProposal 边界框）、`InspectionResult`（M5 填充时引用结构定义）
+- M2：M3 消费 M2 的 `SurfaceImage`/`GpuImage`（推理输入）、`sai::device::Rect`（RegionProposal 边界框）、`InspectionResult`（M5 填充时引用结构定义）
 - M4（知识与检索）：使用 3.2 的 `Embedding`（global, CLIP）建 FAISS 索引，使用 `FeatureCache` 做 reference 特征缓存
 - M5（推理决策）：消费 3.3 的 `DetectionResult` → 填充 M2 的 `InspectionResult.defects`；消费 SAM2 adapter 做缺陷边界精修
 - M6（编排调度）：M3 的 `IInferenceEngine` / `IEmbedder` / `IDetector` 作为 Pipeline 图中的可替换节点
