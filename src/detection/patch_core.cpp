@@ -357,7 +357,7 @@ auto PatchCore::DetectBatch(
     for (const auto* emb : embeddings) {
         if (emb == nullptr) {
             return tl::make_unexpected(ErrorInfo{
-                ErrorCode::Core_Unknown,
+                ErrorCode::Detection_InvalidPatchGrid,
                 "null embedding pointer in DetectBatch",
                 std::source_location::current(),
             });
