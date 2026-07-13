@@ -1,5 +1,6 @@
 #include <sai/retrieval/metadata_path.h>
 #include <sqlite3.h>
+#include <regex>
 #include <source_location>
 #include <sstream>
 
@@ -23,55 +24,66 @@ auto OpToSql(FilterOp op) -> const char* {
     return "=";
 }
 
-auto BindJsonExtract(sqlite3_stmt* stmt, int col, const std::string& field,
-                     const FilterCondition& cond) -> void {
-    // SQLite json_extract: json_extract(properties_json, '$.field')
-    // We bind the json path as part of the WHERE clause
-    (void)stmt; (void)col; (void)field; (void)cond;
-}
-
 }  // anonymous namespace
 
 auto MetadataPath::Search(const Config& cfg) const noexcept
     -> Result<std::vector<MetadataResult>> {
+    // Validate field names against whitelist pattern before any SQL construction.
+    // Field names appear in json_extract paths which cannot be parameterized,
+    // so they must be validated to prevent injection.
+    static const std::regex kFieldNamePattern("^[a-zA-Z_][a-zA-Z0-9_]*$");
+    for (const auto& filter : cfg.filters) {
+        if (!std::regex_match(filter.field, kFieldNamePattern)) {
+            return tl::make_unexpected(ErrorInfo{
+                ErrorCode::Infra_ConfigValidationFailed,
+                "Invalid field name in filter: '" + filter.field +
+                    "' does not match [a-zA-Z_][a-zA-Z0-9_]*",
+                std::source_location::current(),
+            });
+        }
+    }
+
     std::ostringstream sql;
     sql << "SELECT id FROM nodes WHERE 1=1";
+    int param_index = 1;
 
-    // Filter by node types
+    // Filter by node types — each type string bound individually
     if (!cfg.node_types.empty()) {
         sql << " AND type IN (";
         for (std::size_t i = 0; i < cfg.node_types.size(); ++i) {
             if (i > 0) sql << ", ";
-            sql << "'" << cfg.node_types[i] << "'";
+            sql << "?" << param_index++;
         }
         sql << ")";
     }
 
-    // Filter by field conditions via json_extract
+    // Filter by field conditions via json_extract.
+    // Field names are already validated above; comparison values are bound as parameters.
     for (const auto& filter : cfg.filters) {
         sql << " AND json_extract(properties_json, '$." << filter.field << "') "
             << OpToSql(filter.op) << " ";
         std::visit([&](const auto& v) {
             using T = std::decay_t<decltype(v)>;
             if constexpr (std::is_same_v<T, std::int64_t>) {
-                sql << v;
+                sql << "?" << param_index++;
             } else if constexpr (std::is_same_v<T, double>) {
-                sql << v;
+                sql << "?" << param_index++;
             } else if constexpr (std::is_same_v<T, std::string>) {
-                sql << "'" << v << "'";
+                sql << "?" << param_index++;
             } else if constexpr (std::is_same_v<T, std::vector<std::int64_t>>) {
                 sql << "(";
                 for (std::size_t i = 0; i < v.size(); ++i) {
                     if (i > 0) sql << ", ";
-                    sql << v[i];
+                    sql << "?" << param_index++;
                 }
                 sql << ")";
             }
         }, filter.value);
     }
 
-    sql << " LIMIT " << cfg.max_results;
+    sql << " LIMIT ?" << param_index++;
 
+    // Prepare statement
     sqlite3_stmt* stmt = nullptr;
     auto query = sql.str();
     if (sqlite3_prepare_v2(db_, query.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
@@ -82,6 +94,36 @@ auto MetadataPath::Search(const Config& cfg) const noexcept
         });
     }
 
+    // Bind all parameters in the same order they appear in the SQL
+    int bind_index = 1;
+
+    for (const auto& node_type : cfg.node_types) {
+        sqlite3_bind_text(stmt, bind_index++, node_type.c_str(),
+                          -1, SQLITE_TRANSIENT);
+    }
+
+    for (const auto& filter : cfg.filters) {
+        std::visit([&](const auto& v) {
+            using T = std::decay_t<decltype(v)>;
+            if constexpr (std::is_same_v<T, std::int64_t>) {
+                sqlite3_bind_int64(stmt, bind_index++, v);
+            } else if constexpr (std::is_same_v<T, double>) {
+                sqlite3_bind_double(stmt, bind_index++, v);
+            } else if constexpr (std::is_same_v<T, std::string>) {
+                sqlite3_bind_text(stmt, bind_index++, v.c_str(),
+                                  -1, SQLITE_TRANSIENT);
+            } else if constexpr (std::is_same_v<T, std::vector<std::int64_t>>) {
+                for (auto elem : v) {
+                    sqlite3_bind_int64(stmt, bind_index++, elem);
+                }
+            }
+        }, filter.value);
+    }
+
+    sqlite3_bind_int64(stmt, bind_index++,
+                       static_cast<std::int64_t>(cfg.max_results));
+
+    // Execute query
     std::vector<MetadataResult> results;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         MetadataResult r;
