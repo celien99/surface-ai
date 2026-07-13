@@ -5,6 +5,11 @@
 #include <tuple>
 #include <vector>
 
+// NOTE: This filter is NOT automatically applied by PatchCore or PcaDetector.
+// It must be invoked by the downstream pipeline orchestrator (M6 Pipeline/Scheduler)
+// which has access to both the original sRGB image and the anomaly map.
+// Usage: ComputeSpecularMask(rgb_image, H, W) → conf_map → FilterSpecularAnomalies(anomaly_map, conf_map, H, W)
+
 namespace sai::detection {
 
 // 从 sRGB 图像生成镜面反射 mask。

@@ -61,6 +61,7 @@ auto ComputeSpecularMask(const float* img_rgb, std::size_t H, std::size_t W,
 
     // 曲率 (Laplacian of Gaussian on Y)
     // 简化：用 3×3 Laplacian 核近似 LoG
+    // NOTE: border pixels (first/last row/col) have no curvature signal due to 3×3 kernel bounds
     auto pixel_Y = [&](std::size_t py, std::size_t px) -> float {
         auto p = (py * W + px) * 3;
         return Luminance(Linearize(img_rgb[p]), Linearize(img_rgb[p + 1]), Linearize(img_rgb[p + 2]));

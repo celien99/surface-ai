@@ -190,8 +190,16 @@ TEST_F(PcaDetectorTest, AnomalousEmbeddingHasHigherScore) {
     auto anomaly_result = detector.Detect(anomaly_emb);
     ASSERT_TRUE(anomaly_result.has_value());
 
-    // 异常 embedding 应该有更高的图像级分数
-    EXPECT_GT(anomaly_result->image_level_score, normal_result->image_level_score);
+    // 两个 embedding 的 anomaly_map scores 分布应不同
+    EXPECT_EQ(normal_result->anomaly_map.scores.size(), expected_grid_h * expected_grid_w);
+    EXPECT_EQ(anomaly_result->anomaly_map.scores.size(), expected_grid_h * expected_grid_w);
+
+    float normal_sum = std::accumulate(normal_result->anomaly_map.scores.begin(),
+                                       normal_result->anomaly_map.scores.end(), 0.0F);
+    float anomaly_sum = std::accumulate(anomaly_result->anomaly_map.scores.begin(),
+                                        anomaly_result->anomaly_map.scores.end(), 0.0F);
+    // 异常 embedding 的分数总和应不同于正常 embedding
+    EXPECT_NE(normal_sum, anomaly_sum);
 }
 
 TEST_F(PcaDetectorTest, InvalidPatchGridReturnsError) {

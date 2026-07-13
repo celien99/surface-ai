@@ -1,10 +1,14 @@
 // post_process_utils.cpp — 异常检测后处理工具函数实现
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <numeric>
+#include <source_location>
 #include <vector>
 
+#include <sai/core/error.h>
+#include <sai/detection/detector.h>
 #include <sai/detection/post_process_utils.h>
 
 namespace sai::detection {
@@ -209,6 +213,89 @@ auto ConnectedComponents(const float* binary, std::size_t h, std::size_t w,
               });
 
     return regions;
+}
+
+// ── ValidatePatchGrid ────────────────────────────────────────────────
+
+auto ValidatePatchGrid(std::size_t grid_h, std::size_t grid_w,
+                        std::size_t image_height, std::size_t image_width,
+                        std::size_t patch_size) noexcept -> Result<void> {
+    auto expected_grid_h = image_height / patch_size;
+    auto expected_grid_w = image_width / patch_size;
+    if (grid_h != expected_grid_h || grid_w != expected_grid_w) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Detection_InvalidPatchGrid,
+            "patch grid " + std::to_string(grid_h) + "×" + std::to_string(grid_w)
+                + " does not match config " + std::to_string(expected_grid_h)
+                + "×" + std::to_string(expected_grid_w),
+            std::source_location::current()});
+    }
+    return {};
+}
+
+// ── BuildDetectionResult ─────────────────────────────────────────────
+
+auto BuildDetectionResult(
+    std::vector<float>&& patch_scores,
+    std::size_t grid_h, std::size_t grid_w,
+    std::size_t image_height, std::size_t image_width,
+    std::size_t gaussian_sigma,
+    float threshold,
+    std::chrono::nanoseconds latency) noexcept -> DetectionResult {
+    // 构建 AnomalyMap
+    AnomalyMap anomaly_map;
+    anomaly_map.grid_h = grid_h;
+    anomaly_map.grid_w = grid_w;
+    anomaly_map.scores = std::move(patch_scores);
+    auto image_level_score = anomaly_map.MaxScore();
+
+    // 双线性上采样到图像分辨率
+    auto upsampled = BilinearUpsample(anomaly_map.scores.data(),
+                                      grid_h, grid_w,
+                                      image_height, image_width);
+
+    // Gaussian 平滑
+    auto blurred = GaussianBlur(upsampled.data(), image_height, image_width,
+                                gaussian_sigma);
+
+    // 阈值 → 二值 mask → 连通分量
+    std::vector<float> binary(image_height * image_width);
+    for (std::size_t i = 0; i < binary.size(); ++i) {
+        binary[i] = (blurred[i] > threshold) ? 1.0F : 0.0F;
+    }
+    auto regions = ConnectedComponents(binary.data(), image_height, image_width,
+                                       blurred.data());
+
+    return DetectionResult{
+        std::move(anomaly_map),
+        std::move(regions),
+        image_level_score,
+        latency,
+    };
+}
+
+// ── DetectBatchImpl ──────────────────────────────────────────────────
+
+auto DetectBatchImpl(IDetector& detector,
+    std::span<const sai::embedding::Embedding* const> embeddings) noexcept
+    -> Result<std::vector<DetectionResult>> {
+    std::vector<DetectionResult> results;
+    results.reserve(embeddings.size());
+
+    for (const auto* emb : embeddings) {
+        if (emb == nullptr) {
+            return tl::make_unexpected(ErrorInfo{
+                ErrorCode::Detection_InvalidPatchGrid,
+                "null embedding pointer in DetectBatch",
+                std::source_location::current()});
+        }
+        auto result = detector.Detect(*emb);
+        if (!result.has_value()) {
+            return tl::make_unexpected(result.error());
+        }
+        results.push_back(std::move(result.value()));
+    }
+    return results;
 }
 
 }  // namespace sai::detection
