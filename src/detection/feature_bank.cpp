@@ -76,6 +76,26 @@ auto FeatureBank::Search(const float* query, std::size_t query_count,
     return distances;
 }
 
+auto FeatureBank::ExtractAllVectors() const noexcept -> std::vector<float> {
+    if (num_samples_ == 0 || dim_ == 0 || !index_) {
+        return {};
+    }
+    std::vector<float> result(num_samples_ * dim_);
+    for (std::size_t i = 0; i < num_samples_; ++i) {
+        index_->reconstruct(static_cast<faiss::idx_t>(i), result.data() + i * dim_);
+    }
+    return result;
+}
+
+auto FeatureBank::Rebuild(const float* vectors, std::size_t count,
+                          std::size_t dim) noexcept -> void {
+    auto index = std::make_unique<faiss::IndexFlatL2>(static_cast<faiss::idx_t>(dim));
+    index->add(static_cast<faiss::idx_t>(count), vectors);
+    index_ = std::move(index);
+    dim_ = dim;
+    num_samples_ = count;
+}
+
 FeatureBank::FeatureBank(FeatureBank&&) noexcept = default;
 auto FeatureBank::operator=(FeatureBank&&) noexcept -> FeatureBank& = default;
 

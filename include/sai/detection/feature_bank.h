@@ -42,6 +42,12 @@ public:
     [[nodiscard]] auto NumSamples() const noexcept -> std::size_t { return num_samples_; }
     [[nodiscard]] auto Dim() const noexcept -> std::size_t { return dim_; }
 
+    // 提取所有向量为扁平 float 数组（N×D，行主序）
+    [[nodiscard]] auto ExtractAllVectors() const noexcept -> std::vector<float>;
+
+    // 用新向量集重建 FAISS 索引
+    auto Rebuild(const float* vectors, std::size_t count, std::size_t dim) noexcept -> void;
+
     // move-only
     FeatureBank(FeatureBank&&) noexcept;
     auto operator=(FeatureBank&&) noexcept -> FeatureBank&;

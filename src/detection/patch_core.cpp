@@ -14,18 +14,133 @@
 #include <sai/detection/feature_bank.h>
 #include <sai/detection/post_process_utils.h>
 #include <sai/device/device.h>
+#include <sai/embedding/dimension_reducer.h>
 
 namespace sai::detection {
+namespace {
+
+// 白化变换：out[N * wp.target_dim] = W @ in[N * input_dim]
+// W = wp.transform (target_dim × input_dim, row-major)
+auto ApplyWhitening(const float* vectors, std::size_t count,
+                    std::size_t input_dim,
+                    const sai::embedding::DimensionReducer::WhiteningParams& wp) noexcept
+    -> std::vector<float> {
+    auto target_dim = wp.target_dim;
+    std::vector<float> result(count * target_dim, 0.0F);
+    for (std::size_t n = 0; n < count; ++n) {
+        const float* in = vectors + n * input_dim;
+        float* out = result.data() + n * target_dim;
+        for (std::size_t t = 0; t < target_dim; ++t) {
+            float acc = 0.0F;
+            const float* row = wp.transform.data() + t * input_dim;
+            for (std::size_t j = 0; j < input_dim; ++j) {
+                acc += row[j] * in[j];
+            }
+            out[t] = acc;
+        }
+    }
+    return result;
+}
+
+// 自适应阈值：对 coreset 进行自检，计算 k-NN 距离的 (1-target_fpr) 分位数
+auto ComputeAdaptiveThreshold(const FeatureBank& bank,
+                              float target_fpr,
+                              std::size_t k) noexcept -> float {
+    auto num_samples = bank.NumSamples();
+    if (num_samples == 0) return 0.0F;
+
+    auto dim = bank.Dim();
+    auto all_vecs = bank.ExtractAllVectors();
+    std::vector<float> nn_dists(num_samples);
+
+    for (std::size_t i = 0; i < num_samples; ++i) {
+        auto dists = bank.Search(all_vecs.data() + i * dim, 1, k + 1);
+        nn_dists[i] = dists.back();  // 跳过自身（d=0），取最远邻
+    }
+
+    std::sort(nn_dists.begin(), nn_dists.end());
+
+    auto idx = static_cast<std::size_t>((1.0F - target_fpr) * static_cast<float>(num_samples - 1));
+    if (idx >= num_samples) idx = num_samples - 1;
+    return nn_dists[idx];
+}
+
+}  // namespace
 
 // ── PatchCore::Initialize ───────────────────────────────────────────
 
 auto PatchCore::Initialize(sai::Context& /*ctx*/) noexcept -> Result<void> {
-    auto bank = FeatureBank::LoadFromFile(cfg_.feature_bank_path, cfg_.embed_dim);
-    if (!bank.has_value()) {
-        return tl::make_unexpected(bank.error());
-    }
-    feature_bank_ = std::make_unique<FeatureBank>(std::move(bank.value()));
-    return {};
+    return FeatureBank::LoadFromFile(cfg_.feature_bank_path, cfg_.embed_dim)
+        .and_then([this](FeatureBank&& bank) -> Result<void> {
+            feature_bank_ = std::make_unique<FeatureBank>(std::move(bank));
+            return {};
+        })
+        .and_then([this]() -> Result<void> {
+            if (!cfg_.enable_whitening) return {};
+
+            auto all_vecs = feature_bank_->ExtractAllVectors();
+            auto num_samples = feature_bank_->NumSamples();
+            auto embed_dim = cfg_.embed_dim;
+
+            // 将扁平向量转换为 Embedding 对象供 FitPca 使用
+            std::vector<sai::embedding::Embedding> samples;
+            samples.reserve(num_samples);
+            for (std::size_t i = 0; i < num_samples; ++i) {
+                sai::embedding::EmbeddingMeta meta;
+                meta.model_name = "coreset";
+                meta.type = sai::embedding::EmbeddingType::Patch;
+                meta.dim = embed_dim;
+                meta.count = 1;
+                meta.grid = {1, 1};
+                std::vector<float> vec(all_vecs.begin() + static_cast<std::ptrdiff_t>(i * embed_dim),
+                                        all_vecs.begin() + static_cast<std::ptrdiff_t>((i + 1) * embed_dim));
+                samples.push_back(
+                    sai::embedding::Embedding::FromCpu(std::move(vec), std::move(meta)));
+            }
+
+            auto total_k = embed_dim;
+            auto fit_k = total_k + cfg_.drop_k;
+
+            return sai::embedding::DimensionReducer::FitPca(samples, fit_k)
+                .and_then([this, all_vecs = std::move(all_vecs), num_samples, embed_dim, total_k](
+                              sai::embedding::DimensionReducer::PcaParams&& pca) -> Result<void> {
+                    // 用第 [drop_k, drop_k+total_k) 个主成分手动构建 WhiteningParams
+                    sai::embedding::DimensionReducer::WhiteningParams wp;
+                    wp.target_dim = total_k;
+                    wp.transform.resize(total_k * embed_dim, 0.0F);
+                    for (std::size_t t = 0; t < total_k; ++t) {
+                        float scale = 1.0F / std::sqrt(pca.eigvals[cfg_.drop_k + t] + 1e-6F);
+                        for (std::size_t j = 0; j < embed_dim; ++j) {
+                            wp.transform[t * embed_dim + j] =
+                                pca.components[(cfg_.drop_k + t) * embed_dim + j] * scale;
+                        }
+                    }
+
+                    // 白化 coreset 并重建索引
+                    auto whitened = ApplyWhitening(all_vecs.data(), num_samples,
+                                                    embed_dim, wp);
+                    feature_bank_->Rebuild(whitened.data(), num_samples, total_k);
+                    whitening_params_ = std::move(wp);
+                    return {};
+                });
+        })
+        .and_then([this]() -> Result<void> {
+            if (cfg_.enable_adaptive_threshold) {
+                effective_threshold_ = ComputeAdaptiveThreshold(
+                    *feature_bank_, cfg_.target_fpr, cfg_.k_nearest);
+            } else {
+                effective_threshold_ = cfg_.anomaly_threshold;
+            }
+            return {};
+        })
+        .and_then([this]() -> Result<void> {
+            if (cfg_.pca_model_path.empty()) return {};
+            return sai::embedding::DimensionReducer::LoadPcaParams(cfg_.pca_model_path)
+                .and_then([this](sai::embedding::DimensionReducer::PcaParams&& params) -> Result<void> {
+                    pca_params_ = std::move(params);
+                    return {};
+                });
+        });
 }
 
 // ── PatchCore::Detect ───────────────────────────────────────────────
@@ -45,23 +160,28 @@ auto PatchCore::Detect(const sai::embedding::Embedding& embedding) noexcept
     auto grid_w = meta.grid[1];
 
     // 1. 验证 grid 与 config 匹配
-    auto expected_grid_h = cfg_.image_height / cfg_.patch_size;
-    auto expected_grid_w = cfg_.image_width / cfg_.patch_size;
-    if (grid_h != expected_grid_h || grid_w != expected_grid_w) {
-        return tl::make_unexpected(ErrorInfo{
-            ErrorCode::Detection_InvalidPatchGrid,
-            "patch grid " + std::to_string(grid_h) + "×" + std::to_string(grid_w)
-                + " does not match config " + std::to_string(expected_grid_h)
-                + "×" + std::to_string(expected_grid_w),
-            std::source_location::current(),
-        });
+    auto grid_ok = ValidatePatchGrid(grid_h, grid_w, cfg_.image_height, cfg_.image_width, cfg_.patch_size);
+    if (!grid_ok.has_value()) {
+        return tl::make_unexpected(grid_ok.error());
     }
 
     auto start = std::chrono::steady_clock::now();
-
-    // 2. k-NN 搜索
     auto query_count = grid_h * grid_w;
-    auto distances = feature_bank_->Search(embedding.Data(), query_count, cfg_.k_nearest);
+
+    // 2. 保存原始查询指针（PCA 评分在原始向量上计算）
+    const float* original_query = embedding.Data();
+    const float* query_data = original_query;
+    std::vector<float> whitened_query;
+
+    // 3. 可选白化
+    if (whitening_params_.has_value()) {
+        whitened_query = ApplyWhitening(original_query, query_count,
+                                         cfg_.embed_dim, *whitening_params_);
+        query_data = whitened_query.data();
+    }
+
+    // 4. k-NN 搜索
+    auto distances = feature_bank_->Search(query_data, query_count, cfg_.k_nearest);
     if (distances.empty()) {
         return tl::make_unexpected(ErrorInfo{
             ErrorCode::Detection_FeatureBankLoadFailed,
@@ -70,54 +190,42 @@ auto PatchCore::Detect(const sai::embedding::Embedding& embedding) noexcept
         });
     }
 
-    // 取每个 query 的第一个最近邻距离（k=1 时 distances 即 1-per-query）
-    // distances 是 nq × k 行主序；取每行第一个元素
+    // 5. 提取 patch scores 并归一化到 [0,1]
     std::vector<float> patch_scores(query_count);
     for (std::size_t i = 0; i < query_count; ++i) {
         patch_scores[i] = distances[i * cfg_.k_nearest];
     }
 
-    // 归一化到 [0,1]：除以最大距离（如果所有距离为 0，保留 0）
     float max_dist = *std::max_element(patch_scores.begin(), patch_scores.end());
     if (max_dist > 0.0F) {
         for (auto& s : patch_scores) s /= max_dist;
     }
 
-    // 3. 构建 AnomalyMap
-    AnomalyMap anomaly_map;
-    anomaly_map.grid_h = grid_h;
-    anomaly_map.grid_w = grid_w;
-    anomaly_map.scores = std::move(patch_scores);
+    // 6. PCA 混合评分（E5）
+    if (pca_params_.has_value()) {
+        auto pca_scores = sai::embedding::DimensionReducer::Score(
+            *pca_params_, original_query, query_count,
+            cfg_.pca_score_method, cfg_.drop_k);
 
-    auto image_level_score = anomaly_map.MaxScore();
+        float max_pca = *std::max_element(pca_scores.begin(), pca_scores.end());
+        if (max_pca > 0.0F) {
+            for (auto& s : pca_scores) s /= max_pca;
+        }
 
-    // 4. 双线性上采样到图像分辨率
-    auto upsampled = BilinearUpsample(anomaly_map.scores.data(),
-                                      grid_h, grid_w,
-                                      cfg_.image_height, cfg_.image_width);
-
-    // 5. Gaussian 平滑
-    auto blurred = GaussianBlur(upsampled.data(), cfg_.image_height, cfg_.image_width,
-                                cfg_.gaussian_sigma);
-
-    // 6. 阈值 → 二值 mask → 连通分量
-    std::vector<float> binary(cfg_.image_height * cfg_.image_width);
-    for (std::size_t i = 0; i < binary.size(); ++i) {
-        binary[i] = (blurred[i] > cfg_.anomaly_threshold) ? 1.0F : 0.0F;
+        float alpha = cfg_.hybrid_alpha;
+        for (std::size_t i = 0; i < query_count; ++i) {
+            patch_scores[i] = alpha * patch_scores[i] + (1.0F - alpha) * pca_scores[i];
+        }
     }
-    auto regions = ConnectedComponents(binary.data(), cfg_.image_height, cfg_.image_width,
-                                       blurred.data());
 
+    // 7. 构建 DetectionResult（标准后处理管线）
     auto end = std::chrono::steady_clock::now();
     auto latency = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
-
-    // 7. 构建 DetectionResult
-    return DetectionResult{
-        std::move(anomaly_map),
-        std::move(regions),
-        image_level_score,
-        latency,
-    };
+    return BuildDetectionResult(std::move(patch_scores), grid_h, grid_w,
+                                cfg_.image_height, cfg_.image_width,
+                                cfg_.gaussian_sigma,
+                                effective_threshold_,
+                                latency);
 }
 
 // ── PatchCore::DetectBatch ──────────────────────────────────────────
@@ -125,24 +233,7 @@ auto PatchCore::Detect(const sai::embedding::Embedding& embedding) noexcept
 auto PatchCore::DetectBatch(
     std::span<const sai::embedding::Embedding* const> embeddings) noexcept
     -> Result<std::vector<DetectionResult>> {
-    std::vector<DetectionResult> results;
-    results.reserve(embeddings.size());
-
-    for (const auto* emb : embeddings) {
-        if (emb == nullptr) {
-            return tl::make_unexpected(ErrorInfo{
-                ErrorCode::Detection_InvalidPatchGrid,
-                "null embedding pointer in DetectBatch",
-                std::source_location::current(),
-            });
-        }
-        auto result = Detect(*emb);
-        if (!result.has_value()) {
-            return tl::make_unexpected(result.error());
-        }
-        results.push_back(std::move(result.value()));
-    }
-    return results;
+    return DetectBatchImpl(*this, embeddings);
 }
 
 }  // namespace sai::detection

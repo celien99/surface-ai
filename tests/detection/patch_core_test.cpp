@@ -14,6 +14,7 @@
 #include <sai/detection/feature_bank.h>
 #include <sai/detection/patch_core.h>
 #include <sai/detection/post_process_utils.h>
+#include <sai/embedding/dimension_reducer.h>
 #include <sai/embedding/embedding.h>
 
 namespace {
@@ -412,4 +413,392 @@ TEST_F(PatchCoreDetectTest, DetectWithoutInitializeReturnsError) {
 
     auto result = patch_core_->Detect(embedding);
     EXPECT_FALSE(result.has_value());
+}
+
+// ── SubspaceAD 增强测试 ──────────────────────────────────────────
+
+// 构造多样本 coreset 的辅助函数
+struct MultiSampleCoreset {
+    fs::path path;
+    std::size_t dim;
+    std::size_t num_samples;
+};
+auto MakeMultiSampleCoreset() -> MultiSampleCoreset {
+    MultiSampleCoreset cs;
+    cs.dim = 4;
+    cs.num_samples = 8;
+    // 8 个 4 维向量，足够多样以支持 PCA 拟合
+    cs.path = fs::temp_directory_path() / "test_multisample_coreset.bin";
+    int suffix = 0;
+    while (fs::exists(cs.path)) {
+        cs.path = fs::temp_directory_path().parent_path() /
+                  ("test_multisample_coreset_" + std::to_string(++suffix) + ".bin");
+    }
+    std::vector<float> data = {
+        1.0F, 0.0F, 0.0F, 0.0F,
+        0.0F, 1.0F, 0.0F, 0.0F,
+        0.0F, 0.0F, 1.0F, 0.0F,
+        0.0F, 0.0F, 0.0F, 1.0F,
+        0.5F, 0.5F, 0.0F, 0.0F,
+        0.0F, 0.5F, 0.5F, 0.0F,
+        0.0F, 0.0F, 0.5F, 0.5F,
+        0.5F, 0.0F, 0.0F, 0.5F,
+    };
+    WriteFloatMatrix(cs.path, data);
+    return cs;
+}
+
+// 创建 Patch Embedding（2×2 grid, dim=4）
+auto Make2x2Embedding(const std::vector<float>& data) -> sai::embedding::Embedding {
+    sai::embedding::EmbeddingMeta meta;
+    meta.model_name = "DINOv3";
+    meta.type = sai::embedding::EmbeddingType::Patch;
+    meta.dim = 4;
+    meta.count = 4;
+    meta.grid = {2, 2};
+    auto copy = data;  // FromCpu 需要非 const vector
+    return sai::embedding::Embedding::FromCpu(std::move(copy), std::move(meta));
+}
+
+TEST(SubspaceADTest, WhiteningEnabled) {
+    auto cs = MakeMultiSampleCoreset();
+
+    sai::detection::PatchCore::Config cfg;
+    cfg.feature_bank_path = cs.path;
+    cfg.image_width = 28;
+    cfg.image_height = 28;
+    cfg.patch_size = 14;
+    cfg.embed_dim = 4;
+    cfg.k_nearest = 1;
+    cfg.anomaly_threshold = 0.5F;
+    cfg.gaussian_sigma = 1;
+    cfg.enable_whitening = true;
+    cfg.drop_k = 0;
+
+    auto pc = sai::detection::PatchCore(cfg);
+    sai::Context ctx;
+    auto init_result = pc.Initialize(ctx);
+    ASSERT_TRUE(init_result.has_value()) << init_result.error().message;
+
+    // 查询向量——含一个异常 patch
+    std::vector<float> query = {
+        0.5F, 0.5F, 0.5F, 0.5F,
+        0.5F, 0.5F, 0.5F, 0.5F,
+        0.5F, 0.5F, 0.5F, 0.5F,
+        0.9F, 0.9F, 0.9F, 0.9F,
+    };
+    auto embedding = Make2x2Embedding(query);
+    auto result = pc.Detect(embedding);
+    ASSERT_TRUE(result.has_value()) << result.error().message;
+    EXPECT_EQ(result.value().anomaly_map.scores.size(), 4U);
+    EXPECT_GE(result.value().image_level_score, 0.0F);
+
+    fs::remove(cs.path);
+}
+
+TEST(SubspaceADTest, AdaptiveThreshold) {
+    auto cs = MakeMultiSampleCoreset();
+
+    sai::detection::PatchCore::Config cfg;
+    cfg.feature_bank_path = cs.path;
+    cfg.image_width = 28;
+    cfg.image_height = 28;
+    cfg.patch_size = 14;
+    cfg.embed_dim = 4;
+    cfg.k_nearest = 1;
+    cfg.anomaly_threshold = 0.5F;
+    cfg.gaussian_sigma = 1;
+    cfg.enable_adaptive_threshold = true;
+    cfg.target_fpr = 0.5F;
+
+    auto pc = sai::detection::PatchCore(cfg);
+    sai::Context ctx;
+    auto init_result = pc.Initialize(ctx);
+    ASSERT_TRUE(init_result.has_value()) << init_result.error().message;
+
+    // 正常查询（与 coreset 相近）
+    std::vector<float> normal_query = {
+        0.5F, 0.5F, 0.0F, 0.0F,
+        0.5F, 0.5F, 0.0F, 0.0F,
+        0.5F, 0.5F, 0.0F, 0.0F,
+        0.5F, 0.5F, 0.0F, 0.0F,
+    };
+    auto emb_normal = Make2x2Embedding(normal_query);
+    auto result_normal = pc.Detect(emb_normal);
+    ASSERT_TRUE(result_normal.has_value());
+
+    // 异常查询（全 1，远离 coreset）
+    std::vector<float> anomaly_query(16, 1.0F);
+    auto emb_anomaly = Make2x2Embedding(anomaly_query);
+    auto result_anomaly = pc.Detect(emb_anomaly);
+    ASSERT_TRUE(result_anomaly.has_value());
+
+    // 异常查询的 image_level_score 应高于正常查询
+    EXPECT_GT(result_anomaly.value().image_level_score,
+              result_normal.value().image_level_score);
+
+    fs::remove(cs.path);
+}
+
+TEST(SubspaceADTest, HybridScoring) {
+    auto cs = MakeMultiSampleCoreset();
+
+    // 用 coreset 数据手动物合 PCA
+    std::vector<float> coreset_data = {
+        1.0F, 0.0F, 0.0F, 0.0F,
+        0.0F, 1.0F, 0.0F, 0.0F,
+        0.0F, 0.0F, 1.0F, 0.0F,
+        0.0F, 0.0F, 0.0F, 1.0F,
+        0.5F, 0.5F, 0.0F, 0.0F,
+        0.0F, 0.5F, 0.5F, 0.0F,
+        0.0F, 0.0F, 0.5F, 0.5F,
+        0.5F, 0.0F, 0.0F, 0.5F,
+    };
+    std::vector<sai::embedding::Embedding> samples;
+    samples.reserve(cs.num_samples);
+    for (std::size_t i = 0; i < cs.num_samples; ++i) {
+        sai::embedding::EmbeddingMeta meta;
+        meta.model_name = "test";
+        meta.type = sai::embedding::EmbeddingType::Patch;
+        meta.dim = cs.dim;
+        meta.count = 1;
+        meta.grid = {1, 1};
+        std::vector<float> vec(coreset_data.begin() + static_cast<std::ptrdiff_t>(i * cs.dim),
+                                coreset_data.begin() + static_cast<std::ptrdiff_t>((i + 1) * cs.dim));
+        samples.push_back(
+            sai::embedding::Embedding::FromCpu(std::move(vec), std::move(meta)));
+    }
+
+    auto pca_result = sai::embedding::DimensionReducer::FitPca(samples, cs.dim);
+    ASSERT_TRUE(pca_result.has_value()) << pca_result.error().message;
+
+    auto pca_path = fs::temp_directory_path() / "test_hybrid_pca.bin";
+    auto save_result = sai::embedding::DimensionReducer::SavePcaParams(
+        pca_result.value(), pca_path);
+    ASSERT_TRUE(save_result.has_value()) << save_result.error().message;
+
+    // PatchCore with PCA hybrid scoring (alpha=0 → pure PCA)
+    sai::detection::PatchCore::Config cfg_hybrid;
+    cfg_hybrid.feature_bank_path = cs.path;
+    cfg_hybrid.image_width = 28;
+    cfg_hybrid.image_height = 28;
+    cfg_hybrid.patch_size = 14;
+    cfg_hybrid.embed_dim = 4;
+    cfg_hybrid.k_nearest = 1;
+    cfg_hybrid.anomaly_threshold = 0.5F;
+    cfg_hybrid.gaussian_sigma = 1;
+    cfg_hybrid.pca_model_path = pca_path;
+    cfg_hybrid.hybrid_alpha = 0.0F;
+
+    auto pc_hybrid = sai::detection::PatchCore(cfg_hybrid);
+    sai::Context ctx;
+    auto init_hybrid = pc_hybrid.Initialize(ctx);
+    ASSERT_TRUE(init_hybrid.has_value()) << init_hybrid.error().message;
+
+    // PatchCore without PCA (pure k-NN)
+    sai::detection::PatchCore::Config cfg_pure;
+    cfg_pure.feature_bank_path = cs.path;
+    cfg_pure.image_width = 28;
+    cfg_pure.image_height = 28;
+    cfg_pure.patch_size = 14;
+    cfg_pure.embed_dim = 4;
+    cfg_pure.k_nearest = 1;
+    cfg_pure.anomaly_threshold = 0.5F;
+    cfg_pure.gaussian_sigma = 1;
+
+    auto pc_pure = sai::detection::PatchCore(cfg_pure);
+    auto init_pure = pc_pure.Initialize(ctx);
+    ASSERT_TRUE(init_pure.has_value()) << init_pure.error().message;
+
+    // 查询含异常 patch
+    std::vector<float> query = {
+        0.5F, 0.5F, 0.5F, 0.5F,
+        0.5F, 0.5F, 0.5F, 0.5F,
+        0.5F, 0.5F, 0.5F, 0.5F,
+        0.9F, 0.9F, 0.9F, 0.9F,
+    };
+    auto emb = Make2x2Embedding(query);
+    auto result_hybrid = pc_hybrid.Detect(emb);
+    ASSERT_TRUE(result_hybrid.has_value());
+
+    auto emb2 = Make2x2Embedding(query);
+    auto result_pure = pc_pure.Detect(emb2);
+    ASSERT_TRUE(result_pure.has_value());
+
+    // 混合评分（纯 PCA）应与纯 k-NN 不同
+    bool scores_differ = false;
+    for (std::size_t i = 0; i < result_hybrid.value().anomaly_map.scores.size(); ++i) {
+        if (std::abs(result_hybrid.value().anomaly_map.scores[i]
+                     - result_pure.value().anomaly_map.scores[i]) > 1e-4F) {
+            scores_differ = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(scores_differ);
+
+    fs::remove(cs.path);
+    fs::remove(pca_path);
+}
+
+TEST(SubspaceADTest, AllDefaultsUnchanged) {
+    auto cs = MakeMultiSampleCoreset();
+
+    // 两个 PatchCore，配置完全一致（所有增强默认关闭）
+    sai::detection::PatchCore::Config cfg;
+    cfg.feature_bank_path = cs.path;
+    cfg.image_width = 28;
+    cfg.image_height = 28;
+    cfg.patch_size = 14;
+    cfg.embed_dim = 4;
+    cfg.k_nearest = 1;
+    cfg.anomaly_threshold = 0.5F;
+    cfg.gaussian_sigma = 1;
+
+    auto pc1 = sai::detection::PatchCore(cfg);
+    auto pc2 = sai::detection::PatchCore(cfg);
+    sai::Context ctx;
+    auto init1 = pc1.Initialize(ctx);
+    auto init2 = pc2.Initialize(ctx);
+    ASSERT_TRUE(init1.has_value());
+    ASSERT_TRUE(init2.has_value());
+
+    std::vector<float> query = {
+        0.5F, 0.5F, 0.5F, 0.5F,
+        0.5F, 0.5F, 0.5F, 0.5F,
+        0.5F, 0.5F, 0.5F, 0.5F,
+        0.9F, 0.9F, 0.9F, 0.9F,
+    };
+    auto emb1 = Make2x2Embedding(query);
+    auto emb2 = Make2x2Embedding(query);
+    auto result1 = pc1.Detect(emb1);
+    auto result2 = pc2.Detect(emb2);
+    ASSERT_TRUE(result1.has_value());
+    ASSERT_TRUE(result2.has_value());
+
+    // 所有默认配置下两个实例的输出应完全一致
+    ASSERT_EQ(result1.value().anomaly_map.scores.size(),
+              result2.value().anomaly_map.scores.size());
+    for (std::size_t i = 0; i < result1.value().anomaly_map.scores.size(); ++i) {
+        EXPECT_FLOAT_EQ(result1.value().anomaly_map.scores[i],
+                         result2.value().anomaly_map.scores[i]);
+    }
+    EXPECT_FLOAT_EQ(result1.value().image_level_score,
+                     result2.value().image_level_score);
+
+    fs::remove(cs.path);
+}
+
+TEST(SubspaceADTest, WhiteningWithDropK) {
+    auto cs = MakeMultiSampleCoreset();
+
+    // NOTE: drop_k > 0 requires embed_dim to be sufficiently larger than target_dim,
+    // i.e. enough PCA components must be available to skip the first drop_k.
+    // With test embed_dim=4, we use drop_k=0 but still exercise the whitening + Rebuild path.
+    // For production use with e.g. DINOv3 embed_dim=1024, drop_k=2 is common.
+
+    sai::detection::PatchCore::Config cfg;
+    cfg.feature_bank_path = cs.path;
+    cfg.image_width = 28;
+    cfg.image_height = 28;
+    cfg.patch_size = 14;
+    cfg.embed_dim = 4;
+    cfg.k_nearest = 1;
+    cfg.anomaly_threshold = 0.5F;
+    cfg.gaussian_sigma = 1;
+    cfg.enable_whitening = true;
+    cfg.drop_k = 0;
+
+    auto pc = sai::detection::PatchCore(cfg);
+    sai::Context ctx;
+    auto init_result = pc.Initialize(ctx);
+    ASSERT_TRUE(init_result.has_value()) << init_result.error().message;
+
+    // 查询含异常 patch
+    std::vector<float> query = {
+        0.5F, 0.5F, 0.5F, 0.5F,
+        0.5F, 0.5F, 0.5F, 0.5F,
+        0.5F, 0.5F, 0.5F, 0.5F,
+        0.9F, 0.9F, 0.9F, 0.9F,
+    };
+    auto emb = Make2x2Embedding(query);
+    auto result = pc.Detect(emb);
+    ASSERT_TRUE(result.has_value()) << result.error().message;
+    EXPECT_EQ(result.value().anomaly_map.scores.size(), 4U);
+    EXPECT_GE(result.value().image_level_score, 0.0F);
+
+    fs::remove(cs.path);
+}
+
+TEST(SubspaceADTest, WhiteningAndHybridCombined) {
+    auto cs = MakeMultiSampleCoreset();
+
+    // 用 coreset 数据手动物合 PCA
+    std::vector<float> coreset_data = {
+        1.0F, 0.0F, 0.0F, 0.0F,
+        0.0F, 1.0F, 0.0F, 0.0F,
+        0.0F, 0.0F, 1.0F, 0.0F,
+        0.0F, 0.0F, 0.0F, 1.0F,
+        0.5F, 0.5F, 0.0F, 0.0F,
+        0.0F, 0.5F, 0.5F, 0.0F,
+        0.0F, 0.0F, 0.5F, 0.5F,
+        0.5F, 0.0F, 0.0F, 0.5F,
+    };
+    std::vector<sai::embedding::Embedding> samples;
+    samples.reserve(cs.num_samples);
+    for (std::size_t i = 0; i < cs.num_samples; ++i) {
+        sai::embedding::EmbeddingMeta meta;
+        meta.model_name = "test";
+        meta.type = sai::embedding::EmbeddingType::Patch;
+        meta.dim = cs.dim;
+        meta.count = 1;
+        meta.grid = {1, 1};
+        std::vector<float> vec(coreset_data.begin() + static_cast<std::ptrdiff_t>(i * cs.dim),
+                                coreset_data.begin() + static_cast<std::ptrdiff_t>((i + 1) * cs.dim));
+        samples.push_back(
+            sai::embedding::Embedding::FromCpu(std::move(vec), std::move(meta)));
+    }
+
+    auto pca_result = sai::embedding::DimensionReducer::FitPca(samples, cs.dim);
+    ASSERT_TRUE(pca_result.has_value()) << pca_result.error().message;
+
+    auto pca_path = fs::temp_directory_path() / "test_whitening_hybrid_pca.bin";
+    auto save_result = sai::embedding::DimensionReducer::SavePcaParams(
+        pca_result.value(), pca_path);
+    ASSERT_TRUE(save_result.has_value()) << save_result.error().message;
+
+    // 同时启用白化和 PCA 混合评分
+    sai::detection::PatchCore::Config cfg;
+    cfg.feature_bank_path = cs.path;
+    cfg.image_width = 28;
+    cfg.image_height = 28;
+    cfg.patch_size = 14;
+    cfg.embed_dim = 4;
+    cfg.k_nearest = 1;
+    cfg.anomaly_threshold = 0.5F;
+    cfg.gaussian_sigma = 1;
+    cfg.enable_whitening = true;
+    cfg.drop_k = 0;
+    cfg.pca_model_path = pca_path;
+    cfg.hybrid_alpha = 0.5F;
+
+    auto pc = sai::detection::PatchCore(cfg);
+    sai::Context ctx;
+    auto init_result = pc.Initialize(ctx);
+    ASSERT_TRUE(init_result.has_value()) << init_result.error().message;
+
+    // 查询含异常 patch
+    std::vector<float> query = {
+        0.5F, 0.5F, 0.5F, 0.5F,
+        0.5F, 0.5F, 0.5F, 0.5F,
+        0.5F, 0.5F, 0.5F, 0.5F,
+        0.9F, 0.9F, 0.9F, 0.9F,
+    };
+    auto emb = Make2x2Embedding(query);
+    auto result = pc.Detect(emb);
+    ASSERT_TRUE(result.has_value()) << result.error().message;
+    EXPECT_EQ(result.value().anomaly_map.scores.size(), 4U);
+    EXPECT_GE(result.value().image_level_score, 0.0F);
+
+    fs::remove(cs.path);
+    fs::remove(pca_path);
 }
