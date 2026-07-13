@@ -1,38 +1,31 @@
-# Task 4 Report: Embedding data type
+# Task 4 Report: KnowledgeEvolution (changelog CRUD)
 
-**Status:** Complete
+**Status:** DONE_WITH_CONCERNS
 
-**Commit:** `feat(embedding): ✨ 添加 Embedding 双存储数据类型`
+**Commit:** `caaa910` — `feat(knowledge): ✨ 添加 KnowledgeEvolution 变更日志（Append/GetHistory/GetChangesSince）`
 
-**Tests:** 215 total (201 prior + 14 new), 0 failures.
+**Tests:** 336 total (333 prior + 3 new), 0 failures.
 
-**New tests (14):**
+**New tests (3):**
 | Test | What it verifies |
 |------|-----------------|
-| `Embedding.TypeTraits` | Move-only, nothrow move, final |
-| `Embedding.FromGpuSignatureCompiles` | `static_assert` on `FromGpu` signature compileability |
-| `Embedding.ToCpuAsyncDeclared` | `static_assert` on `ToCpuAsync` member existence |
-| `Embedding.FromCpuCreatesCpuEmbedding` | `IsOnGpu()==false`, `Data()!=nullptr`, `Meta()` all fields, `SizeBytes()` |
-| `Embedding.FromCpuEmptyVector` | Empty data → `Data()==nullptr`, `SizeBytes()==0` |
-| `Embedding.FromCpuGlobalEmbedding` | `EmbeddingType::Global`, single-vector data |
-| `Embedding.SizeBytesMatchesCountTimesDimTimesFloatSize` | `SizeBytes() == count * dim * sizeof(float)` |
-| `Embedding.SizeBytesWithZeroCountOrDim` | Zero count or dim → `SizeBytes()==0` |
-| `Embedding.ConstDataReturnsSamePointer` | `const Data()` and non-const return same address |
-| `Embedding.MoveConstructionLeavesSourceValid` | Move ctor transfers data, source becomes empty |
-| `Embedding.MoveAssignmentTransfersOwnership` | Move assignment transfers data and metadata |
-| `Embedding.SelfMoveAssignmentSafe` | Move assignment does not crash |
-| `Embedding.EmbeddingTypeValues` | Enum values correct (Patch=0, Global=1) |
-| `Embedding.EmbeddingMetaDefaultValues` | Default-constructed meta fields zero/empty |
+| `KnowledgeEvolutionTest.AppendAndGetHistory` | Append returns void, GetHistory returns entry with correct entity_type/entity_id/operation/version |
+| `KnowledgeEvolutionTest.VersionIncrements` | Three Appends on same entity get versions 1, 2, 3 |
+| `KnowledgeEvolutionTest.GetChangesSince` | Second entry (Node 2) returned when querying after first append |
 
 **Files created:**
-- `include/sai/embedding/embedding.h` — EmbeddingType, EmbeddingMeta, Embedding (dual storage, move-only)
-- `src/embedding/embedding.cpp` — FromGpu, FromCpu, Data, SizeBytes, ~Embedding definitions
-- `src/embedding/CMakeLists.txt` — sai_embedding static library
-- `tests/embedding/embedding_test.cpp` — 14 test cases
-- `tests/embedding/CMakeLists.txt` — test target
+- `include/sai/knowledge/knowledge_evolution.h` — EvolutionOp enum, EvolutionEntry struct, KnowledgeEvolution class with Append/GetHistory/GetChangesSince
 
 **Files modified:**
-- `CMakeLists.txt` — added `src/embedding` and `tests/embedding` subdirectories
+- `src/knowledge/knowledge_evolution.cpp` — full implementation (previously 0-byte stub)
+- `tests/knowledge/knowledge_evolution_test.cpp` — 3 test cases (previously 0-byte stub)
 
 **Concerns:**
-- None. All signatures match the spec (SS 4.4). `ToCpuAsync` is declared but not defined, matching the declare-in-header/gate-in-cpp pattern. `PooledPtr<uint8_t>` requires `memory_pool.h` include (same as `SurfaceImage` pattern in M2).
+
+1. **Brief's `GetChangesSince` timing issue (fixed in implementation).** The brief's reference code stored timestamps with second precision (`datetime('now')`) and compared with `>`. When two Appends and `after_first` all fall within the same second, the SQL comparison `WHERE timestamp > ?` cannot distinguish them, causing `GetChangesSince` to return 0 entries. **Fix:** Append now computes timestamps in C++ with microsecond precision (`YYYY-MM-DD HH:MM:SS.uuuuuu`) and binds them as parameters. `GetChangesSince` similarly formats the `since` parameter with microsecond precision. This makes lexicographic SQL string comparison reliably distinguish entries at microsecond granularity.
+
+2. **Brief's anonymous namespace declarations would cause linker error (fixed).** The brief forward-declared `RecordToJson` and `JsonToRecord` inside the anonymous namespace (internal linkage), shadowing the same-named functions from `knowledge_record.h`. The callers in the same translation unit would resolve to the anonymous namespace declarations, which have no definitions, causing an undefined symbol link error. **Fix:** Removed these two forward declarations from the anonymous namespace. The functions are already declared in `knowledge_record.h` within the same `sai::knowledge` namespace and are accessible directly.
+
+3. **Unused includes (fixed).** Removed `<source_location>` (unused in this translation unit). Added `<cstring>` for `std::strcmp` and `<ctime>` for `std::gmtime`/`std::mktime`, both used but omitted from the brief's reference code.
+
+4. **Five `[[nodiscard]]` warnings in test file (not fixed, matches existing pattern).** The test file ignores return values of `Append()` in `VersionIncrements` and `GetChangesSince` tests (5 sites). This follows the same pattern as the existing `knowledge_graph_test.cpp` which also discards return values for non-critical intermediate calls. These are warnings, not errors, and are consistent with project conventions.
