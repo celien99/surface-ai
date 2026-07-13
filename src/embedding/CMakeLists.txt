@@ -3,6 +3,9 @@ find_package(tl-expected CONFIG REQUIRED)
 add_library(sai_embedding STATIC
     embedding.cpp
     dimension_reducer.cpp
+    pca_fitting.cpp
+    pca_scoring.cpp
+    pca_serialization.cpp
     feature_cache.cpp
     patch_embedder.cpp
     global_embedder.cpp
