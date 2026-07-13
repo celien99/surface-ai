@@ -29,6 +29,11 @@ add_executable(sai_patch_core_test patch_core_test.cpp)
 target_include_directories(sai_patch_core_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(sai_patch_core_test PRIVATE sai::detection GTest::gtest_main)
 
+add_executable(sai_pca_detector_test pca_detector_test.cpp)
+target_include_directories(sai_pca_detector_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(sai_pca_detector_test PRIVATE sai::detection GTest::gtest_main)
+
 include(GoogleTest)
 gtest_discover_tests(sai_detection_types_test)
 gtest_discover_tests(sai_patch_core_test)
+gtest_discover_tests(sai_pca_detector_test)
