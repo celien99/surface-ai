@@ -52,9 +52,11 @@ public:
     [[nodiscard]] auto DeleteEdge(EdgeId id) noexcept -> Result<void>;
     [[nodiscard]] auto GetEdge(EdgeId id) const noexcept -> Result<KnowledgeEdge>;
 
-    [[nodiscard]] auto Traverse(NodeId from, std::string_view relationship) const noexcept
+    [[nodiscard]] auto Traverse(NodeId from, std::string_view relationship,
+                                std::size_t max_depth = 3) const noexcept
         -> Result<std::vector<GraphPath>>;
-    [[nodiscard]] auto ReverseTraverse(NodeId to, std::string_view relationship) const noexcept
+    [[nodiscard]] auto ReverseTraverse(NodeId to, std::string_view relationship,
+                                       std::size_t max_depth = 3) const noexcept
         -> Result<std::vector<GraphPath>>;
 
     [[nodiscard]] auto NodeCount() const noexcept -> std::size_t;

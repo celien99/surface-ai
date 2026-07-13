@@ -3,6 +3,7 @@
 #include <sqlite3.h>
 #include <source_location>
 #include <sstream>
+#include <ctime>
 #include <iomanip>
 
 namespace sai::knowledge {
@@ -27,7 +28,7 @@ auto KnowledgeSnapshot::Create(std::string label) noexcept -> Result<std::int64_
         std::string msg = err ? err : "unknown";
         sqlite3_free(err);
         return tl::make_unexpected(ErrorInfo{
-            ErrorCode::Knowledge_SnapshotRestoreFailed, msg,
+            ErrorCode::Knowledge_DbOpenFailed, msg,
             std::source_location::current(),
         });
     }
@@ -67,7 +68,7 @@ auto KnowledgeSnapshot::List() const noexcept -> Result<std::vector<SnapshotInfo
         std::tm tm = {};
         std::istringstream ss(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2)));
         ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
-        info.created_at = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+        info.created_at = std::chrono::system_clock::from_time_t(timegm(&tm));
         info.node_count = sqlite3_column_int64(stmt, 3);
         info.edge_count = sqlite3_column_int64(stmt, 4);
         snapshots.push_back(info);

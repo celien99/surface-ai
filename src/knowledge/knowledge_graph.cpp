@@ -68,9 +68,22 @@ auto KnowledgeGraph::UpdateNode(NodeId id, KnowledgeRecord properties) noexcept 
 auto KnowledgeGraph::DeleteNode(NodeId id) noexcept -> Result<void> {
     const char* sql = "DELETE FROM nodes WHERE id = ?";
     sqlite3_stmt* stmt = nullptr;
-    sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("prepare delete node: ") + sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     sqlite3_bind_int64(stmt, 1, id);
-    sqlite3_step(stmt);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        sqlite3_finalize(stmt);
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("delete node: ") + sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     sqlite3_finalize(stmt);
     return {};
 }
@@ -129,12 +142,25 @@ auto KnowledgeGraph::InsertEdge(NodeId source, NodeId target,
     auto json_str = RecordToJson(properties).dump();
     const char* sql = "INSERT INTO edges (source_id, target_id, relationship, properties_json) VALUES (?, ?, ?, ?)";
     sqlite3_stmt* stmt = nullptr;
-    sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("prepare insert edge: ") + sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     sqlite3_bind_int64(stmt, 1, source);
     sqlite3_bind_int64(stmt, 2, target);
     sqlite3_bind_text(stmt, 3, relationship.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 4, json_str.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_step(stmt);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        sqlite3_finalize(stmt);
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("insert edge: ") + sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     auto id = static_cast<EdgeId>(sqlite3_last_insert_rowid(db_));
     sqlite3_finalize(stmt);
     return id;
@@ -143,9 +169,22 @@ auto KnowledgeGraph::InsertEdge(NodeId source, NodeId target,
 auto KnowledgeGraph::DeleteEdge(EdgeId id) noexcept -> Result<void> {
     const char* sql = "DELETE FROM edges WHERE id = ?";
     sqlite3_stmt* stmt = nullptr;
-    sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("prepare delete edge: ") + sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     sqlite3_bind_int64(stmt, 1, id);
-    sqlite3_step(stmt);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        sqlite3_finalize(stmt);
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("delete edge: ") + sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     sqlite3_finalize(stmt);
     return {};
 }
@@ -174,56 +213,123 @@ auto KnowledgeGraph::GetEdge(EdgeId id) const noexcept -> Result<KnowledgeEdge> 
     return edge;
 }
 
-auto KnowledgeGraph::Traverse(NodeId from, std::string_view relationship) const noexcept
+auto KnowledgeGraph::Traverse(NodeId from, std::string_view relationship,
+                               std::size_t max_depth) const noexcept
     -> Result<std::vector<GraphPath>> {
+    if (max_depth == 0) {
+        return std::vector<GraphPath>{};
+    }
+
     const char* sql =
         "SELECT e.id, n.id, n.type, n.properties_json "
         "FROM edges e JOIN nodes n ON e.target_id = n.id "
         "WHERE e.source_id = ? AND e.relationship = ?";
     sqlite3_stmt* stmt = nullptr;
-    sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("prepare traverse: ") + sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     sqlite3_bind_int64(stmt, 1, from);
     sqlite3_bind_text(stmt, 2, relationship.data(), static_cast<int>(relationship.size()), SQLITE_TRANSIENT);
 
+    // Collect direct targets and their IDs for recursion
     GraphPath path;
     path.source = from;
     path.relationship = relationship;
+    std::vector<NodeId> neighbor_ids;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         KnowledgeNode node;
         node.id = sqlite3_column_int64(stmt, 1);
         node.type = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
         auto json_str = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
         node.properties = json_str ? JsonToRecord(nlohmann::json::parse(json_str)) : KnowledgeRecord{};
+        neighbor_ids.push_back(node.id);
         path.targets.push_back(std::move(node));
     }
     sqlite3_finalize(stmt);
-    return std::vector<GraphPath>{std::move(path)};
+
+    std::vector<GraphPath> results;
+    if (!path.targets.empty()) {
+        results.push_back(std::move(path));
+    }
+
+    // Recursively traverse from each neighbor for deeper levels
+    if (max_depth > 1) {
+        for (auto neighbor_id : neighbor_ids) {
+            auto deeper = Traverse(neighbor_id, relationship, max_depth - 1);
+            if (!deeper.has_value()) {
+                return tl::make_unexpected(deeper.error());
+            }
+            auto& deeper_paths = *deeper;
+            results.insert(results.end(),
+                           std::make_move_iterator(deeper_paths.begin()),
+                           std::make_move_iterator(deeper_paths.end()));
+        }
+    }
+
+    return results;
 }
 
-auto KnowledgeGraph::ReverseTraverse(NodeId to, std::string_view relationship) const noexcept
+auto KnowledgeGraph::ReverseTraverse(NodeId to, std::string_view relationship,
+                                      std::size_t max_depth) const noexcept
     -> Result<std::vector<GraphPath>> {
+    if (max_depth == 0) {
+        return std::vector<GraphPath>{};
+    }
+
     const char* sql =
         "SELECT e.id, n.id, n.type, n.properties_json "
         "FROM edges e JOIN nodes n ON e.source_id = n.id "
         "WHERE e.target_id = ? AND e.relationship = ?";
     sqlite3_stmt* stmt = nullptr;
-    sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("prepare reverse_traverse: ") + sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     sqlite3_bind_int64(stmt, 1, to);
     sqlite3_bind_text(stmt, 2, relationship.data(), static_cast<int>(relationship.size()), SQLITE_TRANSIENT);
 
     GraphPath path;
     path.source = to;
     path.relationship = relationship;
+    std::vector<NodeId> neighbor_ids;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         KnowledgeNode node;
         node.id = sqlite3_column_int64(stmt, 1);
         node.type = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
         auto json_str = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
         node.properties = json_str ? JsonToRecord(nlohmann::json::parse(json_str)) : KnowledgeRecord{};
+        neighbor_ids.push_back(node.id);
         path.targets.push_back(std::move(node));
     }
     sqlite3_finalize(stmt);
-    return std::vector<GraphPath>{std::move(path)};
+
+    std::vector<GraphPath> results;
+    if (!path.targets.empty()) {
+        results.push_back(std::move(path));
+    }
+
+    // Recursively reverse-traverse from each neighbor for deeper levels
+    if (max_depth > 1) {
+        for (auto neighbor_id : neighbor_ids) {
+            auto deeper = ReverseTraverse(neighbor_id, relationship, max_depth - 1);
+            if (!deeper.has_value()) {
+                return tl::make_unexpected(deeper.error());
+            }
+            auto& deeper_paths = *deeper;
+            results.insert(results.end(),
+                           std::make_move_iterator(deeper_paths.begin()),
+                           std::make_move_iterator(deeper_paths.end()));
+        }
+    }
+
+    return results;
 }
 
 auto KnowledgeGraph::NodeCount() const noexcept -> std::size_t {

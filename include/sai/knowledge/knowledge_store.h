@@ -1,4 +1,5 @@
 // knowledge_store.h — 批次 4.1 知识子系统统一门面
+// Note: KnowledgeStore uses static Create() factory rather than IService DI — simplifies testing; Context registration deferred to M6.
 #pragma once
 #include <filesystem>
 #include <memory>
@@ -37,7 +38,8 @@ public:
                                     std::string relationship, KnowledgeRecord properties,
                                     std::string changed_by = "system") noexcept -> Result<EdgeId>;
     [[nodiscard]] auto GetEdge(EdgeId id) const noexcept -> Result<KnowledgeEdge>;
-    [[nodiscard]] auto Traverse(NodeId from, std::string_view relationship) const noexcept
+    [[nodiscard]] auto Traverse(NodeId from, std::string_view relationship,
+                                std::size_t max_depth = 3) const noexcept
         -> Result<std::vector<GraphPath>>;
 
     [[nodiscard]] auto CreateSnapshot(std::string label) noexcept -> Result<std::int64_t>;
@@ -50,6 +52,9 @@ public:
     [[nodiscard]] auto GetChangesSince(
         std::chrono::system_clock::time_point since) const noexcept
         -> Result<std::vector<EvolutionEntry>>;
+
+    [[nodiscard]] auto LinkEmbedding(NodeId node_id, std::size_t vec_index) noexcept
+        -> Result<void>;
 
     [[nodiscard]] auto DbHandle() const noexcept -> sqlite3* { return db_.get(); }
     [[nodiscard]] auto Graph() noexcept -> KnowledgeGraph& { return graph_; }

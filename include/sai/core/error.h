@@ -58,7 +58,7 @@ enum class ErrorCode : std::uint32_t {
     Knowledge_SnapshotNotFound,
     Knowledge_SnapshotRestoreFailed,
     // Retrieval (M4)
-    Retrieval_DimensionMismatch,
+    Retrieval_DimensionMismatch,  // reserved: query dim vs FeatureBank dim (validated by FAISS internally)
     Retrieval_EmptyIndex,
     Retrieval_FusionConfigInvalid,
 };

@@ -88,7 +88,7 @@ auto MetadataPath::Search(const Config& cfg) const noexcept
     auto query = sql.str();
     if (sqlite3_prepare_v2(db_, query.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
         return tl::make_unexpected(ErrorInfo{
-            ErrorCode::Knowledge_DbOpenFailed,
+            ErrorCode::Infra_ConfigValidationFailed,
             sqlite3_errmsg(db_),
             std::source_location::current(),
         });

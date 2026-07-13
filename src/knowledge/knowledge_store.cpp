@@ -50,6 +50,11 @@ const char* kSchemaSQL = R"(
         node_count INTEGER NOT NULL DEFAULT 0,
         edge_count INTEGER NOT NULL DEFAULT 0
     );
+    CREATE TABLE IF NOT EXISTS vec_to_knowledge (
+        vec_index INTEGER PRIMARY KEY,
+        node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_v2k_node ON vec_to_knowledge(node_id);
     INSERT OR IGNORE INTO schema_version (version) VALUES (1);
 )";
 
@@ -110,7 +115,6 @@ KnowledgeStore::~KnowledgeStore() = default;
 
 auto KnowledgeStore::InsertNode(std::string type, KnowledgeRecord properties,
                                  std::string changed_by) noexcept -> Result<NodeId> {
-    auto prev = GetNode(0);  // dummy — Insert never has before_image
     KnowledgeRecord before;
     auto result = graph_.InsertNode(std::move(type), properties);
     if (result.has_value() && config_.enable_evolution) {
@@ -169,9 +173,10 @@ auto KnowledgeStore::GetEdge(EdgeId id) const noexcept -> Result<KnowledgeEdge> 
     return graph_.GetEdge(id);
 }
 
-auto KnowledgeStore::Traverse(NodeId from, std::string_view relationship) const noexcept
+auto KnowledgeStore::Traverse(NodeId from, std::string_view relationship,
+                               std::size_t max_depth) const noexcept
     -> Result<std::vector<GraphPath>> {
-    return graph_.Traverse(from, relationship);
+    return graph_.Traverse(from, relationship, max_depth);
 }
 
 auto KnowledgeStore::CreateSnapshot(std::string label) noexcept -> Result<std::int64_t> {
@@ -196,6 +201,30 @@ auto KnowledgeStore::GetChangesSince(
     std::chrono::system_clock::time_point since) const noexcept
     -> Result<std::vector<EvolutionEntry>> {
     return evolution_.GetChangesSince(since);
+}
+
+auto KnowledgeStore::LinkEmbedding(NodeId node_id, std::size_t vec_index) noexcept -> Result<void> {
+    const char* sql = "INSERT OR REPLACE INTO vec_to_knowledge (vec_index, node_id) VALUES (?, ?)";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_.get(), sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("prepare link_embedding: ") + sqlite3_errmsg(db_.get()),
+            std::source_location::current(),
+        });
+    }
+    sqlite3_bind_int64(stmt, 1, static_cast<std::int64_t>(vec_index));
+    sqlite3_bind_int64(stmt, 2, node_id);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        sqlite3_finalize(stmt);
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("link_embedding: ") + sqlite3_errmsg(db_.get()),
+            std::source_location::current(),
+        });
+    }
+    sqlite3_finalize(stmt);
+    return {};
 }
 
 }  // namespace sai::knowledge

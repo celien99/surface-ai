@@ -20,6 +20,7 @@ auto HybridRetriever::Retrieve(const float* query_vec,
                                  const std::vector<std::int64_t>& vec_to_node_ids) const noexcept
     -> Result<std::vector<RetrievalItem>> {
     // Run both paths
+    // Note: vector and metadata searches run sequentially — WorkerPool parallelization deferred to M6 Pipeline integration.
     auto vec_results = vec_path_.Search(query_vec, cfg.vector);
     if (!vec_results.has_value()) return tl::make_unexpected(vec_results.error());
 
