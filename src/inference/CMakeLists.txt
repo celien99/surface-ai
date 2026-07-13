@@ -8,6 +8,8 @@ find_package(CUDAToolkit QUIET)
 
 set(SAI_INFERENCE_SOURCES
     mock_engine.cpp
+    multi_layer_aggregator.cpp
+    saliency_mask.cpp
 )
 if(CUDAToolkit_FOUND)
     list(APPEND SAI_INFERENCE_SOURCES
