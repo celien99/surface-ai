@@ -2,6 +2,7 @@ find_package(SQLite3 REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 
 set(SAI_KNOWLEDGE_SOURCES
+    knowledge_record.cpp
     knowledge_graph.cpp
     knowledge_evolution.cpp
     knowledge_snapshot.cpp
