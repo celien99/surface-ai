@@ -1,7 +1,9 @@
-// dimension_reducer.cpp — 批次 3.2 DimensionReducer PCA/Whitening 降维与 Pooling 实现
+// dimension_reducer.cpp — 批次 3.2 DimensionReducer PCA/Whitening 降维、评分、序列化与 Pooling 实现
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstring>
+#include <fstream>
 #include <numeric>
 #include <string>
 #include <vector>
@@ -214,6 +216,25 @@ void ComputeCovariance(const float* centered, std::size_t count,
     return {eigenvectors, eigenvalues};
 }
 
+// 退化处理：如果某主成分为零或噪声级，用单位向量回退
+void FixDegenerateComponents(std::vector<float>& eigenvectors, std::vector<float>& eigenvalues,
+                              std::size_t target_dim, std::size_t input_dim) {
+    for (std::size_t t = 0; t < target_dim; ++t) {
+        if (eigenvalues[t] < 1e-15f) {
+            float row_norm = 0.0f;
+            for (std::size_t j = 0; j < input_dim; ++j) {
+                row_norm += eigenvectors[t * input_dim + j] * eigenvectors[t * input_dim + j];
+            }
+            if (row_norm < 0.5f) {
+                std::fill(&eigenvectors[t * input_dim], &eigenvectors[(t + 1) * input_dim], 0.0f);
+                if (t < input_dim) {
+                    eigenvectors[t * input_dim + t] = 1.0f;
+                }
+            }
+        }
+    }
+}
+
 }  // namespace
 
 // ============================================================================
@@ -254,29 +275,13 @@ auto DimensionReducer::FitPca(const std::vector<Embedding>& samples,
     // cov 在 ComputeTopEigen 中被修改（deflation），但已不需要原值
     auto [eigenvectors, eigenvalues] = ComputeTopEigen(cov.data(), input_dim, target_dim);
 
-    // 处理数值退化情况：如果某特征值为零或噪声级，用该行的单位方向作为 fallback
-    for (std::size_t t = 0; t < target_dim; ++t) {
-        if (eigenvalues[t] < 1e-15f) {
-            // 检查该行是否接近零
-            float row_norm = 0.0f;
-            for (std::size_t j = 0; j < input_dim; ++j) {
-                row_norm += eigenvectors[t * input_dim + j] * eigenvectors[t * input_dim + j];
-            }
-            if (row_norm < 0.5f) {
-                // 用单位向量填充
-                std::fill(&eigenvectors[t * input_dim],
-                          &eigenvectors[(t + 1) * input_dim], 0.0f);
-                if (t < input_dim) {
-                    eigenvectors[t * input_dim + t] = 1.0f;
-                }
-            }
-        }
-    }
+    FixDegenerateComponents(eigenvectors, eigenvalues, target_dim, input_dim);
 
     return PcaParams{
         .components = std::move(eigenvectors),
         .target_dim = target_dim,
-        .mean = std::move(mean)};
+        .mean = std::move(mean),
+        .eigvals = std::move(eigenvalues)};
 }
 
 // ============================================================================
@@ -527,6 +532,324 @@ auto DimensionReducer::Pool(const Embedding& input,
     out_meta.inference_latency = meta.inference_latency;
 
     return Embedding::FromCpu(std::move(pooled), out_meta);
+}
+
+// ============================================================================
+// Static Score — PCA 异常评分
+// ============================================================================
+
+namespace {
+
+// 重构：X_recon = (X0 @ C) @ Cᵀ + mu（仅 Cosine 评分使用）
+auto PcaReconstruct(const float* X, std::size_t N, const DimensionReducer::PcaParams& pca,
+                    std::size_t drop_k) -> std::vector<float> {
+    auto D = static_cast<std::size_t>(pca.mean.size());
+    auto k = pca.target_dim;
+    const float* mu = pca.mean.data();
+    const float* C = pca.components.data();  // k × D row-major
+
+    std::vector<float> X_recon(N * D);
+    for (std::size_t i = 0; i < N; ++i) {
+        // Z = (X_i - mu) @ Cᵀ  →  Z shape: k
+        for (std::size_t t = 0; t < k; ++t) {
+            float z = 0.0f;
+            if (t >= drop_k) {
+                for (std::size_t j = 0; j < D; ++j) {
+                    z += (X[i * D + j] - mu[j]) * C[t * D + j];
+                }
+            }
+            // X_recon = Z @ C + mu
+            for (std::size_t j = 0; j < D; ++j) {
+                X_recon[i * D + j] += z * C[t * D + j];
+            }
+        }
+        for (std::size_t j = 0; j < D; ++j) {
+            X_recon[i * D + j] += mu[j];
+        }
+    }
+    return X_recon;
+}
+
+}  // namespace
+
+auto DimensionReducer::Score(const PcaParams& params, const float* X,
+                               std::size_t N, PcaScoreMethod method,
+                               std::size_t drop_k) noexcept -> std::vector<float> {
+    if (N == 0) return {};
+
+    auto D = static_cast<std::size_t>(params.mean.size());
+    auto k = params.target_dim;
+    const float* mu = params.mean.data();
+    const float* C = params.components.data();
+
+    if (drop_k >= k) {
+        // 所有成分被丢弃 → 分数全为零
+        return std::vector<float>(N, 0.0f);
+    }
+
+    std::vector<float> scores(N, 0.0f);
+
+    if (method == PcaScoreMethod::Reconstruction) {
+        // ||X - X_recon||² = ||X0||² - ||Z||²（C 为正交基，该等式精确成立）
+        // 无需构建完整 X_recon，避免 O(N×D) 额外内存分配
+        for (std::size_t i = 0; i < N; ++i) {
+            float x0_norm_sq = 0.0f;
+            float z_norm_sq = 0.0f;
+            for (std::size_t j = 0; j < D; ++j) {
+                float x0 = X[i * D + j] - mu[j];
+                x0_norm_sq += x0 * x0;
+            }
+            for (std::size_t t = drop_k; t < k; ++t) {
+                float z = 0.0f;
+                for (std::size_t j = 0; j < D; ++j) {
+                    z += (X[i * D + j] - mu[j]) * C[t * D + j];
+                }
+                z_norm_sq += z * z;
+            }
+            scores[i] = std::max(0.0f, x0_norm_sq - z_norm_sq);
+        }
+    } else if (method == PcaScoreMethod::Mahalanobis) {
+        const float* eig = params.eigvals.data();
+        float eps = 1e-6f;
+        for (std::size_t i = 0; i < N; ++i) {
+            float s = 0.0f;
+            for (std::size_t t = drop_k; t < k; ++t) {
+                float z = 0.0f;
+                for (std::size_t j = 0; j < D; ++j) {
+                    z += (X[i * D + j] - mu[j]) * C[t * D + j];
+                }
+                float inv_lambda = 1.0f / (eig[t] + eps);
+                s += z * z * inv_lambda;
+            }
+            scores[i] = s;
+        }
+    } else if (method == PcaScoreMethod::Euclidean) {
+        for (std::size_t i = 0; i < N; ++i) {
+            float s = 0.0f;
+            for (std::size_t t = drop_k; t < k; ++t) {
+                float z = 0.0f;
+                for (std::size_t j = 0; j < D; ++j) {
+                    z += (X[i * D + j] - mu[j]) * C[t * D + j];
+                }
+                s += z * z;
+            }
+            scores[i] = s;
+        }
+    } else if (method == PcaScoreMethod::Cosine) {
+        float eps = 1e-8f;
+        auto X_recon = PcaReconstruct(X, N, params, drop_k);
+        for (std::size_t i = 0; i < N; ++i) {
+            // 原地 L2 归一化 + 点积 = cosine similarity
+            float x_norm = eps, xr_norm = eps, dot = 0.0f;
+            for (std::size_t j = 0; j < D; ++j) {
+                x_norm += X[i * D + j] * X[i * D + j];
+                xr_norm += X_recon[i * D + j] * X_recon[i * D + j];
+                dot += X[i * D + j] * X_recon[i * D + j];
+            }
+            float sim = dot / (std::sqrt(x_norm) * std::sqrt(xr_norm));
+            sim = std::max(-1.0f, std::min(1.0f, sim));
+            scores[i] = 1.0f - sim;
+        }
+    }
+
+    return scores;
+}
+
+// ============================================================================
+// Static SavePcaParams / LoadPcaParams — 序列化
+// ============================================================================
+
+auto DimensionReducer::SavePcaParams(const PcaParams& params,
+                                      const std::filesystem::path& path) noexcept -> Result<void> {
+    auto D = static_cast<std::uint64_t>(params.mean.size());
+    auto k = static_cast<std::uint64_t>(params.target_dim);
+
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file.is_open()) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Detection_FeatureBankLoadFailed,
+            "DimensionReducer::SavePcaParams: cannot open file: " + path.string(),
+            std::source_location::current()});
+    }
+
+    // [D:u64][k:u64]
+    file.write(reinterpret_cast<const char*>(&D), sizeof(D));
+    file.write(reinterpret_cast<const char*>(&k), sizeof(k));
+
+    // [mu: D×f32]
+    file.write(reinterpret_cast<const char*>(params.mean.data()),
+               static_cast<std::streamsize>(D * sizeof(float)));
+
+    // [eigvals: k×f32]
+    file.write(reinterpret_cast<const char*>(params.eigvals.data()),
+               static_cast<std::streamsize>(k * sizeof(float)));
+
+    // [components: k×D×f32]
+    file.write(reinterpret_cast<const char*>(params.components.data()),
+               static_cast<std::streamsize>(k * D * sizeof(float)));
+
+    if (file.fail()) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Detection_FeatureBankLoadFailed,
+            "DimensionReducer::SavePcaParams: write failed: " + path.string(),
+            std::source_location::current()});
+    }
+
+    return {};
+}
+
+auto DimensionReducer::LoadPcaParams(const std::filesystem::path& path) noexcept -> Result<PcaParams> {
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Detection_FeatureBankLoadFailed,
+            "DimensionReducer::LoadPcaParams: cannot open file: " + path.string(),
+            std::source_location::current()});
+    }
+
+    auto file_size = static_cast<std::size_t>(file.tellg());
+    file.seekg(0, std::ios::beg);
+
+    std::uint64_t D = 0;
+    std::uint64_t k = 0;
+    file.read(reinterpret_cast<char*>(&D), sizeof(D));
+    file.read(reinterpret_cast<char*>(&k), sizeof(k));
+
+    auto expected_size = sizeof(std::uint64_t) * 2
+        + D * sizeof(float)           // mu
+        + k * sizeof(float)           // eigvals
+        + k * D * sizeof(float);      // components
+
+    if (file_size < expected_size || D == 0 || k == 0) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Detection_FeatureBankLoadFailed,
+            "DimensionReducer::LoadPcaParams: invalid file format or dimensions: " + path.string(),
+            std::source_location::current()});
+    }
+
+    PcaParams params;
+    params.target_dim = static_cast<std::size_t>(k);
+    params.mean.resize(static_cast<std::size_t>(D));
+    params.eigvals.resize(static_cast<std::size_t>(k));
+    params.components.resize(static_cast<std::size_t>(k * D));
+
+    file.read(reinterpret_cast<char*>(params.mean.data()),
+              static_cast<std::streamsize>(D * sizeof(float)));
+    file.read(reinterpret_cast<char*>(params.eigvals.data()),
+              static_cast<std::streamsize>(k * sizeof(float)));
+    file.read(reinterpret_cast<char*>(params.components.data()),
+              static_cast<std::streamsize>(k * D * sizeof(float)));
+
+    if (file.fail()) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Detection_FeatureBankLoadFailed,
+            "DimensionReducer::LoadPcaParams: read failed: " + path.string(),
+            std::source_location::current()});
+    }
+
+    return params;
+}
+
+// ============================================================================
+// Static FitPcaStreaming — 流式两遍 PCA 拟合
+// ============================================================================
+
+auto DimensionReducer::FitPcaStreaming(
+    std::function<std::function<std::vector<float>()>()> make_generator,
+    std::size_t D, std::size_t total_N, std::size_t target_k) noexcept -> Result<PcaParams> {
+    if (D == 0 || total_N == 0) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Embedding_DimensionMismatch,
+            "DimensionReducer::FitPcaStreaming: D and total_N must be > 0",
+            std::source_location::current()});
+    }
+
+    if (target_k == 0) {
+        target_k = D;
+    }
+    if (target_k > D) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Embedding_DimensionMismatch,
+            "DimensionReducer::FitPcaStreaming: target_k (" + std::to_string(target_k)
+                + ") > D (" + std::to_string(D) + ")",
+            std::source_location::current()});
+    }
+
+    // ── Pass 1: 计算均值 ──
+    std::vector<double> mean_accum(D, 0.0);
+    std::size_t seen = 0;
+    {
+        auto gen = make_generator();
+        while (true) {
+            auto batch = gen();
+            if (batch.empty()) break;
+            auto batch_n = batch.size() / D;
+            for (std::size_t i = 0; i < batch_n; ++i) {
+                for (std::size_t j = 0; j < D; ++j) {
+                    mean_accum[j] += static_cast<double>(batch[i * D + j]);
+                }
+            }
+            seen += batch_n;
+        }
+    }
+    if (seen != total_N) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Embedding_DimensionMismatch,
+            "DimensionReducer::FitPcaStreaming: expected " + std::to_string(total_N)
+                + " vectors but saw " + std::to_string(seen),
+            std::source_location::current()});
+    }
+
+    std::vector<float> mean(D);
+    double inv_N = 1.0 / static_cast<double>(total_N);
+    for (std::size_t j = 0; j < D; ++j) {
+        mean[j] = static_cast<float>(mean_accum[j] * inv_N);
+    }
+
+    // ── Pass 2: 计算协方差矩阵 ──
+    std::vector<double> cov(D * D, 0.0);
+    {
+        auto gen = make_generator();  // 重新创建 generator，从头遍历
+        while (true) {
+            auto batch = gen();
+            if (batch.empty()) break;
+            auto batch_n = batch.size() / D;
+            for (std::size_t i = 0; i < batch_n; ++i) {
+                for (std::size_t p = 0; p < D; ++p) {
+                    double xp = static_cast<double>(batch[i * D + p]) - static_cast<double>(mean[p]);
+                    for (std::size_t q = p; q < D; ++q) {
+                        double xq = static_cast<double>(batch[i * D + q]) - static_cast<double>(mean[q]);
+                        cov[p * D + q] += xp * xq;
+                    }
+                }
+            }
+        }
+    }
+    // 对称填充 + 归一化
+    double inv_Nm1 = 1.0 / static_cast<double>(total_N - 1);
+    for (std::size_t p = 0; p < D; ++p) {
+        for (std::size_t q = p; q < D; ++q) {
+            double v = cov[p * D + q] * inv_Nm1;
+            cov[p * D + q] = v;
+            cov[q * D + p] = v;
+        }
+    }
+
+    // ── 特征分解 ──
+    // 将 double cov 转成 float 用于 ComputeTopEigen
+    std::vector<float> cov_f(D * D);
+    for (std::size_t i = 0; i < D * D; ++i) {
+        cov_f[i] = static_cast<float>(cov[i]);
+    }
+    auto [eigenvectors, eigenvalues] = ComputeTopEigen(cov_f.data(), D, target_k);
+
+    FixDegenerateComponents(eigenvectors, eigenvalues, target_k, D);
+
+    return PcaParams{
+        .components = std::move(eigenvectors),
+        .target_dim = target_k,
+        .mean = std::move(mean),
+        .eigvals = std::move(eigenvalues)};
 }
 
 }  // namespace sai::embedding
