@@ -6,6 +6,7 @@
 #include <ctime>
 #include <sstream>
 #include <iomanip>
+#include <source_location>
 
 namespace sai::knowledge {
 
@@ -43,7 +44,13 @@ auto KnowledgeEvolution::Append(std::string entity_type, std::int64_t entity_id,
     const char* ver_sql = "SELECT COALESCE(MAX(version), 0) + 1 FROM evolution_log "
                            "WHERE entity_type = ? AND entity_id = ?";
     sqlite3_stmt* stmt = nullptr;
-    sqlite3_prepare_v2(db_, ver_sql, -1, &stmt, nullptr);
+    if (sqlite3_prepare_v2(db_, ver_sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("prepare version query: ") + sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     sqlite3_bind_text(stmt, 1, entity_type.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int64(stmt, 2, entity_id);
     std::int64_t next_version = 1;
@@ -68,7 +75,13 @@ auto KnowledgeEvolution::Append(std::string entity_type, std::int64_t entity_id,
         "INSERT INTO evolution_log (entity_type, entity_id, operation, version, "
         "changed_by, before_image_json, timestamp) "
         "VALUES (?, ?, ?, ?, ?, ?, ?)";
-    sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("prepare insert evolution: ") + sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     sqlite3_bind_text(stmt, 1, entity_type.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int64(stmt, 2, entity_id);
     sqlite3_bind_text(stmt, 3, OpToString(op), -1, SQLITE_STATIC);
@@ -76,7 +89,14 @@ auto KnowledgeEvolution::Append(std::string entity_type, std::int64_t entity_id,
     sqlite3_bind_text(stmt, 5, changed_by.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 6, before_json.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 7, ts_str.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_step(stmt);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        sqlite3_finalize(stmt);
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("insert evolution: ") + sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     sqlite3_finalize(stmt);
     return {};
 }
@@ -89,7 +109,13 @@ auto KnowledgeEvolution::GetHistory(std::string_view entity_type,
         "changed_by, before_image_json "
         "FROM evolution_log WHERE entity_type = ? AND entity_id = ? ORDER BY version ASC";
     sqlite3_stmt* stmt = nullptr;
-    sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("prepare get history: ") + sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     sqlite3_bind_text(stmt, 1, entity_type.data(),
                       static_cast<int>(entity_type.size()), SQLITE_TRANSIENT);
     sqlite3_bind_int64(stmt, 2, entity_id);
@@ -132,7 +158,13 @@ auto KnowledgeEvolution::GetChangesSince(
         "changed_by, before_image_json "
         "FROM evolution_log WHERE timestamp > ? ORDER BY timestamp ASC";
     sqlite3_stmt* stmt = nullptr;
-    sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("prepare get changes since: ") + sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     sqlite3_bind_text(stmt, 1, ts_str.c_str(), -1, SQLITE_TRANSIENT);
 
     std::vector<EvolutionEntry> entries;

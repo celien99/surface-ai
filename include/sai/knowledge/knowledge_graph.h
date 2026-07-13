@@ -22,8 +22,8 @@ struct KnowledgeNode {
 
 struct KnowledgeEdge {
     EdgeId id = 0;
-    NodeId source_id;
-    NodeId target_id;
+    NodeId source_id = 0;
+    NodeId target_id = 0;
     std::string relationship;
     KnowledgeRecord properties;
 };

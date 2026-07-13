@@ -82,6 +82,9 @@ auto KnowledgeStore::Create(const Config& cfg) noexcept -> Result<std::unique_pt
     auto path_str = cfg.db_path.string();
     int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
     if (path_str == ":memory:") {
+        // SQLITE_OPEN_MEMORY creates a private, non-shared in-memory database.
+        // This is used for testing and transient use cases — the DB is destroyed
+        // when the connection closes and cannot be shared with other connections.
         flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_MEMORY;
     }
     if (sqlite3_open_v2(path_str.c_str(), &raw_db, flags, nullptr) != SQLITE_OK) {
@@ -99,28 +102,26 @@ auto KnowledgeStore::Create(const Config& cfg) noexcept -> Result<std::unique_pt
     store->db_.reset(raw_db);
     store->config_ = cfg;
 
-    auto schema_result = RunSchema(store->db_.get());
-    if (!schema_result.has_value()) {
-        return tl::make_unexpected(schema_result.error());
-    }
-
-    store->graph_ = KnowledgeGraph(store->db_.get());
-    store->evolution_ = KnowledgeEvolution(store->db_.get());
-    store->snapshot_ = KnowledgeSnapshot(store->db_.get());
-
-    return store;
+    return RunSchema(store->db_.get())
+        .and_then([&]() -> Result<std::unique_ptr<KnowledgeStore>> {
+            store->graph_ = KnowledgeGraph(store->db_.get());
+            store->evolution_ = KnowledgeEvolution(store->db_.get());
+            store->snapshot_ = KnowledgeSnapshot(store->db_.get());
+            return std::move(store);
+        });
 }
 
 KnowledgeStore::~KnowledgeStore() = default;
 
 auto KnowledgeStore::InsertNode(std::string type, KnowledgeRecord properties,
                                  std::string changed_by) noexcept -> Result<NodeId> {
-    KnowledgeRecord before;
-    auto result = graph_.InsertNode(std::move(type), properties);
-    if (result.has_value() && config_.enable_evolution) {
-        (void)evolution_.Append("Node", *result, EvolutionOp::Insert, before, std::move(changed_by));
-    }
-    return result;
+    return graph_.InsertNode(std::move(type), properties)
+        .and_then([&](NodeId id) -> Result<NodeId> {
+            if (config_.enable_evolution) {
+                (void)evolution_.Append("Node", id, EvolutionOp::Insert, KnowledgeRecord{}, changed_by);
+            }
+            return id;
+        });
 }
 
 auto KnowledgeStore::UpdateNode(NodeId id, KnowledgeRecord properties,
@@ -130,11 +131,13 @@ auto KnowledgeStore::UpdateNode(NodeId id, KnowledgeRecord properties,
         auto prev = graph_.GetNode(id);
         if (prev.has_value()) before = std::move(prev->properties);
     }
-    auto result = graph_.UpdateNode(id, std::move(properties));
-    if (result.has_value() && config_.enable_evolution) {
-        (void)evolution_.Append("Node", id, EvolutionOp::Update, before, std::move(changed_by));
-    }
-    return result;
+    return graph_.UpdateNode(id, std::move(properties))
+        .and_then([&]() -> Result<void> {
+            if (config_.enable_evolution) {
+                (void)evolution_.Append("Node", id, EvolutionOp::Update, before, changed_by);
+            }
+            return {};
+        });
 }
 
 auto KnowledgeStore::DeleteNode(NodeId id, std::string changed_by) noexcept -> Result<void> {
@@ -143,11 +146,13 @@ auto KnowledgeStore::DeleteNode(NodeId id, std::string changed_by) noexcept -> R
         auto prev = graph_.GetNode(id);
         if (prev.has_value()) before = std::move(prev->properties);
     }
-    auto result = graph_.DeleteNode(id);
-    if (result.has_value() && config_.enable_evolution) {
-        (void)evolution_.Append("Node", id, EvolutionOp::Delete, before, std::move(changed_by));
-    }
-    return result;
+    return graph_.DeleteNode(id)
+        .and_then([&]() -> Result<void> {
+            if (config_.enable_evolution) {
+                (void)evolution_.Append("Node", id, EvolutionOp::Delete, before, changed_by);
+            }
+            return {};
+        });
 }
 
 auto KnowledgeStore::GetNode(NodeId id) const noexcept -> Result<KnowledgeNode> {
@@ -162,11 +167,13 @@ auto KnowledgeStore::FindNodesByType(std::string_view type) const noexcept
 auto KnowledgeStore::InsertEdge(NodeId source, NodeId target,
                                  std::string relationship, KnowledgeRecord properties,
                                  std::string changed_by) noexcept -> Result<EdgeId> {
-    auto result = graph_.InsertEdge(source, target, std::move(relationship), std::move(properties));
-    if (result.has_value() && config_.enable_evolution) {
-        (void)evolution_.Append("Edge", *result, EvolutionOp::Insert, KnowledgeRecord{}, std::move(changed_by));
-    }
-    return result;
+    return graph_.InsertEdge(source, target, std::move(relationship), std::move(properties))
+        .and_then([&](EdgeId id) -> Result<EdgeId> {
+            if (config_.enable_evolution) {
+                (void)evolution_.Append("Edge", id, EvolutionOp::Insert, KnowledgeRecord{}, changed_by);
+            }
+            return id;
+        });
 }
 
 auto KnowledgeStore::GetEdge(EdgeId id) const noexcept -> Result<KnowledgeEdge> {

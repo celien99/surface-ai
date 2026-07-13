@@ -91,7 +91,13 @@ auto KnowledgeGraph::DeleteNode(NodeId id) noexcept -> Result<void> {
 auto KnowledgeGraph::GetNode(NodeId id) const noexcept -> Result<KnowledgeNode> {
     const char* sql = "SELECT id, type, properties_json FROM nodes WHERE id = ?";
     sqlite3_stmt* stmt = nullptr;
-    sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     sqlite3_bind_int64(stmt, 1, id);
     if (sqlite3_step(stmt) != SQLITE_ROW) {
         sqlite3_finalize(stmt);
@@ -114,7 +120,13 @@ auto KnowledgeGraph::FindNodesByType(std::string_view type) const noexcept
     -> Result<std::vector<KnowledgeNode>> {
     const char* sql = "SELECT id, type, properties_json FROM nodes WHERE type = ?";
     sqlite3_stmt* stmt = nullptr;
-    sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     sqlite3_bind_text(stmt, 1, type.data(), static_cast<int>(type.size()), SQLITE_TRANSIENT);
     std::vector<KnowledgeNode> nodes;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
@@ -192,7 +204,13 @@ auto KnowledgeGraph::DeleteEdge(EdgeId id) noexcept -> Result<void> {
 auto KnowledgeGraph::GetEdge(EdgeId id) const noexcept -> Result<KnowledgeEdge> {
     const char* sql = "SELECT id, source_id, target_id, relationship, properties_json FROM edges WHERE id = ?";
     sqlite3_stmt* stmt = nullptr;
-    sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     sqlite3_bind_int64(stmt, 1, id);
     if (sqlite3_step(stmt) != SQLITE_ROW) {
         sqlite3_finalize(stmt);
@@ -334,7 +352,9 @@ auto KnowledgeGraph::ReverseTraverse(NodeId to, std::string_view relationship,
 
 auto KnowledgeGraph::NodeCount() const noexcept -> std::size_t {
     sqlite3_stmt* stmt = nullptr;
-    sqlite3_prepare_v2(db_, "SELECT COUNT(*) FROM nodes", -1, &stmt, nullptr);
+    if (sqlite3_prepare_v2(db_, "SELECT COUNT(*) FROM nodes", -1, &stmt, nullptr) != SQLITE_OK) {
+        return 0;
+    }
     if (sqlite3_step(stmt) == SQLITE_ROW) {
         auto count = static_cast<std::size_t>(sqlite3_column_int64(stmt, 0));
         sqlite3_finalize(stmt);
@@ -346,7 +366,9 @@ auto KnowledgeGraph::NodeCount() const noexcept -> std::size_t {
 
 auto KnowledgeGraph::EdgeCount() const noexcept -> std::size_t {
     sqlite3_stmt* stmt = nullptr;
-    sqlite3_prepare_v2(db_, "SELECT COUNT(*) FROM edges", -1, &stmt, nullptr);
+    if (sqlite3_prepare_v2(db_, "SELECT COUNT(*) FROM edges", -1, &stmt, nullptr) != SQLITE_OK) {
+        return 0;
+    }
     if (sqlite3_step(stmt) == SQLITE_ROW) {
         auto count = static_cast<std::size_t>(sqlite3_column_int64(stmt, 0));
         sqlite3_finalize(stmt);

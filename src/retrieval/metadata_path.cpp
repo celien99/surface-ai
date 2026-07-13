@@ -24,6 +24,46 @@ auto OpToSql(FilterOp op) -> const char* {
     return "=";
 }
 
+// Appends SQL placeholder(s) for a filter condition, incrementing param_index.
+// Uses parameterized queries — values are bound separately via BindFilterParam.
+auto AppendFilterPlaceholder(std::ostringstream& sql, const FilterCondition& filter,
+                              int& param_index) -> void {
+    sql << " AND json_extract(properties_json, '$." << filter.field << "') "
+        << OpToSql(filter.op) << " ";
+    std::visit([&](const auto& v) {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (std::is_same_v<T, std::vector<std::int64_t>>) {
+            sql << "(";
+            for (std::size_t i = 0; i < v.size(); ++i) {
+                if (i > 0) sql << ", ";
+                sql << "?" << param_index++;
+            }
+            sql << ")";
+        } else {
+            sql << "?" << param_index++;
+        }
+    }, filter.value);
+}
+
+// Binds a filter condition value to the prepared statement, incrementing bind_index.
+auto BindFilterParam(sqlite3_stmt* stmt, const FilterCondition& filter,
+                      int& bind_index) -> void {
+    std::visit([&](const auto& v) {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (std::is_same_v<T, std::int64_t>) {
+            sqlite3_bind_int64(stmt, bind_index++, v);
+        } else if constexpr (std::is_same_v<T, double>) {
+            sqlite3_bind_double(stmt, bind_index++, v);
+        } else if constexpr (std::is_same_v<T, std::string>) {
+            sqlite3_bind_text(stmt, bind_index++, v.c_str(), -1, SQLITE_TRANSIENT);
+        } else if constexpr (std::is_same_v<T, std::vector<std::int64_t>>) {
+            for (auto elem : v) {
+                sqlite3_bind_int64(stmt, bind_index++, elem);
+            }
+        }
+    }, filter.value);
+}
+
 }  // anonymous namespace
 
 auto MetadataPath::Search(const Config& cfg) const noexcept
@@ -60,25 +100,7 @@ auto MetadataPath::Search(const Config& cfg) const noexcept
     // Filter by field conditions via json_extract.
     // Field names are already validated above; comparison values are bound as parameters.
     for (const auto& filter : cfg.filters) {
-        sql << " AND json_extract(properties_json, '$." << filter.field << "') "
-            << OpToSql(filter.op) << " ";
-        std::visit([&](const auto& v) {
-            using T = std::decay_t<decltype(v)>;
-            if constexpr (std::is_same_v<T, std::int64_t>) {
-                sql << "?" << param_index++;
-            } else if constexpr (std::is_same_v<T, double>) {
-                sql << "?" << param_index++;
-            } else if constexpr (std::is_same_v<T, std::string>) {
-                sql << "?" << param_index++;
-            } else if constexpr (std::is_same_v<T, std::vector<std::int64_t>>) {
-                sql << "(";
-                for (std::size_t i = 0; i < v.size(); ++i) {
-                    if (i > 0) sql << ", ";
-                    sql << "?" << param_index++;
-                }
-                sql << ")";
-            }
-        }, filter.value);
+        AppendFilterPlaceholder(sql, filter, param_index);
     }
 
     sql << " LIMIT ?" << param_index++;
@@ -103,21 +125,7 @@ auto MetadataPath::Search(const Config& cfg) const noexcept
     }
 
     for (const auto& filter : cfg.filters) {
-        std::visit([&](const auto& v) {
-            using T = std::decay_t<decltype(v)>;
-            if constexpr (std::is_same_v<T, std::int64_t>) {
-                sqlite3_bind_int64(stmt, bind_index++, v);
-            } else if constexpr (std::is_same_v<T, double>) {
-                sqlite3_bind_double(stmt, bind_index++, v);
-            } else if constexpr (std::is_same_v<T, std::string>) {
-                sqlite3_bind_text(stmt, bind_index++, v.c_str(),
-                                  -1, SQLITE_TRANSIENT);
-            } else if constexpr (std::is_same_v<T, std::vector<std::int64_t>>) {
-                for (auto elem : v) {
-                    sqlite3_bind_int64(stmt, bind_index++, elem);
-                }
-            }
-        }, filter.value);
+        BindFilterParam(stmt, filter, bind_index);
     }
 
     sqlite3_bind_int64(stmt, bind_index++,

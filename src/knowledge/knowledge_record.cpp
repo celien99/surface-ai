@@ -31,6 +31,9 @@ auto JsonToFieldValue(const nlohmann::json& j) -> FieldValue {
         auto bin = j.get_binary();
         return FieldValue{std::vector<std::uint8_t>(bin.begin(), bin.end())};
     }
+    // Unsupported JSON types (bool, null, array, object) default to 0.
+    // This is intentional: KnowledgeRecord only supports int64/double/string/binary.
+    // Callers are expected to validate data before ingestion.
     return FieldValue{std::int64_t{0}};  // fallback
 }
 

@@ -11,12 +11,29 @@ namespace sai::knowledge {
 KnowledgeSnapshot::KnowledgeSnapshot(sqlite3* db) noexcept : db_(db) {}
 
 auto KnowledgeSnapshot::Create(std::string label) noexcept -> Result<std::int64_t> {
+    // BEGIN TRANSACTION is required so the SAVEPOINT has a parent transaction.
+    // Without it, auto-commit mode may release the savepoint immediately.
+    sqlite3_exec(db_, "BEGIN TRANSACTION", nullptr, nullptr, nullptr);
+
     // Insert snapshot metadata row to get an ID
     const char* ins_sql = "INSERT INTO snapshots (label, savepoint_name) VALUES (?, '')";
     sqlite3_stmt* stmt = nullptr;
-    sqlite3_prepare_v2(db_, ins_sql, -1, &stmt, nullptr);
+    if (sqlite3_prepare_v2(db_, ins_sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("prepare insert snapshot: ") + sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     sqlite3_bind_text(stmt, 1, label.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_step(stmt);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        sqlite3_finalize(stmt);
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("insert snapshot: ") + sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     auto snapshot_id = static_cast<std::int64_t>(sqlite3_last_insert_rowid(db_));
     sqlite3_finalize(stmt);
 
@@ -35,21 +52,47 @@ auto KnowledgeSnapshot::Create(std::string label) noexcept -> Result<std::int64_
 
     // Count current nodes and edges
     std::int64_t node_count = 0, edge_count = 0;
-    sqlite3_prepare_v2(db_, "SELECT COUNT(*) FROM nodes", -1, &stmt, nullptr);
+    if (sqlite3_prepare_v2(db_, "SELECT COUNT(*) FROM nodes", -1, &stmt, nullptr) != SQLITE_OK) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("count nodes: ") + sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     if (sqlite3_step(stmt) == SQLITE_ROW) node_count = sqlite3_column_int64(stmt, 0);
     sqlite3_finalize(stmt);
-    sqlite3_prepare_v2(db_, "SELECT COUNT(*) FROM edges", -1, &stmt, nullptr);
+
+    if (sqlite3_prepare_v2(db_, "SELECT COUNT(*) FROM edges", -1, &stmt, nullptr) != SQLITE_OK) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("count edges: ") + sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     if (sqlite3_step(stmt) == SQLITE_ROW) edge_count = sqlite3_column_int64(stmt, 0);
     sqlite3_finalize(stmt);
 
     // Update the savepoint_name and counts
     const char* upd_sql = "UPDATE snapshots SET savepoint_name = ?, node_count = ?, edge_count = ? WHERE snapshot_id = ?";
-    sqlite3_prepare_v2(db_, upd_sql, -1, &stmt, nullptr);
+    if (sqlite3_prepare_v2(db_, upd_sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("update snapshot: ") + sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     sqlite3_bind_text(stmt, 1, sp_name.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int64(stmt, 2, node_count);
     sqlite3_bind_int64(stmt, 3, edge_count);
     sqlite3_bind_int64(stmt, 4, snapshot_id);
-    sqlite3_step(stmt);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        sqlite3_finalize(stmt);
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("update snapshot: ") + sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     sqlite3_finalize(stmt);
 
     return snapshot_id;
@@ -58,7 +101,13 @@ auto KnowledgeSnapshot::Create(std::string label) noexcept -> Result<std::int64_
 auto KnowledgeSnapshot::List() const noexcept -> Result<std::vector<SnapshotInfo>> {
     const char* sql = "SELECT snapshot_id, label, created_at, node_count, edge_count FROM snapshots ORDER BY snapshot_id";
     sqlite3_stmt* stmt = nullptr;
-    sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("list snapshots: ") + sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     std::vector<SnapshotInfo> snapshots;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         SnapshotInfo info;
@@ -68,6 +117,7 @@ auto KnowledgeSnapshot::List() const noexcept -> Result<std::vector<SnapshotInfo
         std::tm tm = {};
         std::istringstream ss(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2)));
         ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
+        // timegm is POSIX; fine for Ubuntu 22.04 target platform
         info.created_at = std::chrono::system_clock::from_time_t(timegm(&tm));
         info.node_count = sqlite3_column_int64(stmt, 3);
         info.edge_count = sqlite3_column_int64(stmt, 4);
@@ -80,7 +130,13 @@ auto KnowledgeSnapshot::List() const noexcept -> Result<std::vector<SnapshotInfo
 auto KnowledgeSnapshot::Restore(std::int64_t snapshot_id) noexcept -> Result<void> {
     const char* sql = "SELECT savepoint_name FROM snapshots WHERE snapshot_id = ?";
     sqlite3_stmt* stmt = nullptr;
-    sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("restore snapshot: ") + sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     sqlite3_bind_int64(stmt, 1, snapshot_id);
     if (sqlite3_step(stmt) != SQLITE_ROW) {
         sqlite3_finalize(stmt);
@@ -109,7 +165,13 @@ auto KnowledgeSnapshot::Restore(std::int64_t snapshot_id) noexcept -> Result<voi
 auto KnowledgeSnapshot::Delete(std::int64_t snapshot_id) noexcept -> Result<void> {
     const char* sql = "SELECT savepoint_name FROM snapshots WHERE snapshot_id = ?";
     sqlite3_stmt* stmt = nullptr;
-    sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("delete snapshot lookup: ") + sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     sqlite3_bind_int64(stmt, 1, snapshot_id);
     if (sqlite3_step(stmt) != SQLITE_ROW) {
         sqlite3_finalize(stmt);
@@ -124,13 +186,34 @@ auto KnowledgeSnapshot::Delete(std::int64_t snapshot_id) noexcept -> Result<void
 
     // Release the SAVEPOINT
     auto release_sql = "RELEASE SAVEPOINT " + sp_name;
-    sqlite3_exec(db_, release_sql.c_str(), nullptr, nullptr, nullptr);
+    char* err = nullptr;
+    if (sqlite3_exec(db_, release_sql.c_str(), nullptr, nullptr, &err) != SQLITE_OK) {
+        std::string msg = err ? err : "unknown";
+        sqlite3_free(err);
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_SnapshotRestoreFailed, msg,
+            std::source_location::current(),
+        });
+    }
 
     // Delete metadata row
     const char* del_sql = "DELETE FROM snapshots WHERE snapshot_id = ?";
-    sqlite3_prepare_v2(db_, del_sql, -1, &stmt, nullptr);
+    if (sqlite3_prepare_v2(db_, del_sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("delete snapshot row: ") + sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     sqlite3_bind_int64(stmt, 1, snapshot_id);
-    sqlite3_step(stmt);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        sqlite3_finalize(stmt);
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("delete snapshot row: ") + sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
     sqlite3_finalize(stmt);
     return {};
 }

@@ -8,11 +8,14 @@ Surface AI Framework: a from-scratch design for an industrial-grade C++20 framew
 
 The original unconstrained spec is `prompt.md` (17 layers, exhaustive "support A/B/C/D" style requirements). That spec is intentionally too broad to execute directly — it has been converted into a concrete, sequenced plan. **Always work from the derived planning docs below, not from `prompt.md` directly.**
 
-As of 2026-07-13: Milestones 1 (foundation) and 2 (acquisition + imaging + I/O) are complete. Milestone 3 (AI inference core) is in progress with these modules built:
+As of 2026-07-13: Milestones 1, 2, 3, and 4 are complete.
 
-- `inference`: IInferenceEngine, MockEngine, TensorRtEngine (CUDA-gated), model adapters (CLIP, DINOv3, SAM2), multi-layer feature aggregation with DINO attention background mask
-- `embedding`: Embedding (double storage), PatchEmbedder, GlobalEmbedder, DimensionReducer (PCA fitting/scoring/serialization split across sub-files), FeatureCache
-- `detection`: DetectionResult, PatchCore, FeatureBank (FAISS), PcaDetector, SpecularFilter (four-cue + neighborhood suppression), post_process_utils (shared PatchCore post-processing)
+- **Milestone 1** (foundation): Core / Runtime / Memory / Plugin / Infra — 6 design docs frozen, 84 tests pass
+- **Milestone 2** (acquisition + imaging + I/O): Device interfaces, image type system, preprocessing chains, import/export
+- **Milestone 3** (AI inference core): `inference` (IInferenceEngine, MockEngine, TensorRtEngine CUDA-gated, CLIP/DINOv3/SAM2 adapters, multi-layer feature aggregation), `embedding` (Embedding, PatchEmbedder, GlobalEmbedder, DimensionReducer/PCA, FeatureCache), `detection` (DetectionResult, PatchCore, FeatureBank/FAISS, PcaDetector, SpecularFilter, post_process_utils)
+- **Milestone 4** (knowledge & retrieval): `knowledge` (KnowledgeRecord, KnowledgeGraph SQLite property graph, KnowledgeEvolution changelog, KnowledgeSnapshot SAVEPOINT-based, KnowledgeStore unified facade), `retrieval` (VectorPath FAISS TopK/Range/Hybrid, MetadataPath SQLite filtering, IScoreFusion/WeightedFusion/RRFFusion, HybridRetriever dual-path orchestration)
+
+**Milestones 5-7**: Not yet designed — do not start design docs or code without explicit instruction.
 
 Check `.superpowers/sdd/progress.md` for the current ledger before assuming what stage the project is in.
 
@@ -71,6 +74,8 @@ tests/                                             # GoogleTest suites, one dir 
 | `inference` | `sai::inference` | IInferenceEngine, MockEngine, TensorRtEngine (CUDA-gated), model adapters (CLIP, DINOv3, SAM2) |
 | `embedding` | `sai::embedding` | Embedding (double storage), IEmbedder/PatchEmbedder/GlobalEmbedder, DimensionReducer, FeatureCache |
 | `detection` | `sai::detection` | DetectionResult, IDetector/PatchCore, FeatureBank (FAISS) |
+| `knowledge` | `sai::knowledge` | KnowledgeRecord/FieldValue, KnowledgeGraph (SQLite property graph), KnowledgeEvolution (changelog), KnowledgeSnapshot (SAVEPOINT-based), KnowledgeStore (unified facade) |
+| `retrieval` | `sai::retrieval` | VectorPath (FAISS TopK/Range/Hybrid), MetadataPath (SQLite filtering), IScoreFusion/WeightedFusion/RRFFusion, HybridRetriever (dual-path orchestration) |
 
 ### Namespace conventions
 - All public types live under `sai::<module>` — never `sai::` directly.
