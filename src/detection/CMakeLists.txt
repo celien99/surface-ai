@@ -29,6 +29,9 @@ set(SAI_DETECTION_SOURCES
     detection_result.cpp
     feature_bank.cpp
     patch_core.cpp
+    post_process_utils.cpp
+    specular_filter.cpp
+    pca_detector.cpp
 )
 
 # CUDA 门控：仅在 CUDAToolkit 可用时编译 GPU FeatureBank

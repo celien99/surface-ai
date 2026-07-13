@@ -13,19 +13,8 @@
 #include <sai/detection/detection_result.h>
 #include <sai/detection/feature_bank.h>
 #include <sai/detection/patch_core.h>
+#include <sai/detection/post_process_utils.h>
 #include <sai/embedding/embedding.h>
-
-// 白盒测试用前向声明（patch_core.cpp 内部函数，非公开 API）
-// 必须放在全局作用域以避免与匿名命名空间内的 sai::detection 名称冲突。
-namespace sai::detection {
-auto BilinearUpsample(const float* src, std::size_t src_h, std::size_t src_w,
-                      std::size_t dst_h, std::size_t dst_w) -> std::vector<float>;
-auto GaussianBlur(const float* src, std::size_t h, std::size_t w,
-                  std::size_t sigma) -> std::vector<float>;
-auto ConnectedComponents(const float* binary, std::size_t h, std::size_t w,
-                         const float* scores, float threshold)
-    -> std::vector<RegionProposal>;
-}  // namespace sai::detection
 
 namespace {
 
@@ -168,7 +157,7 @@ TEST(UpsampleTest, SameSizeIsIdentity) {
 TEST(ConnectedComponentsTest, EmptyMaskReturnsZeroRegions) {
     std::vector<float> binary = {0.0F, 0.0F, 0.0F, 0.0F};
     std::vector<float> scores = {0.0F, 0.0F, 0.0F, 0.0F};
-    auto regions = sai::detection::ConnectedComponents(binary.data(), 2, 2, scores.data(), 0.5F);
+    auto regions = sai::detection::ConnectedComponents(binary.data(), 2, 2, scores.data());
     EXPECT_TRUE(regions.empty());
 }
 
@@ -176,7 +165,7 @@ TEST(ConnectedComponentsTest, SingleComponentBboxCorrect) {
     // 2×2 mask: 右下角一个像素为 1
     std::vector<float> binary = {0.0F, 0.0F, 0.0F, 1.0F};
     std::vector<float> scores = {0.0F, 0.0F, 0.0F, 0.9F};
-    auto regions = sai::detection::ConnectedComponents(binary.data(), 2, 2, scores.data(), 0.5F);
+    auto regions = sai::detection::ConnectedComponents(binary.data(), 2, 2, scores.data());
     ASSERT_EQ(regions.size(), 1U);
     EXPECT_EQ(regions[0].bounding_box.x, 1U);
     EXPECT_EQ(regions[0].bounding_box.y, 1U);
@@ -198,7 +187,7 @@ TEST(ConnectedComponentsTest, DisconnectedComponents) {
     // row2: 0 0 1
     std::vector<float> binary = {1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F};
     std::vector<float> scores = {0.8F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.6F};
-    auto regions = sai::detection::ConnectedComponents(binary.data(), 3, 3, scores.data(), 0.5F);
+    auto regions = sai::detection::ConnectedComponents(binary.data(), 3, 3, scores.data());
     ASSERT_EQ(regions.size(), 2U);
     // 按 max_score 降序排：0.8 在前，0.6 在后
     EXPECT_FLOAT_EQ(regions[0].max_anomaly_score, 0.8F);
@@ -212,7 +201,7 @@ TEST(ConnectedComponentsTest, FourConnectedNeighborJoins) {
     // row2: 0 0 0
     std::vector<float> binary = {0.0F, 0.0F, 0.0F, 1.0F, 1.0F, 0.0F, 0.0F, 0.0F, 0.0F};
     std::vector<float> scores = {0.0F, 0.0F, 0.0F, 0.7F, 0.9F, 0.0F, 0.0F, 0.0F, 0.0F};
-    auto regions = sai::detection::ConnectedComponents(binary.data(), 3, 3, scores.data(), 0.5F);
+    auto regions = sai::detection::ConnectedComponents(binary.data(), 3, 3, scores.data());
     ASSERT_EQ(regions.size(), 1U);
     EXPECT_EQ(regions[0].bounding_box.x, 0U);
     EXPECT_EQ(regions[0].bounding_box.y, 1U);
