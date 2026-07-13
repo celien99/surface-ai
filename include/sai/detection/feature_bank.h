@@ -8,6 +8,8 @@
 
 #include <sai/core/error.h>
 
+namespace sai::retrieval { class VectorPath; }
+
 // 前向声明——避免头文件泄漏 FAISS 内部类型给所有包含 feature_bank.h 的翻译单元
 namespace faiss {
 struct Index;
@@ -49,6 +51,8 @@ public:
     ~FeatureBank();
 
 private:
+    friend class sai::retrieval::VectorPath;
+
     FeatureBank() noexcept = default;
 
     std::unique_ptr<faiss::Index> index_;

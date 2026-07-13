@@ -7,6 +7,7 @@
     "yaml-cpp",
     "spdlog",
     "nlohmann-json",
-    "faiss"
+    "faiss",
+    "sqlite3"
   ]
 }

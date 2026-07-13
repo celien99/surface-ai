@@ -49,6 +49,18 @@ enum class ErrorCode : std::uint32_t {
     Embedding_DimensionMismatch,
     Detection_FeatureBankLoadFailed,
     Detection_InvalidPatchGrid,
+    // Knowledge (M4)
+    Knowledge_DbOpenFailed,
+    Knowledge_SchemaMigrationFailed,
+    Knowledge_NodeNotFound,
+    Knowledge_EdgeNotFound,
+    Knowledge_InvalidRelationship,
+    Knowledge_SnapshotNotFound,
+    Knowledge_SnapshotRestoreFailed,
+    // Retrieval (M4)
+    Retrieval_DimensionMismatch,
+    Retrieval_EmptyIndex,
+    Retrieval_FusionConfigInvalid,
 };
 
 struct ErrorInfo {
