@@ -1,10 +1,14 @@
 find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Charts)
 
+set(CMAKE_AUTOMOC ON)
+
 add_library(sai_visualization STATIC)
 add_library(sai::visualization ALIAS sai_visualization)
 
 target_sources(sai_visualization PRIVATE
     placeholder.cpp
+    pipeline_viewmodel.cpp
+    ${CMAKE_SOURCE_DIR}/include/sai/visualization/pipeline_viewmodel.h
     # ViewModels added in subsequent tasks
 )
 
