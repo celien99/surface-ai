@@ -1,0 +1,69 @@
+# Seat Leather Inspection Decision Tree
+# Evaluated by DefaultReasoner to produce final verdict + severity + recommendation
+
+tree:
+  name: "seat_leather_inspection"
+  version: "1.0"
+  root:
+    type: "branch"
+    description: "Check if any critical defect is triggered"
+    condition:
+      field: "rules.critical_count"
+      op: "GT"
+      value: 0
+    true_branch:
+      type: "leaf"
+      verdict: "NG"
+      severity_formula: "min(1.0, rules.max_severity * 1.2)"
+      recommendation: "Reject — critical defect detected. Isolate and quarantine."
+      score_weight: 1.0
+    false_branch:
+      type: "branch"
+      description: "Check if major defects exceed tolerance"
+      condition:
+        field: "rules.major_count"
+        op: "GT"
+        value: 2
+      true_branch:
+        type: "leaf"
+        verdict: "NG"
+        severity_formula: "rules.max_severity * 0.9"
+        recommendation: "Reject — multiple major defects exceed tolerance."
+        score_weight: 0.9
+      false_branch:
+        type: "branch"
+        description: "Check for minor defects with batch history"
+        condition:
+          type: "AND"
+          children:
+            - field: "rules.minor_count"
+              op: "GT"
+              value: 0
+            - field: "knowledge.batch_reject_rate_pct"
+              op: "GT"
+              value: 3.0
+        true_branch:
+          type: "leaf"
+          verdict: "WARN"
+          severity_formula: "0.3 + rules.max_severity * 0.3"
+          recommendation: "Warning — minor defects present in high-reject batch. Flag for review."
+          score_weight: 0.5
+        false_branch:
+          type: "branch"
+          description: "Minor defects only, normal batch"
+          condition:
+            field: "rules.minor_count"
+            op: "GT"
+            value: 0
+          true_branch:
+            type: "leaf"
+            verdict: "WARN"
+            severity_formula: "rules.max_severity * 0.3"
+            recommendation: "Minor defect found. Continue monitoring."
+            score_weight: 0.3
+          false_branch:
+            type: "leaf"
+            verdict: "OK"
+            severity_formula: "0.0"
+            recommendation: "Pass — no defects detected."
+            score_weight: 0.1
