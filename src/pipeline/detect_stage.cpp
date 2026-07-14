@@ -12,7 +12,6 @@ auto DetectStage::GetType() const noexcept -> StageType { return StageType::Dete
 auto DetectStage::GetId() const -> std::string_view { return id_; }
 
 auto DetectStage::OnInitialize(Context& /*ctx*/) -> Result<void> {
-    // IDetector extends Object, not IService — set externally via SetDetector()
     return {};
 }
 
@@ -21,17 +20,11 @@ auto DetectStage::OnStop(Context&) -> Result<void> { return {}; }
 
 auto DetectStage::Process(StageInput input) -> Result<StageOutput> {
     if (auto* det = std::get_if<sai::detection::DetectionResult>(&input)) {
-        if (!stub_ && detector_) {
-            // IDetector::Detect takes an Embedding, but our pipeline has a
-            // DetectionResult from InferenceStage. For MockEngine the
-            // DetectionResult is empty; the real flow would embed from
-            // patch features. For the stub/mock path, pass-through.
-            //
-            // Production: InferenceStage would produce embeddings, and this
-            // stage would call detector_->Detect(embedding).
-            // For now: passthrough the DetectionResult (which may have been
-            // populated by InferenceStage's adapter logic).
-        }
+        // IDetector::Detect(Embedding) requires an Embedding, but the
+        // current pipeline produces DetectionResult from InferenceStage.
+        // Once an Embedding stage is inserted between Inference and Detect,
+        // this will call detector_->Detect(embedding) here.
+        (void)detector_;  // wired, ready for future Embedding stage
         return StageOutput(std::move(*det));
     }
     return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_StageTypeMismatch,

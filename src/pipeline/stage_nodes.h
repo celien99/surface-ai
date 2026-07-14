@@ -109,7 +109,12 @@ public:
     auto OnStop(Context&) -> Result<void> override;
     auto Process(StageInput) -> Result<StageOutput> override;
     auto SetRuleEngine(std::shared_ptr<sai::rule::RuleEngine> re) -> void {
-        rule_engine_ = std::move(re); stub_ = false;
+        rule_engine_ = std::move(re);
+        // Load rules now that engine is available (OnInitialize ran before setter)
+        if (!rule_file_.empty() && rule_engine_) {
+            (void)rule_engine_->LoadFromYAML(rule_file_);
+        }
+        stub_ = false;
     }
     auto SetKnowledgeGraph(std::shared_ptr<sai::knowledge::KnowledgeGraph> kg) -> void {
         kg_ = std::move(kg);
