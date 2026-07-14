@@ -12,4 +12,5 @@ target_include_directories(sai_scheduler PUBLIC
 target_link_libraries(sai_scheduler PUBLIC
     sai::core
     sai::runtime
+    sai::pipeline
 )

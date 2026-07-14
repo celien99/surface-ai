@@ -7,6 +7,7 @@ target_sources(sai_scheduler_test PRIVATE
 
 target_include_directories(sai_scheduler_test PRIVATE
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}
 )
 
 target_link_libraries(sai_scheduler_test PRIVATE
