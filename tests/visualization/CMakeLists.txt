@@ -4,6 +4,7 @@ find_package(Qt6 REQUIRED COMPONENTS Gui)
 add_executable(sai_visualization_test)
 target_sources(sai_visualization_test PRIVATE
     pipeline_viewmodel_test.cpp
+    inspection_viewmodel_test.cpp
 )
 
 target_include_directories(sai_visualization_test PRIVATE

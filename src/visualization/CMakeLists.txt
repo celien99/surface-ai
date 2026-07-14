@@ -8,8 +8,9 @@ add_library(sai::visualization ALIAS sai_visualization)
 target_sources(sai_visualization PRIVATE
     placeholder.cpp
     pipeline_viewmodel.cpp
+    inspection_viewmodel.cpp
     ${CMAKE_SOURCE_DIR}/include/sai/visualization/pipeline_viewmodel.h
-    # ViewModels added in subsequent tasks
+    ${CMAKE_SOURCE_DIR}/include/sai/visualization/inspection_viewmodel.h
 )
 
 target_link_libraries(sai_visualization PUBLIC
