@@ -38,6 +38,12 @@
 | `ReasoningResult` | 5.2 | design/milestone-05-inference-decision/5.2-reasoner.md | 推理产出：verdict（OK/NG/WARN/UNCERTAIN）+ severity + recommendation + confidence + trace[] + evidence[] |
 | `TraceStep` | 5.1 | design/milestone-05-inference-decision/5.1-rule-engine.md | 算子级溯源步骤（Expression/Rule/TreeBranch/Scoring 四级），含描述、源码位置、父节点引用。定义于 `sai::rule` 命名空间，5.2 Reasoner 复用 |
 | `EvidenceItem` | 5.2 | design/milestone-05-inference-decision/5.2-reasoner.md | 全链路证据项：FactBase 键值对 + FactSource 溯源 + TraceStep 关联 |
+| `Pipeline` | 6.1 | design/milestone-06-orchestration-scheduling/6.1-pipeline.md | 配置驱动的编排宿主，持有 M1 TaskGraph + PipelineExecutor，对外暴露 `Submit()`/`Drain()`/`Stop()`/`Metrics()` |
+| `PipelineConfig` | 6.1 | design/milestone-06-orchestration-scheduling/6.1-pipeline.md | YAML 反序列化的 Pipeline 配置：name + version + backpressure + stages[] |
+| `IStageNode` | 6.1 | design/milestone-06-orchestration-scheduling/6.1-pipeline.md | 业务语义化阶段节点接口：`OnInitialize`/`OnStart`/`OnStop`/`Process` |
+| `StageQueue<T>` | 6.1 | design/milestone-06-orchestration-scheduling/6.1-pipeline.md | 阶段间 bounded SPSC/MPSC lock-free ring buffer，内建 BackpressurePolicy |
+| `Scheduler` | 6.2 | design/milestone-06-orchestration-scheduling/6.2-scheduler.md | StageType → WorkerPool 映射 + 阶段间队列分配 |
+| `StageMetrics` | 6.2 | design/milestone-06-orchestration-scheduling/6.2-scheduler.md | per-stage 原子计数器：frames_processed / failed / dropped / queue_depth |
 
 ## 2. 核心接口签名表
 
@@ -98,6 +104,10 @@
 | `DecisionTree` | 5.2 | design/milestone-05-inference-decision/5.2-reasoner.md | `class DecisionTree { static auto LoadFromYAML(path) -> Result<unique_ptr<DecisionTree>>; auto Root() const -> const IDecisionNode&; }` |
 | `IReasoner` | 5.2 | design/milestone-05-inference-decision/5.2-reasoner.md | `class IReasoner : public IService { virtual auto Reason(const FactBase&, const vector<ResolvedRule>&) -> Result<ReasoningResult> = 0; }` |
 | `DefaultReasoner` | 5.2 | design/milestone-05-inference-decision/5.2-reasoner.md | `class DefaultReasoner final : public IReasoner { explicit DefaultReasoner(unique_ptr<DecisionTree>); auto Reason(const FactBase&, const vector<ResolvedRule>&) -> Result<ReasoningResult> override; }` |
+| `IStageNode` | 6.1 | design/milestone-06-orchestration-scheduling/6.1-pipeline.md | `class IStageNode : public Object { virtual auto GetType() const noexcept -> StageType = 0; virtual auto GetId() const -> string_view = 0; virtual auto OnInitialize(Context&) -> Result<void> = 0; virtual auto OnStart(Context&) -> Result<void> = 0; virtual auto OnStop(Context&) -> Result<void> = 0; virtual auto Process(StageInput) -> Result<StageOutput> = 0; }` |
+| `Pipeline` | 6.1 | design/milestone-06-orchestration-scheduling/6.1-pipeline.md | `class Pipeline { static auto LoadFromYAML(path, Context&) -> Result<unique_ptr<Pipeline>>; auto Start() -> Result<void>; auto Submit(RawImage) -> Result<void>; auto Drain() -> Result<void>; auto Stop() -> Result<void>; auto Metrics() const -> vector<StageMetrics>; }` |
+| `StageQueue<T>` | 6.1 | design/milestone-06-orchestration-scheduling/6.1-pipeline.md | `template<typename T> class StageQueue { static auto Create(size_t, BackpressurePolicy) -> Result<unique_ptr<StageQueue>>; auto TryPush(unique_ptr<T>) -> bool; auto PushBlocking(unique_ptr<T>) -> void; auto TryPop() -> unique_ptr<T>; auto PopBlocking() -> unique_ptr<T>; auto Depth() const noexcept -> size_t; }` |
+| `Scheduler` | 6.2 | design/milestone-06-orchestration-scheduling/6.2-scheduler.md | `class Scheduler { explicit Scheduler(Registry<WorkerPool>&, const BackpressureConfig&); auto Allocate(const vector<StageConfig>&) -> Result<void>; auto Deallocate() -> Result<void>; auto PoolFor(StageType) const -> Result<WorkerPool&>; }` |
 
 ## 里程碑 2 偏差记录（2026-07-12）
 
