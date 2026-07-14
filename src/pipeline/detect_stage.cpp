@@ -2,6 +2,7 @@
 
 #include <sai/detection/detection_result.h>
 #include <sai/detection/detector.h>
+#include <sai/embedding/embedding.h>
 
 namespace sai::pipeline {
 
@@ -19,16 +20,16 @@ auto DetectStage::OnStart(Context&) -> Result<void> { return {}; }
 auto DetectStage::OnStop(Context&) -> Result<void> { return {}; }
 
 auto DetectStage::Process(StageInput input) -> Result<StageOutput> {
-    if (auto* det = std::get_if<sai::detection::DetectionResult>(&input)) {
-        // IDetector::Detect(Embedding) requires an Embedding, but the
-        // current pipeline produces DetectionResult from InferenceStage.
-        // Once an Embedding stage is inserted between Inference and Detect,
-        // this will call detector_->Detect(embedding) here.
-        (void)detector_;  // wired, ready for future Embedding stage
-        return StageOutput(std::move(*det));
+    if (auto* emb = std::get_if<sai::embedding::Embedding>(&input)) {
+        if (!stub_ && detector_) {
+            auto result = detector_->Detect(*emb);
+            if (result) return StageOutput(std::move(*result));
+            // On failure, fall through to empty DetectionResult
+        }
+        return StageOutput(sai::detection::DetectionResult{});
     }
     return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_StageTypeMismatch,
-        "Detect expects DetectionResult input"});
+        "Detect expects Embedding input"});
 }
 
 }  // namespace sai::pipeline

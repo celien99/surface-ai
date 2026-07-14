@@ -16,10 +16,13 @@ namespace sai::memory {
 class PinnedPool;
 }  // namespace sai::memory
 
+// Include runtime/task.h for the Task<T> alias (used in ToCpuAsync return type).
+// The previous forward-declaration template<typename T> struct Task was incorrect —
+// Task<T> is a coroutine_handle alias, not a class template.
+#include <sai/runtime/task.h>
+
 namespace sai::runtime {
 class GpuStreamQueue;
-template <typename T>
-struct Task;
 }  // namespace sai::runtime
 
 namespace sai::embedding {

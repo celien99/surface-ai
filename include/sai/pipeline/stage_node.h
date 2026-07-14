@@ -11,6 +11,7 @@
 #include <sai/pipeline/pipeline_config.h>
 #include <sai/image/raw_image.h>
 #include <sai/image/surface_image.h>
+#include <sai/embedding/embedding.h>
 #include <sai/detection/detection_result.h>
 #include <sai/rule/rule_engine.h>
 #include <sai/rule/fact_base.h>
@@ -24,12 +25,13 @@ struct RuleEvalOutput {
 };
 
 using StageInput = std::variant<
-    sai::image::RawImage,
-    sai::image::SurfaceImage,
-    sai::detection::DetectionResult,
-    sai::pipeline::RuleEvalOutput,
-    std::vector<sai::rule::ResolvedRule>,
-    sai::reasoner::ReasoningResult
+    sai::image::RawImage,               // 0: Capture
+    sai::image::SurfaceImage,           // 1: Preprocess
+    sai::embedding::Embedding,          // 2: Inference → Detect
+    sai::detection::DetectionResult,    // 3: Detect → RuleEval
+    sai::pipeline::RuleEvalOutput,      // 4: RuleEval → Reason
+    std::vector<sai::rule::ResolvedRule>,// 5: (reserved)
+    sai::reasoner::ReasoningResult      // 6: Reason → Export
 >;
 
 using StageOutput = StageInput;

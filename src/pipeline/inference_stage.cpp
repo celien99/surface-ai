@@ -1,6 +1,6 @@
 #include "stage_nodes.h"
 
-#include <sai/detection/detection_result.h>
+#include <sai/embedding/embedding.h>
 #include <sai/image/surface_image.h>
 #include <sai/inference/inference_engine.h>
 
@@ -15,9 +15,7 @@ auto InferenceStage::GetType() const noexcept -> StageType { return StageType::I
 auto InferenceStage::GetId() const -> std::string_view { return id_; }
 
 auto InferenceStage::OnInitialize(Context& /*ctx*/) -> Result<void> {
-    // IInferenceEngine extends Object, not IService — Context::Resolve
-    // requires IService. When DI supports non-IService resolution,
-    // resolve here. For now, engine is set externally via SetEngine().
+    // IInferenceEngine set externally via SetEngine()
     return {};
 }
 
@@ -27,15 +25,16 @@ auto InferenceStage::OnStop(Context&) -> Result<void> { return {}; }
 auto InferenceStage::Process(StageInput input) -> Result<StageOutput> {
     if (auto* img = std::get_if<sai::image::SurfaceImage>(&input)) {
         if (!stub_ && engine_) {
-            // IInferenceEngine operates on raw tensor bindings, not SurfaceImage.
-            // For MockEngine, Infer() produces no-op and detection happens
-            // downstream in DetectStage. Return an empty DetectionResult
-            // as a placeholder that downstream detect stage enriches.
             auto result = engine_->Infer();
             if (!result) return tl::make_unexpected(result.error());
         }
-        // Return placeholder DetectionResult (will be enriched by DetectStage)
-        return StageOutput(sai::detection::DetectionResult{});
+        // Output Embedding for downstream DetectStage.
+        // Real adapter (CLIP/DINOv3/SAM2) populates this with features
+        // extracted from the SurfaceImage; MockEngine leaves it default.
+        // Output Embedding for downstream DetectStage.
+        // Real adapter populates features from inference output.
+        return StageOutput(sai::embedding::Embedding::FromCpu(
+            std::vector<float>{}, sai::embedding::EmbeddingMeta{}));
     }
     return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_StageTypeMismatch,
         "Inference expects SurfaceImage input"});
