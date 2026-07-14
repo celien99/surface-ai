@@ -71,6 +71,14 @@ enum class ErrorCode : std::uint32_t {
     Reasoner_TreeLoadFailed,
     Reasoner_InvalidTree,
     Reasoner_ScoreComputationFailed,
+    // Pipeline & Scheduler (M6)
+    Pipeline_InvalidConfig,
+    Pipeline_StageTypeMismatch,
+    Pipeline_StageInitFailed,
+    Pipeline_InvalidState,
+    Pipeline_QueueFull,
+    Scheduler_PoolNotFound,
+    Scheduler_QueueCreateFailed,
 };
 
 struct ErrorInfo {

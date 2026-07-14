@@ -50,4 +50,9 @@ add_subdirectory(tests/rule)
 add_subdirectory(src/reasoner)
 add_subdirectory(tests/reasoner)
 
+add_subdirectory(src/pipeline)
+add_subdirectory(tests/pipeline)
+add_subdirectory(src/scheduler)
+add_subdirectory(tests/scheduler)
+
 add_subdirectory(tests/integration)
