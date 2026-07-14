@@ -1,9 +1,21 @@
 #include <gtest/gtest.h>
+#include <filesystem>
+#include <fstream>
 #include <sai/pipeline/pipeline_config.h>
+#include <sai/core/error.h>
 #include <yaml-cpp/yaml.h>
 
 namespace sai::pipeline {
 namespace {
+
+// Helper: write a YAML string to a temp file
+std::filesystem::path WriteTempYaml(const std::string& content) {
+    auto path = std::filesystem::temp_directory_path() / "test_pipeline.yaml";
+    std::ofstream ofs(path);
+    ofs << content;
+    ofs.close();
+    return path;
+}
 
 TEST(PipelineConfigTest, ParseMinimalPipeline) {
     const char* yaml = R"(
@@ -61,6 +73,49 @@ TEST(PipelineConfigTest, BackpressurePolicyFromString) {
 
 TEST(PipelineConfigTest, BackpressurePolicyFromStringInvalid) {
     EXPECT_THROW(BackpressurePolicyFromString("invalid"), std::invalid_argument);
+}
+
+TEST(PipelineConfigTest, ParseValidConfig) {
+    const char* yaml = R"(
+pipeline:
+  name: "test"
+  version: "1.0"
+  stages:
+    - id: capture
+      type: Capture
+      depends_on: []
+    - id: export
+      type: Export
+      depends_on: [capture]
+)";
+    YAML::Node root = YAML::Load(yaml);
+    auto pipe = root["pipeline"];
+    ASSERT_TRUE(pipe.IsDefined());
+    EXPECT_EQ(pipe["name"].as<std::string>(), "test");
+    EXPECT_EQ(pipe["version"].as<std::string>(), "1.0");
+}
+
+TEST(PipelineConfigTest, ParseWithBackpressureOverride) {
+    const char* yaml = R"(
+pipeline:
+  name: "test"
+  version: "1.0"
+  backpressure:
+    default: block
+    stage_overrides:
+      capture: drop_oldest
+  stages:
+    - id: capture
+      type: Capture
+      depends_on: []
+    - id: export
+      type: Export
+      depends_on: [capture]
+)";
+    YAML::Node root = YAML::Load(yaml);
+    auto bp = root["pipeline"]["backpressure"];
+    EXPECT_EQ(bp["default"].as<std::string>(), "block");
+    EXPECT_EQ(bp["stage_overrides"]["capture"].as<std::string>(), "drop_oldest");
 }
 
 } // namespace
