@@ -231,6 +231,15 @@ auto Pipeline::Start() -> Result<void> {
                             .count();
 
                     if (result.has_value()) {
+                        // M7: invoke result callback if set (Export stage only, last stage in chain)
+                        if (result_callback_ && node_ptr->GetType() == StageType::Export) {
+                            auto& variant = result.value();
+                            if (auto* rr = std::get_if<sai::reasoner::ReasoningResult>(&variant)) {
+                                int frame_id = frame_counter_.fetch_add(
+                                    1, std::memory_order_relaxed);
+                                result_callback_(frame_id, *rr);
+                            }
+                        }
                         metrics_ptr->frames_processed.fetch_add(
                             1, std::memory_order_relaxed);
                         metrics_ptr->avg_latency_us = elapsed;
@@ -445,6 +454,14 @@ auto Pipeline::Metrics() const -> std::vector<StageMetrics> {
         result.push_back(std::move(sm));
     }
     return result;
+}
+
+// =========================================================================
+// Pipeline::SetResultCallback (M7)
+// =========================================================================
+
+auto Pipeline::SetResultCallback(ResultCallback callback) -> void {
+    result_callback_ = std::move(callback);
 }
 
 }  // namespace sai::pipeline

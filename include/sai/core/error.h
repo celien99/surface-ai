@@ -79,6 +79,11 @@ enum class ErrorCode : std::uint32_t {
     Pipeline_QueueFull,
     Scheduler_PoolNotFound,
     Scheduler_QueueCreateFailed,
+
+    // Visualization (M7)
+    Visualization_FrameBufferFull,
+    Visualization_ConfigReloadFailed,
+    Visualization_PipelineRestartFailed,
 };
 
 struct ErrorInfo {
