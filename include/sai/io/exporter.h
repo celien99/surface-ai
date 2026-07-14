@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <sai/core/error.h>
+#include <sai/core/service.h>
 #include <sai/device/device.h>  // Rect
 #include <sai/image/surface_image.h>
 #include <sai/plugin/plugin.h>
@@ -32,8 +33,10 @@ struct InspectionResult {
     std::string verdict;         // "PASS" | "FAIL" | "RECHECK"
 };
 
-class IExporter : public IPlugin {
+class IExporter : public IPlugin, public IService {
 public:
+    SAI_DECLARE_TYPE_ID(sai.io.exporter)
+
     [[nodiscard]] virtual auto Export(const InspectionResult& result,
                                       std::filesystem::path output_dir,
                                       const sai::image::SurfaceImage* annotated_image) noexcept
