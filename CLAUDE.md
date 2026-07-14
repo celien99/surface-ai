@@ -8,14 +8,18 @@ Surface AI Framework: a from-scratch design for an industrial-grade C++20 framew
 
 The original unconstrained spec is `prompt.md` (17 layers, exhaustive "support A/B/C/D" style requirements). That spec is intentionally too broad to execute directly — it has been converted into a concrete, sequenced plan. **Always work from the derived planning docs below, not from `prompt.md` directly.**
 
-As of 2026-07-13: Milestones 1, 2, 3, and 4 are complete.
+As of 2026-07-14: All 7 milestones complete. 572 tests pass.
 
 - **Milestone 1** (foundation): Core / Runtime / Memory / Plugin / Infra — 6 design docs frozen, 84 tests pass
 - **Milestone 2** (acquisition + imaging + I/O): Device interfaces, image type system, preprocessing chains, import/export
 - **Milestone 3** (AI inference core): `inference` (IInferenceEngine, MockEngine, TensorRtEngine CUDA-gated, CLIP/DINOv3/SAM2 adapters, multi-layer feature aggregation), `embedding` (Embedding, PatchEmbedder, GlobalEmbedder, DimensionReducer/PCA, FeatureCache), `detection` (DetectionResult, PatchCore, FeatureBank/FAISS, PcaDetector, SpecularFilter, post_process_utils)
 - **Milestone 4** (knowledge & retrieval): `knowledge` (KnowledgeRecord, KnowledgeGraph SQLite property graph, KnowledgeEvolution changelog, KnowledgeSnapshot SAVEPOINT-based, KnowledgeStore unified facade), `retrieval` (VectorPath FAISS TopK/Range/Hybrid, MetadataPath SQLite filtering, IScoreFusion/WeightedFusion/RRFFusion, HybridRetriever dual-path orchestration)
 
-**Milestones 5-7**: Not yet designed — do not start design docs or code without explicit instruction.
+- **Milestone 5** (inference decision): `rule` (RuleEngine, AST expression engine, YAML rule storage, FactBase/ConflictResolver), `reasoner` (IReasoner/DefaultReasoner, DecisionTree traversal, ScoreCalculator, TraceRecorder, EvidenceCollector)
+- **Milestone 6** (orchestration & scheduling): `pipeline` (Pipeline LoadFromYAML/Start/Submit/Drain/Stop, PipelineBuilder, StageFactory, StageQueue\<T\> bounded SPSC lock-free, IStageNode), `scheduler` (StageType → WorkerPool mapping, queue allocation)
+- **Milestone 7** (visualization & application): `visualization` (PipelineViewModel, InspectionViewModel, FrameProvider, ConfigViewModel, DashboardViewModel, QML 4-screen industrial dark UI), `seat_aoi` reference app
+
+**All milestones complete.**
 
 Check `.superpowers/sdd/progress.md` for the current ledger before assuming what stage the project is in.
 
@@ -38,7 +42,7 @@ ctest --preset default -R "logger"
 cd build/default && ctest -R "LoggerTest.SetLevelRoundTripsFilterDecision" --output-on-failure
 ```
 
-The `default` CMake preset uses the vcpkg toolchain and targets Debug on macOS arm64. CUDA-gated code (`src/memory/gpu_pool.cpp`, `src/memory/pinned_pool.cpp`, `src/runtime/gpu_stream_queue.cpp`, `src/detection/feature_bank_cuda.cpp`, `src/image/gpu_*.cpp`, `src/inference/tensorrt_engine.cpp`) and Linux-gated code (`src/infra/config_store_inotify.cpp`) are excluded from the local build — they are written per frozen design but compile-verified only on the target platform (Ubuntu 22.04 x64 + NVIDIA GPU).
+The `default` CMake preset uses the vcpkg toolchain and targets Debug on macOS arm64. CUDA-gated code and Linux-gated code are excluded from the local build — they are written per frozen design but compile-verified only on the target platform (Ubuntu 22.04 x64 + NVIDIA GPU). Each module's CMakeLists.txt gates compilation at the target level (no `#ifdef` shims).
 
 **Local dev prerequisites (macOS arm64):**
 - `vcpkg` (manifest mode) + `VCPKG_ROOT` env var
@@ -55,7 +59,7 @@ docs/surface-ai/design/milestone-01-foundation/    # 6 design docs (1.1-1.6), 14
 docs/surface-ai/glossary-and-contracts.md          # LIVE cross-batch contract doc — concept ownership + frozen interface signatures
 .superpowers/sdd/                                  # per-task briefs, reports, and review diffs for the SDD workflow
 include/sai/                                       # public headers, mirrored from src/ (sai::core, sai::runtime, etc.)
-src/                                               # implementation (.cpp) + per-module CMakeLists.txt (10 modules)
+src/                                               # implementation (.cpp) + per-module CMakeLists.txt (16 modules)
 tests/                                             # GoogleTest suites, one dir per module + tests/integration/ (end-to-end pipelines)
 ```
 
@@ -76,6 +80,11 @@ tests/                                             # GoogleTest suites, one dir 
 | `detection` | `sai::detection` | DetectionResult, IDetector/PatchCore, FeatureBank (FAISS) |
 | `knowledge` | `sai::knowledge` | KnowledgeRecord/FieldValue, KnowledgeGraph (SQLite property graph), KnowledgeEvolution (changelog), KnowledgeSnapshot (SAVEPOINT-based), KnowledgeStore (unified facade) |
 | `retrieval` | `sai::retrieval` | VectorPath (FAISS TopK/Range/Hybrid), MetadataPath (SQLite filtering), IScoreFusion/WeightedFusion/RRFFusion, HybridRetriever (dual-path orchestration) |
+| `rule` | `sai::rule` | RuleEngine (AST expression engine, YAML rule storage), FactBase/ConflictResolver, Lexer/Parser |
+| `reasoner` | `sai::reasoner` | IReasoner/DefaultReasoner (decision tree traversal + scoring + trace), ScoreCalculator, TraceRecorder, EvidenceCollector |
+| `pipeline` | `sai::pipeline` | Pipeline (LoadFromYAML/Start/Submit/Drain/Stop), PipelineBuilder (YAML parsing + topology validation), StageFactory, StageQueue\<T\> (bounded SPSC lock-free), IStageNode |
+| `scheduler` | `sai::scheduler` | StageType → WorkerPool mapping, queue allocation (internal headers only) |
+| `visualization` | `sai::visualization` | PipelineViewModel, InspectionViewModel, FrameProvider (QQuickImageProvider), ConfigViewModel, DashboardViewModel, QML industrial dark UI |
 
 ### Namespace conventions
 - All public types live under `sai::<module>` — never `sai::` directly.
@@ -120,8 +129,11 @@ Decided in `docs/superpowers/specs/2026-07-07-surface-ai-framework-phased-plan-d
 
 - **Milestone 1** (foundation: Core / Runtime / Memory / cross-cutting): COMPLETE. All 6 design docs frozen, all code + 84 tests pass.
 - **Milestone 2** (acquisition + imaging + I/O): COMPLETE. Device interfaces, image type system, preprocessing chains, import/export.
-- **Milestone 3** (AI inference core): IN PROGRESS. Inference engines (MockEngine, TensorRtEngine), model adapters (CLIP, DINOv3, SAM2), multi-layer feature aggregation, embedding (PatchEmbedder, GlobalEmbedder, DimensionReducer/PCA, FeatureCache), detection (PatchCore, PcaDetector, SpecularFilter, FeatureBank/FAISS).
-- **Milestones 4-7**: Not yet designed — do not start design docs or code without explicit instruction.
+- **Milestone 3** (AI inference core): COMPLETE. Inference engines (MockEngine, TensorRtEngine), model adapters (CLIP, DINOv3, SAM2), multi-layer feature aggregation, embedding (PatchEmbedder, GlobalEmbedder, DimensionReducer/PCA, FeatureCache), detection (PatchCore, PcaDetector, SpecularFilter, FeatureBank/FAISS).
+- **Milestone 4** (knowledge & retrieval): COMPLETE. Knowledge graph (SQLite property graph), knowledge evolution, vector-path retrieval (FAISS), metadata-path retrieval (SQLite), hybrid retrieval.
+- **Milestone 5** (inference decision): COMPLETE. Rule engine (AST expression, YAML rules, FactBase/ConflictResolver), reasoner (DecisionTree, ScoreCalculator, TraceRecorder, EvidenceCollector).
+- **Milestone 6** (orchestration & scheduling): COMPLETE. Pipeline (LoadFromYAML/Start/Submit/Drain/Stop), PipelineBuilder, StageFactory, StageQueue, Scheduler.
+- **Milestone 7** (visualization & application): COMPLETE. ViewModels (PipelineViewModel, InspectionViewModel, FrameProvider, ConfigViewModel, DashboardViewModel), QML 4-screen industrial dark UI, Seat AOI reference app. 572 tests pass.
 
 Within milestone 1, batch execution order deviates from the numeric order: 1.1 -> 1.2 -> 1.3 -> **1.5 -> 1.4** -> 1.6, because Runtime (1.4)'s GPU stream queue depends on Memory (1.5)'s `GpuPool`/`PinnedPool`, so Memory was pulled forward. Don't "fix" this back to numeric order.
 
