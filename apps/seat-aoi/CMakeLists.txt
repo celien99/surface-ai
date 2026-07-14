@@ -2,6 +2,9 @@ find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Charts)
 
 add_executable(seat_aoi main.cpp qml.qrc)
 
+# Allow main.cpp to include internal pipeline stage headers for DI wiring
+target_include_directories(seat_aoi PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
 target_link_libraries(seat_aoi PRIVATE
     sai::visualization
     sai::pipeline

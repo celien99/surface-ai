@@ -37,6 +37,9 @@ public:
     auto OnStart(Context&) -> Result<void> override;
     auto OnStop(Context&) -> Result<void> override;
     auto Process(StageInput) -> Result<StageOutput> override;
+    auto SetCamera(std::shared_ptr<sai::device::ICamera> cam) -> void {
+        camera_ = std::move(cam); stub_ = false;
+    }
 private:
     std::string id_;
     Pipeline* pipeline_ = nullptr;
@@ -68,6 +71,9 @@ public:
     auto OnStart(Context&) -> Result<void> override;
     auto OnStop(Context&) -> Result<void> override;
     auto Process(StageInput) -> Result<StageOutput> override;
+    auto SetEngine(std::shared_ptr<sai::inference::IInferenceEngine> eng) -> void {
+        engine_ = std::move(eng); stub_ = false;
+    }
 private:
     std::string id_;
     std::shared_ptr<sai::inference::IInferenceEngine> engine_;
@@ -84,6 +90,9 @@ public:
     auto OnStart(Context&) -> Result<void> override;
     auto OnStop(Context&) -> Result<void> override;
     auto Process(StageInput) -> Result<StageOutput> override;
+    auto SetDetector(std::shared_ptr<sai::detection::IDetector> det) -> void {
+        detector_ = std::move(det); stub_ = false;
+    }
 private:
     std::string id_;
     std::shared_ptr<sai::detection::IDetector> detector_;
@@ -99,6 +108,15 @@ public:
     auto OnStart(Context&) -> Result<void> override;
     auto OnStop(Context&) -> Result<void> override;
     auto Process(StageInput) -> Result<StageOutput> override;
+    auto SetRuleEngine(std::shared_ptr<sai::rule::RuleEngine> re) -> void {
+        rule_engine_ = std::move(re); stub_ = false;
+    }
+    auto SetKnowledgeGraph(std::shared_ptr<sai::knowledge::KnowledgeGraph> kg) -> void {
+        kg_ = std::move(kg);
+    }
+    auto SetVectorPath(std::shared_ptr<sai::retrieval::VectorPath> vp) -> void {
+        vp_ = std::move(vp);
+    }
 private:
     std::string id_;
     std::shared_ptr<sai::rule::RuleEngine> rule_engine_;
@@ -118,6 +136,9 @@ public:
     auto OnStart(Context&) -> Result<void> override;
     auto OnStop(Context&) -> Result<void> override;
     auto Process(StageInput) -> Result<StageOutput> override;
+    auto SetReasoner(std::shared_ptr<sai::reasoner::IReasoner> r) -> void {
+        reasoner_ = std::move(r); stub_ = false;
+    }
 private:
     std::string id_;
     std::shared_ptr<sai::reasoner::IReasoner> reasoner_;
@@ -134,6 +155,9 @@ public:
     auto OnStart(Context&) -> Result<void> override;
     auto OnStop(Context&) -> Result<void> override;
     auto Process(StageInput) -> Result<StageOutput> override;
+    auto SetExporter(std::shared_ptr<sai::io::IExporter> exp) -> void {
+        exporter_ = std::move(exp); stub_ = false;
+    }
 private:
     std::string id_;
     std::shared_ptr<sai::io::IExporter> exporter_;

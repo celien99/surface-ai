@@ -115,6 +115,11 @@ public:
 
     auto SetResultCallback(ResultCallback callback) -> void;
 
+    // Returns the stage node with the given id, or nullptr if not found.
+    // Caller must cast to the concrete stage type (e.g. CaptureStage) and
+    // call setter methods (SetEngine, SetCamera, ...) before Start().
+    auto GetStage(std::string_view id) const -> IStageNode*;
+
 private:
     Pipeline() = default;
 

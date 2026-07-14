@@ -464,4 +464,10 @@ auto Pipeline::SetResultCallback(ResultCallback callback) -> void {
     result_callback_ = std::move(callback);
 }
 
+auto Pipeline::GetStage(std::string_view id) const -> IStageNode* {
+    auto it = nodes_.find(std::string(id));
+    if (it == nodes_.end()) return nullptr;
+    return it->second.get();
+}
+
 }  // namespace sai::pipeline
