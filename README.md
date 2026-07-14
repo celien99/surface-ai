@@ -80,6 +80,23 @@ graph TB
 
 **数据流：** 采集 → 成像预处理 → AI 推理（特征提取 + 异常检测）→ 知识图谱存储 → 混合检索 → 规则引擎 → 推理决策 → Pipeline 编排 → 可视化呈现
 
+### 端到端检测 Pipeline
+
+```
+┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐
+│ Capture  │──→│Preprocess│──→│Inference │──→│ Detect   │──→│RuleEval  │──→│ Reason   │──→│ Export   │
+│RawImage  │   │Debayer   │   │TensorRT  │   │PatchCore │   │RuleEngine│   │Decision  │   │JsonExport│
+│passthru  │   │WB+Resize │   │→Embedding│   │IDetector │   │FactBase  │   │Tree+Sigm │   │JSON+PPM  │
+└──────────┘   └──────────┘   └──────────┘   └──────────┘   └──────────┘   └──────────┘   └──────────┘
+                                                                    │
+                                                    ┌───────────────┴───────────────┐
+                                                    │ KnowledgeGraph    VectorPath   │
+                                                    │ (SQLite 属性图)   (FAISS 检索)  │
+                                                    └───────────────────────────────┘
+```
+
+**批处理模式：** `./seat_aoi --image-dir ./samples/ --output-dir ./results/`
+
 ---
 
 ## 🚀 快速开始
@@ -117,7 +134,24 @@ ctest --preset default -R "logger"
 cd build/default && ctest -R "LoggerTest.SetLevelRoundTripsFilterDecision" --output-on-failure
 ```
 
+### 构建参考应用
+
+```bash
+# 构建 Seat AOI 参考应用
+cmake --build --preset default --target seat_aoi
+
+# GUI 模式 — FakeCamera 实时采集 + QML 监控面板
+./build/default/apps/seat-aoi/seat_aoi
+
+# 批处理模式 — 处理样本目录中的图像文件
+./build/default/apps/seat-aoi/seat_aoi \
+    --image-dir /path/to/leather/samples \
+    --output-dir /path/to/results
+```
+
 > **注意：** CUDA-gated（`GpuPool`、`GpuStreamQueue`、`TensorRtEngine`）和 Linux-gated（`inotify` 热重载）代码在 macOS 上不编译。它们按冻结设计书写，仅在目标平台（Ubuntu 22.04 x64 + NVIDIA GPU）编译验证。各模块 CMakeLists.txt 在 target 级别做编译门控，不使用 `#ifdef` 补丁。
+>
+> Seat AOI 在 Linux+CUDA 上自动使用 **TensorRtEngine**，在 macOS 上回退到 **MockEngine**。
 
 ---
 
@@ -132,7 +166,7 @@ cd build/default && ctest -R "LoggerTest.SetLevelRoundTripsFilterDecision" --out
 | 3 | `plugin` | `sai::plugin` | PluginManager、Manifest 解析、ModuleManager、Capability/License/Version 管理器 |
 | 4 | `runtime` | `sai::runtime` | `Task<T>` C++20 协程、WorkerPool 固定线程池、TaskGraph DAG、PipelineExecutor、GpuStreamQueue（CUDA） |
 | 5 | `infra` | `sai::infra` | Logger（spdlog 封装，双级队列溢出策略）、ConfigSchema/ConfigStore（yaml-cpp）、inotify 热重载（Linux） |
-| 6 | `device` | `sai::device` | IDevice/ICamera/ILightController 硬件抽象接口、RingBuffer |
+| 6 | `device` | `sai::device` | IDevice/ICamera/ILightController 硬件抽象接口、RingBuffer、FakeCamera（开发测试用合成帧生成器） |
 | 7 | `image` | `sai::image` | Image/RawImage/SurfaceImage/GpuImage 类型体系、ROI、预处理链（Debayer/FlatField/WhiteBalance/Resize/Calibration/HDR/Compose） |
 | 8 | `io` | `sai::io` | IImporter/BasicImporter（YAML + PPM）、IExporter/JsonExporter（JSON 报告） |
 | 9 | `inference` | `sai::inference` | IInferenceEngine（Mock / TensorRT CUDA）、CLIP/DINOv3/SAM2 模型适配器、多层特征聚合 |
@@ -142,7 +176,7 @@ cd build/default && ctest -R "LoggerTest.SetLevelRoundTripsFilterDecision" --out
 | 13 | `retrieval` | `sai::retrieval` | VectorPath（FAISS TopK/Range/Hybrid）、MetadataPath（SQLite 过滤）、IScoreFusion/WeightedFusion/RRFFusion、HybridRetriever 双路径编排 |
 | 14 | `rule` | `sai::rule` | RuleEngine（AST 表达式引擎 + YAML 规则存储）、FactBase/ConflictResolver、Lexer/Parser |
 | 15 | `reasoner` | `sai::reasoner` | IReasoner/DefaultReasoner（决策树遍历 + 加权 Sigmoid 评分 + 溯源）、ScoreCalculator、TraceRecorder、EvidenceCollector |
-| 16 | `pipeline` | `sai::pipeline` | Pipeline（LoadFromYAML/Start/Submit/Drain/Stop）、PipelineBuilder（YAML + 拓扑校验）、StageFactory、`StageQueue<T>`（bounded SPSC lock-free）、IStageNode |
+| 16 | `pipeline` | `sai::pipeline` | Pipeline（LoadFromYAML/Start/Submit/Drain/Stop）、PipelineBuilder（YAML + 拓扑校验）、7 个 Stage（Capture/Preprocess/Inference/Detect/RuleEval/Reason/Export）、`StageQueue<T>`（bounded SPSC lock-free）、RuleEvalOutput 跨阶段上下文传递 |
 | 17 | `scheduler` | `sai::scheduler` | StageType → WorkerPool 映射、阶段间队列分配（**仅内部头文件**） |
 | 18 | `visualization` | `sai::visualization` | PipelineViewModel、InspectionViewModel、FrameProvider（QQuickImageProvider）、ConfigViewModel、DashboardViewModel、QML 4 屏工业深色 UI |
 
@@ -214,7 +248,7 @@ cd build/default && ctest -R "LoggerTest.SetLevelRoundTripsFilterDecision" --out
 | **M4** 知识 & 检索 | KnowledgeGraph（SQLite 属性图）· KnowledgeEvolution · VectorPath（FAISS）· MetadataPath（SQLite）· HybridRetriever 双路径编排 | ✅ |
 | **M5** 推理决策 | RuleEngine（AST + YAML）· FactBase/ConflictResolver · Reasoner（决策树 + Sigmoid 评分 + 全链路溯源） | ✅ |
 | **M6** 编排 & 调度 | Pipeline（LoadFromYAML/Submit/Drain）· StageQueue（bounded SPSC lock-free）· Scheduler（StageType → WorkerPool） | ✅ |
-| **M7** 呈现 & 应用 | ViewModel 层 · QML 4 屏工业深色 UI · **Seat AOI** 座椅缺陷检测参考应用 | ✅ |
+| **M7** 呈现 & 应用 | ViewModel 层 · QML 4 屏工业深色 UI · **Seat AOI** 端到端 Pipeline（7 Stage DI 注入，批处理 CLI，KnowledgeGraph 种子数据） | ✅ |
 
 ---
 
