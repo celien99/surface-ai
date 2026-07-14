@@ -19,6 +19,13 @@ auto MemoKey(std::string_view src) -> std::string {
 template <typename Fn>
 auto EvalWithMemo(FactBase& ctx, std::string_view src, Fn&& compute)
     -> Result<Value> {
+    // When no source text is available (e.g. parser emitted empty string),
+    // skip memoization entirely — an empty key is not unique enough and
+    // would cause cross-expression cache pollution.
+    if (src.empty()) {
+        return compute();
+    }
+
     auto key = MemoKey(src);
     if (auto cached = ctx.Get(key)) {
         return std::move(*cached);

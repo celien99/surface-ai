@@ -1,0 +1,51 @@
+rule_sets:
+  quality_check:
+    - name: "high_temp_reject"
+      priority: 100
+      condition: "temperature > 85.0"
+      action:
+        label: "REJECT"
+        base_severity: 0.8
+        recommendation: "Temperature exceeds safe limit"
+      overrides: []
+      overridden_by: []
+    - name: "warpage_warning"
+      priority: 50
+      condition: "warpage > 2.5"
+      action:
+        label: "WARN"
+        base_severity: 0.3
+        recommendation: "Warpage exceeds threshold"
+      overrides: []
+      overridden_by: []
+
+  surface_inspection:
+    - name: "scratch_reject"
+      priority: 200
+      condition: "scratch_count > 5 AND scratch_depth > 0.5"
+      action:
+        label: "REJECT"
+        base_severity: 0.9
+        recommendation: "Scratch defect detected"
+      overrides: []
+      overridden_by: []
+
+  overlap_test:
+    - name: "high_temp_check"
+      priority: 100
+      condition: "temperature > 80.0"
+      action:
+        label: "WARN"
+        base_severity: 0.2
+        recommendation: "Temperature elevated"
+      overrides: []
+      overridden_by: []
+    - name: "low_temp_check"
+      priority: 50
+      condition: "temperature < 30.0"
+      action:
+        label: "OK"
+        base_severity: 0.0
+        recommendation: ""
+      overrides: []
+      overridden_by: []
