@@ -110,6 +110,7 @@ auto Pipeline::LoadFromYAML(std::filesystem::path yaml_path, Context& ctx)
     if (!valid.has_value()) return tl::make_unexpected(std::move(valid).error());
 
     auto pipeline = std::unique_ptr<Pipeline>(new Pipeline());
+    pipeline->ctx_ = &ctx;  // stored for lifecycle hooks (I2)
 
     // Step 1: Create worker pools for each unique stage type string
     std::set<std::string> stage_strs;
@@ -170,27 +171,10 @@ auto Pipeline::LoadFromYAML(std::filesystem::path yaml_path, Context& ctx)
         task_node.id = task_id;
         task_node.stage_id = stage_id;
         task_node.dependencies = dep_ids;
-        task_node.work = [node = pipeline->nodes_[stage_cfg.id].get(),
-                          &metrics, &p = *pipeline,
-                          stage_id_str = stage_cfg.id]()
-            -> runtime::Task<void> {
-            auto input = p.DequeueInput(stage_id_str);
-            if (!input) {
-                metrics.frames_failed.fetch_add(1, std::memory_order_relaxed);
-                co_return Result<void>{};
-            }
-
-            auto result = node->Process(std::move(*input));
-            if (result.has_value()) {
-                metrics.frames_processed.fetch_add(1, std::memory_order_relaxed);
-                auto output = std::make_unique<StageOutput>(
-                    std::move(result.value()));
-                p.EnqueueOutputs(stage_id_str, std::move(output));
-                co_return Result<void>{};
-            } else {
-                metrics.frames_failed.fetch_add(1, std::memory_order_relaxed);
-                co_return tl::make_unexpected(result.error());
-            }
+        // TaskGraph node holds a no-op placeholder; real persistent work
+        // loops are launched in Start() via fire-and-forget coroutines.
+        task_node.work = []() -> runtime::Task<void> {
+            co_return Result<void>{};
         };
 
         auto add_result = pipeline->graph_->AddNode(std::move(task_node));
@@ -210,6 +194,58 @@ auto Pipeline::Start() -> Result<void> {
             ErrorCode::Pipeline_InvalidState,
             "Pipeline already running"});
     }
+
+    // I2: call OnStart lifecycle hooks on each stage node
+    if (ctx_) {
+        for (auto& [id, node] : nodes_) {
+            auto result = node->OnStart(*ctx_);
+            if (!result.has_value()) return tl::make_unexpected(result.error());
+        }
+    }
+
+    // C1 + I1: launch one persistent worker thread per stage. Each thread
+    // continuously dequeues from its input queue, processes, and enqueues to
+    // downstream queues until stop is requested AND the input queue is drained.
+    //
+    // Uses std::jthread (not coroutines) to avoid coroutine frame heap-elision
+    // issues observed on Apple Clang 21.
+
+    for (auto& [stage_id, node] : nodes_) {
+        StageMetrics* metrics_ptr = &metrics_[stage_id];
+        auto stage_id_sp = std::make_shared<std::string>(stage_id);
+        IStageNode* node_ptr = node.get();
+
+        worker_threads_.emplace_back(
+            [this, stage_id_sp, node_ptr, metrics_ptr](std::stop_token st) {
+                using Clock = std::chrono::steady_clock;
+
+                while (true) {
+                    auto input = DequeueInput(*stage_id_sp, st);
+                    if (!input) break;  // stop requested AND queue drained
+
+                    auto t_start = Clock::now();
+                    auto result = node_ptr->Process(std::move(*input));
+                    auto elapsed =
+                        std::chrono::duration<double, std::micro>(
+                            Clock::now() - t_start)
+                            .count();
+
+                    if (result.has_value()) {
+                        metrics_ptr->frames_processed.fetch_add(
+                            1, std::memory_order_relaxed);
+                        metrics_ptr->avg_latency_us = elapsed;
+                        EnqueueOutputs(
+                            *stage_id_sp,
+                            std::make_unique<StageOutput>(
+                                std::move(result.value())));
+                    } else {
+                        metrics_ptr->frames_failed.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                }
+            });
+    }
+
     return {};
 }
 
@@ -240,11 +276,21 @@ auto Pipeline::Submit(sai::image::RawImage image) -> Result<void> {
 // Pipeline::DequeueInput
 // =========================================================================
 
-auto Pipeline::DequeueInput(const std::string& stage_id)
+auto Pipeline::DequeueInput(const std::string& stage_id,
+                              std::stop_token st)
     -> std::unique_ptr<StageOutput> {
     auto it = input_queues_.find(stage_id);
     if (it == input_queues_.end()) return nullptr;
-    return it->second->PopBlocking();
+
+    // Poll with short sleep, checking stop_token each iteration.
+    while (!st.stop_requested()) {
+        auto item = it->second->TryPop();
+        if (item) return item;
+        std::this_thread::sleep_for(std::chrono::microseconds(500));
+    }
+
+    // Stop requested: one last non-blocking try to drain remaining items.
+    return it->second->TryPop();
 }
 
 // =========================================================================
@@ -313,11 +359,29 @@ auto Pipeline::BuildQueueWiring(const PipelineConfig& config) -> Result<void> {
 
 auto Pipeline::Drain() -> Result<void> {
     draining_.store(true);
-    // Wait for all queues to drain.
-    // For M6 v1 mock stages, processing is instantaneous; a brief sleep
-    // gives any in-flight work time to complete. Production implementation
-    // should poll queue depths until all are zero.
-    std::this_thread::sleep_for(10ms);
+
+    // Poll all input queues until all are zero, with a 30 s timeout.
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+
+    while (std::chrono::steady_clock::now() < deadline) {
+        bool all_empty = true;
+        for (auto& [id, q] : input_queues_) {
+            if (q->Depth() > 0) {
+                all_empty = false;
+                break;
+            }
+        }
+        if (all_empty) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    // After timeout (or early exit), force-drain any remaining items.
+    for (auto& [id, q] : input_queues_) {
+        while (q->Depth() > 0) {
+            q->TryPop();
+        }
+    }
+
     draining_.store(false);
     return {};
 }
@@ -330,9 +394,33 @@ auto Pipeline::Stop() -> Result<void> {
     stop_source_.request_stop();
     running_.store(false);
 
-    // Drain remaining frames
+    // Request stop on all worker jthreads (they share the same stop_source
+    // via the lambdas' stop_token, but each jthread also has its own
+    // stop_source — we request stop on ours so DequeueInput sees it).
+    for (auto& t : worker_threads_) {
+        t.request_stop();
+    }
+
+    // Wait for all worker threads to finish
+    for (auto& t : worker_threads_) {
+        t.join();
+    }
+    worker_threads_.clear();
+
+    // Drain any remaining frames that may have been left in queues
     auto drain_result = Drain();
     if (!drain_result.has_value()) return drain_result;
+
+    // I2: call OnStop lifecycle hooks in reverse order
+    if (ctx_) {
+        std::vector<std::string> reverse_ids;
+        reverse_ids.reserve(nodes_.size());
+        for (auto& [id, node] : nodes_) reverse_ids.push_back(id);
+        for (auto it = reverse_ids.rbegin(); it != reverse_ids.rend(); ++it) {
+            auto result = nodes_[*it]->OnStop(*ctx_);
+            if (!result.has_value()) return tl::make_unexpected(result.error());
+        }
+    }
 
     return {};
 }
@@ -351,6 +439,8 @@ auto Pipeline::Metrics() const -> std::vector<StageMetrics> {
         sm.frames_processed.store(m.frames_processed.load());
         sm.frames_failed.store(m.frames_failed.load());
         sm.frames_dropped.store(m.frames_dropped.load());
+        sm.avg_latency_us = m.avg_latency_us;
+        sm.p99_latency_us = m.p99_latency_us;
         sm.set_queue_depth(m.queue_depth());
         result.push_back(std::move(sm));
     }

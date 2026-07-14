@@ -6,6 +6,7 @@
 #include <memory>
 #include <stop_token>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <sai/core/error.h>
@@ -35,6 +36,12 @@ struct StageMetrics {
     std::atomic<size_t> frames_failed{0};
     std::atomic<size_t> frames_dropped{0};
 
+    // Per-frame latency (microseconds) of the most recently processed frame.
+    // Written by the worker loop, read by Metrics(). Non-atomic double is
+    // safe for this single-writer / eventual-read pattern.
+    double avg_latency_us = 0.0;
+    double p99_latency_us = 0.0;
+
     StageMetrics() = default;
     StageMetrics(std::string id, StageType t)
         : stage_id(std::move(id)), type(t) {}
@@ -48,6 +55,8 @@ struct StageMetrics {
         , frames_processed(other.frames_processed.load())
         , frames_failed(other.frames_failed.load())
         , frames_dropped(other.frames_dropped.load())
+        , avg_latency_us(other.avg_latency_us)
+        , p99_latency_us(other.p99_latency_us)
         , queue_depth_(other.queue_depth_.load()) {}
 
     StageMetrics& operator=(StageMetrics&& other) noexcept {
@@ -57,6 +66,8 @@ struct StageMetrics {
             frames_processed.store(other.frames_processed.load());
             frames_failed.store(other.frames_failed.load());
             frames_dropped.store(other.frames_dropped.load());
+            avg_latency_us = other.avg_latency_us;
+            p99_latency_us = other.p99_latency_us;
             queue_depth_.store(other.queue_depth_.load());
         }
         return *this;
@@ -101,9 +112,11 @@ public:
 private:
     Pipeline() = default;
 
-    // DequeueInput: pop from the stage's input queue (blocking with short yield).
+    // DequeueInput: pop from the stage's input queue. When stop_token is
+    // set, returns nullptr after the stop is observed (short-polling loop).
     // For entry stages (no depends_on), Submit() pushes directly to their queue.
-    auto DequeueInput(const std::string& stage_id) -> std::unique_ptr<StageOutput>;
+    auto DequeueInput(const std::string& stage_id, std::stop_token st)
+        -> std::unique_ptr<StageOutput>;
     // EnqueueOutputs: push output to all downstream stages' input queues.
     // Uses the adjacency map built during LoadFromYAML.
     auto EnqueueOutputs(const std::string& stage_id, std::unique_ptr<StageOutput>) -> void;
@@ -127,6 +140,11 @@ private:
     std::atomic<bool> draining_{false};
     std::vector<std::unique_ptr<runtime::WorkerPool>> pools_;
     std::string entry_stage_id_;  // first stage with empty depends_on
+    Context* ctx_ = nullptr;      // stored during LoadFromYAML for lifecycle hooks
+    // Per-stage worker threads (one jthread per stage).
+    // Each thread runs a persistent loop: dequeue, process, enqueue.
+    // jthread's built-in stop_token signals shutdown via stop_source_.
+    std::vector<std::jthread> worker_threads_;
 };
 
 }  // namespace sai::pipeline

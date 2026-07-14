@@ -41,10 +41,14 @@ public:
         if (next_tail == head_.load(std::memory_order_acquire)) {
             // Full
             if (policy_ == BackpressurePolicy::DropOldest) {
-                // Discard the oldest: advance head by one
-                size_t current_head = head_.load(std::memory_order_relaxed);
-                head_.store((current_head + 1) % (logical_capacity_ + 1),
-                            std::memory_order_release);
+                // Discard the oldest atomically via CAS on head_.
+                // If CAS fails, TryPop already advanced head_ concurrently
+                // (a slot was freed), so we have space either way — fall through.
+                size_t h = head_.load(std::memory_order_relaxed);
+                head_.compare_exchange_weak(h,
+                    (h + 1) % (logical_capacity_ + 1),
+                    std::memory_order_release,
+                    std::memory_order_relaxed);
                 // Now we have space — write at tail
                 buffer_[current_tail] = std::move(item);
                 tail_.store(next_tail, std::memory_order_release);
@@ -59,16 +63,23 @@ public:
     }
 
     auto TryPop() noexcept -> std::unique_ptr<T> {
-        size_t current_head = head_.load(std::memory_order_relaxed);
-
-        if (current_head == tail_.load(std::memory_order_acquire)) {
-            return nullptr;  // Empty
+        size_t h = head_.load(std::memory_order_acquire);
+        while (true) {
+            if (h == tail_.load(std::memory_order_acquire)) {
+                return nullptr;  // Empty
+            }
+            // CAS loop eliminates TOCTOU between the empty-check and the
+            // head_ store. DropOldest in TryPush also uses CAS, so the
+            // two paths cannot lose increments.
+            if (head_.compare_exchange_weak(h,
+                    (h + 1) % (logical_capacity_ + 1),
+                    std::memory_order_release,
+                    std::memory_order_relaxed)) {
+                return std::move(buffer_[h]);
+            }
+            // CAS failed — h was reloaded with the current head_ value;
+            // loop to retry with the fresh value.
         }
-
-        auto item = std::move(buffer_[current_head]);
-        head_.store((current_head + 1) % (logical_capacity_ + 1),
-                    std::memory_order_release);
-        return item;
     }
 
     auto Capacity() const noexcept -> size_t { return logical_capacity_; }

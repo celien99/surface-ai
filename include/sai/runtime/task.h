@@ -78,6 +78,18 @@ public:
     [[nodiscard]] auto initial_suspend() noexcept -> std::suspend_always { return {}; }
     [[nodiscard]] auto final_suspend() noexcept -> std::suspend_always { return {}; }
 
+    // User-provided operator new/delete disable heap-allocation elision
+    // (C++20 [dcl.fct.def.coroutine] p11).  Without these, compilers may
+    // place the coroutine frame on the caller's stack when the handle
+    // appears to not escape — which is incorrect when the handle is
+    // submitted to a WorkerPool running on a different thread.
+    static auto operator new(std::size_t size) -> void* {
+        return ::operator new(size);
+    }
+    static auto operator delete(void* ptr, std::size_t size) -> void {
+        ::operator delete(ptr, size);
+    }
+
 private:
     template <typename U>
     void AdoptIfStopToken(const U& value) noexcept {

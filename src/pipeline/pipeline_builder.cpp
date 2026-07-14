@@ -1,5 +1,6 @@
 #include "pipeline_builder.h"
 
+#include <regex>
 #include <set>
 #include <map>
 #include <queue>
@@ -60,6 +61,15 @@ auto PipelineBuilder::Validate(const PipelineConfig& config) -> Result<void> {
         return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_InvalidConfig,
             "pipeline.name is required"});
     }
+
+    // C5: version must match \d+\.\d+ pattern (e.g. "1.0", "2.3")
+    {
+        std::regex version_re(R"(^\d+\.\d+$)");
+        if (!std::regex_match(config.version, version_re)) {
+            return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_InvalidConfig,
+                "pipeline.version must match \\d+.\\d+ pattern, got: " + config.version});
+        }
+    }
     if (config.stages.empty()) {
         return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_InvalidConfig,
             "pipeline must have at least one stage"});
@@ -119,6 +129,54 @@ auto PipelineBuilder::Validate(const PipelineConfig& config) -> Result<void> {
     if (!has_exit) {
         return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_InvalidConfig,
             "no exit stage found"});
+    }
+
+    // C4: entry stages must include at least one Capture type
+    {
+        bool has_capture_entry = false;
+        for (auto& s : config.stages) {
+            if (s.depends_on.empty() && s.type == StageType::Capture) {
+                has_capture_entry = true;
+                break;
+            }
+        }
+        if (!has_capture_entry) {
+            return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_InvalidConfig,
+                "entry stage (empty depends_on) must be of type Capture"});
+        }
+    }
+
+    // C4: exit stages must include at least one Export type
+    {
+        bool has_export_exit = false;
+        for (auto& s : config.stages) {
+            if (depended_on.find(s.id) == depended_on.end()
+                && s.type == StageType::Export) {
+                has_export_exit = true;
+                break;
+            }
+        }
+        if (!has_export_exit) {
+            return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_InvalidConfig,
+                "exit stage must be of type Export"});
+        }
+    }
+
+    // I3: v1 only supports linear pipelines — reject branching DAGs
+    {
+        std::map<std::string, int> consumer_count;
+        for (auto& s : config.stages) {
+            for (auto& dep : s.depends_on) {
+                consumer_count[dep]++;
+            }
+        }
+        for (auto& [stage_id, count] : consumer_count) {
+            if (count > 1) {
+                return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_InvalidConfig,
+                    "v1 does not support fan-out topologies: stage '" + stage_id
+                    + "' has " + std::to_string(count) + " downstream consumers"});
+            }
+        }
     }
 
     // Check type compatibility for each edge
