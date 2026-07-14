@@ -3,7 +3,7 @@
 #include <string>
 
 #include "sai/reasoner/decision_tree.h"
-#include "sai/reasoner/trace_recorder.h"
+#include "trace_recorder.h"
 #include "sai/rule/fact_base.h"
 
 namespace sai::reasoner {

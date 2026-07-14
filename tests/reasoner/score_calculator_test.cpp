@@ -3,7 +3,7 @@
 
 #include <gtest/gtest.h>
 
-#include "sai/reasoner/score_calculator.h"
+#include "src/reasoner/score_calculator.h"
 #include "sai/rule/fact_base.h"
 
 namespace sai::reasoner {

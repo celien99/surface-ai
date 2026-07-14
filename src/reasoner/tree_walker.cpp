@@ -2,8 +2,8 @@
 
 #include <string>
 
-#include "sai/reasoner/score_calculator.h"
-#include "sai/reasoner/trace_recorder.h"
+#include "score_calculator.h"
+#include "trace_recorder.h"
 
 namespace sai::reasoner {
 

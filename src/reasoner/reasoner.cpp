@@ -7,7 +7,7 @@
 #include "sai/rule/rule_engine.h"
 #include "sai/reasoner/decision_tree.h"
 #include "tree_walker.h"
-#include "sai/reasoner/trace_recorder.h"
+#include "trace_recorder.h"
 #include "sai/reasoner/evidence_collector.h"
 
 namespace sai::reasoner {

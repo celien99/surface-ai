@@ -1,4 +1,4 @@
-#include "sai/reasoner/trace_recorder.h"
+#include "trace_recorder.h"
 
 #include <chrono>
 #include <string>

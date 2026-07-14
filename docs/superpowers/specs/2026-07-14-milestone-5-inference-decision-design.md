@@ -144,14 +144,18 @@ include/sai/rule/
 
 include/sai/reasoner/
     decision_tree.h          # DecisionTree, IDecisionNode, BranchNode, LeafNode, ScoreFormula
-    reasoner.h               # IReasoner, DefaultReasoner, ReasoningResult, TraceStep, EvidenceItem
+    reasoner.h               # IReasoner, DefaultReasoner, ReasoningResult
+    evidence_collector.h     # EvidenceItem, EvidenceCollector（EvidenceItem 是公开 API 类型）
 
 src/rule/
     CMakeLists.txt
+    lexer.h                  # 内部：词法分析器
+    parser.h                 # 内部：递归下降解析器
+    conflict_resolver.h      # 内部：冲突消解
     value.cpp
-    lexer.cpp                # 词法分析器（Token 流）
-    parser.cpp               # 递归下降解析器（Token 流 → AST）
-    expression.cpp           # 各 AST 节点 Evaluate/CollectFieldRefs/SourceText
+    lexer.cpp
+    parser.cpp
+    expression.cpp
     fact_base.cpp
     fact_builder.cpp
     rule_engine.cpp
@@ -159,6 +163,9 @@ src/rule/
 
 src/reasoner/
     CMakeLists.txt
+    tree_walker.h            # 内部：决策树遍历
+    score_calculator.h       # 内部：评分计算
+    trace_recorder.h         # 内部：溯源记录
     decision_tree.cpp
     tree_walker.cpp
     score_calculator.cpp

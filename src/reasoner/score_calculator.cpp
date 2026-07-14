@@ -1,4 +1,4 @@
-#include "sai/reasoner/score_calculator.h"
+#include "score_calculator.h"
 
 #include <cmath>
 #include <vector>
