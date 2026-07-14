@@ -214,7 +214,7 @@ public:
     auto AsDouble() const -> std::optional<double>;
     auto AsString() const -> std::optional<std::string_view>;
     auto AsBool() const -> std::optional<bool>;
-    auto AsList() const -> std::optional<const std::vector<Value>&>;
+    auto AsList() const -> const std::vector<Value>*;  // nullptr = not a list (optional<T&> illegal in C++)
 
     // 算术（Null 传播）
     auto operator+(const Value&) const -> Value;
