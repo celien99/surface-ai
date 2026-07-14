@@ -139,9 +139,452 @@ M7 通过以下方式读取 M1-M6 数据：
 
 ---
 
-## 4. 模块结构
+## 4. QML UI/UX 设计
 
-### 4.1 文件布局
+### 4.1 设计语言
+
+**暗色工业风主题**。工厂车间光照条件复杂（强光/弱光/频闪），暗色 UI 减少视觉疲劳、降低屏幕反光干扰。整体风格参考现代工业 HMI（人机界面）：信息密度高但不杂乱，关键状态一目了然。
+
+```
+色彩系统
+────────────────────────────────────────────
+背景层:
+  主背景        #1a1a2e (深蓝黑)
+  卡片/面板     #16213e (深蓝)
+  输入框        #0f3460 (蓝灰)
+  分割线        #1f3460 (暗蓝)
+
+文本层:
+  主文本        #e4e6eb (浅灰白)  — 正文、标签
+  次文本        #a0a8b8 (灰蓝)    — 辅助说明、单位
+  占位文本      #5a6478 (暗灰蓝)  — placeholder
+  高亮文本      #ffffff           — 关键数值
+
+语义色:
+  OK/通过       #00c853 (绿)      — verdict OK、阶段正常
+  NG/缺陷       #ff1744 (红)      — verdict NG、阶段失败
+  WARN/警告     #ff9100 (橙)      — verdict WARN
+  UNCERTAIN     #ffc107 (琥珀)    — verdict UNCERTAIN
+  信息/高亮     #448aff (蓝)      — 选中态、链接
+  Pipeline运行  #00e676 (亮绿)    — 运行中指示灯
+  Pipeline停止  #757575 (灰)      — 已停止指示灯
+
+Chart 调色板:
+  series[0]     #448aff (蓝)
+  series[1]     #ff9100 (橙)
+  series[2]     #00c853 (绿)
+  series[3]     #ff1744 (红)
+  series[4]     #e040fb (紫)
+  series[5]     #00e5ff (青)
+```
+
+**字体系统**：全局使用系统默认无衬线字体（macOS: SF Pro, Linux: Noto Sans, Windows: Segoe UI）。数值/代码使用等宽字体（SF Mono / Noto Sans Mono / Consolas）。
+
+| 层级 | 字号 | 字重 | 用途 |
+|------|------|------|------|
+| H1 | 28px | Bold | 页面标题 |
+| H2 | 20px | DemiBold | 区块标题 |
+| H3 | 16px | Medium | 面板标题 |
+| Body | 14px | Regular | 正文、标签 |
+| Caption | 12px | Regular | 辅助信息、时间戳 |
+| Data | 32px | Bold | 核心数据（verdict、FPS） |
+| Metric | 24px | DemiBold | 关键指标（PPM、帧数） |
+| Mono | 13px | Regular | YAML 代码编辑 |
+
+**间距系统**（8px 基准）：
+- xs: 4px / sm: 8px / md: 16px / lg: 24px / xl: 32px / 2xl: 48px
+
+**圆角系统**：
+- 卡片: 12px / 按钮: 8px / 输入框: 6px / 缺陷框: 4px / 指示灯: 50%（圆形）
+
+### 4.2 交互规范
+
+**所有可交互元素必须显示鼠标手型光标**，通过以下 QML 模式统一应用：
+
+```qml
+// 自定义 cursor 样式 — 所有可点击控件的基础
+HoverCursor { cursorShape: Qt.PointingHandCursor }
+
+// 具体用法：
+Button { cursorShape: Qt.PointingHandCursor }
+TabBar { cursorShape: Qt.PointingHandCursor }  // 每个 TabButton
+ComboBox { cursorShape: Qt.PointingHandCursor }
+SpinBox { cursorShape: Qt.PointingHandCursor }
+Slider { cursorShape: Qt.PointingHandCursor }
+Switch { cursorShape: Qt.PointingHandCursor }
+TextArea { cursorShape: Qt.IBeamCursor }  // 文本编辑区用 I 型光标
+```
+
+**交互反馈三层**：所有可交互元素在以下三种状态必须有视觉区分——
+
+| 状态 | 效果 | 用途 |
+|------|------|------|
+| Default | 基础色 | 正常态 |
+| Hovered（悬浮） | 亮度 +15%，轻微 scale(1.02)，cursor 变手型 | 用户鼠标悬停 |
+| Pressed（按下） | 亮度 -10%，scale(0.98) | 用户点击确认 |
+| Disabled | 透明度 0.4，cursor 变箭头（DefaultCursor） | 不可操作 |
+
+实现方式：封装 `InteractiveButton`、`InteractiveTab` 等基础 QML 组件，内置 hover/pressed/disabled 状态机，避免每个控件重复写 `MouseArea`。
+
+### 4.3 主窗口布局
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  ┌──────────────────────────────────────────────────────┐│
+│  │  Surface AI — Seat AOI Inspection         ● Running  ││  ← 标题栏
+│  │  2026-07-14 14:32:15  │  SKU: LA-001  │  FPS: 4.8    ││     高度 48px
+│  └──────────────────────────────────────────────────────┘│
+│  ┌──────────────────────────────────────────────────────┐│
+│  │ [实时监控] [历史回顾] [产线配置] [统计仪表盘]          ││  ← TabBar
+│  └──────────────────────────────────────────────────────┘│     高度 40px
+│                                                          │
+│  ┌──────────────────────────────────────────────────────┐│
+│  │                    Tab 内容区                         ││
+│  │                  (切换时带 crossfade 动画)             ││
+│  │                                                      ││
+│  └──────────────────────────────────────────────────────┘│
+│  ┌──────────────────────────────────────────────────────┐│
+│  │  Status: Pipeline running │ Last frame: #0421 NG     ││  ← 状态栏
+│  └──────────────────────────────────────────────────────┘│     高度 32px
+└──────────────────────────────────────────────────────────┘
+```
+
+**标题栏** (`TitleBar`)：
+- 左侧：应用名称 + 当前产线名称（从 Pipeline YAML `name` 读取）
+- 右侧：运行指示灯（8px 圆形，Running = 绿色脉冲动画，Stopped = 灰色常亮）+ 文本 + 当前时间 + 当前 SKU + 实时 FPS
+- 背景色比主背景略深 `#141e30`，形成层次区分
+- 状态指示灯脉冲动画：
+  ```qml
+  Rectangle {
+      id: statusDot
+      radius: width / 2; width: 8; height: 8
+      color: running ? "#00e676" : "#757575"
+      SequentialAnimation on opacity {
+          running: parent.running; loops: Animation.Infinite
+          NumberAnimation { from: 1.0; to: 0.3; duration: 800 }
+          NumberAnimation { from: 0.3; to: 1.0; duration: 800 }
+      }
+  }
+  ```
+
+**TabBar**：
+- 4 个 TabButton：实时监控 / 历史回顾 / 产线配置 / 统计仪表盘
+- 选中态：底部 2px 蓝色下划线 + 文字高亮白色
+- 未选中态：次文本色 #a0a8b8
+- 切换动画：`TabView` content 做 200ms crossfade（`opacity: 0→1`）
+- 每个 TabButton `cursorShape: Qt.PointingHandCursor`
+
+**状态栏** (`StatusBar`)：
+- 左侧：Pipeline 运行状态文本
+- 右侧：最近帧 ID + Verdict（OK=绿字/NG=红字）
+- 背景透明，字体 12px Caption
+
+### 4.4 实时监控屏 (MonitorScreen)
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ ┌─────────────────────────┐  ┌──────────────────────────┐│
+│ │                         │  │  ● VERDICT               ││  ← 左侧 70%
+│ │                         │  │                          ││     右侧 30%
+│ │                         │  │    OK                    ││
+│ │     相机预览画面          │  │                          ││  ← verdict 120px 大字
+│ │     (1024×1024)         │  │  severity: 0.12          ││
+│ │                         │  │  confidence: 0.98        ││
+│ │     ┌──────┐            │  │  "表面无缺陷"              ││
+│ │     │缺陷框│            │  │                          ││
+│ │     └──────┘            │  ├──────────────────────────┤│
+│ │                         │  │  Stage Metrics           ││
+│ │                         │  │  Capture    ████  12ms   ││
+│ │                         │  │  Preprocess ██     8ms   ││
+│ │                         │  │  Inference  █████ 45ms   ││
+│ │                         │  │  Detect     ███   15ms   ││
+│ │                         │  │  RuleEval   ████  18ms   ││
+│ │                         │  │  Reason     █      2ms   ││
+│ │                         │  │  Export     ██    10ms   ││
+│ └─────────────────────────┘  └──────────────────────────┘│
+└──────────────────────────────────────────────────────────┘
+```
+
+**左侧 — 相机预览区**：
+- 背景 `#0a0a14`（几乎纯黑），让画面成为视觉焦点
+- 图像居中显示，保持宽高比
+- 图像四周 2px 边框 `#1f3460`，与周围面板分隔
+- 缺陷叠加框（`DefectOverlay`）：半透明红色矩形框 + 右上角缺陷标签浮层
+
+  ```qml
+  // DefectOverlay.qml
+  Rectangle {
+      property string defectLabel
+      property string severity
+      property rect boundingBox
+
+      x: boundingBox.x; y: boundingBox.y
+      width: boundingBox.width; height: boundingBox.height
+      color: "transparent"
+      border { color: "#ff1744"; width: 2 }
+
+      // 右上角标签
+      Rectangle {
+          anchors { top: parent.top; right: parent.right }
+          color: "#ff1744"; radius: 4
+          Label { text: defectLabel; color: "white"; font.pixelSize: 12 }
+      }
+  }
+  ```
+
+**右侧 — 判决面板**：
+- 顶部 VerdictBadge 组件：
+  - `OK`：绿色大字 120px Bold + 绿色背景圆角卡片（`#00c853` 20%透明度）
+  - `NG`：红色大字 120px Bold + 红色背景圆角卡片（`#ff1744` 20%透明度）
+  - `WARN`：橙色 / `UNCERTAIN`：琥珀色
+  - verdict 切换时做 300ms 颜色渐变动画（`ColorAnimation`）
+- 判决文本下方：severity（数值 + 进度条）、confidence（数值 + 百分比）
+- 推荐操作文本（从 ReasoningResult.recommendation 读取），最多两行，超出省略号
+
+**右侧 — 阶段延迟条** (`StageMetricsBar`)：
+- 每个阶段一行：阶段名称（左对齐） + 水平条形图（宽度 = latency / max_latency）+ 延迟数字（右对齐，monospace）
+
+  ```qml
+  // 单行阶段指标
+  RowLayout {
+      Label { text: "Inference"; Layout.preferredWidth: 90; color: "#a0a8b8" }
+      Rectangle {
+          Layout.fillWidth: true; height: 6; radius: 3
+          color: "#1f3460"
+          Rectangle {
+              width: parent.width * (latency / maxLatency)
+              height: parent.height; radius: 3
+              color: latency > threshold ? "#ff1744" : "#448aff"
+              Behavior on width { NumberAnimation { duration: 200 } }
+          }
+      }
+      Label { text: latency + "ms"; Layout.preferredWidth: 50; font.family: "monospace" }
+  }
+  ```
+
+- 条形图颜色：延迟超过阈值时变红（如 Inference > 100ms），否则蓝色
+- 宽度变化动画 200ms `NumberAnimation`
+
+### 4.5 历史回顾屏 (HistoryScreen)
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  ┌──────────────────────────────────────────────────────┐│
+│  │ 筛选: [时间范围 ▼] [SKU ▼] [缺陷类型 ▼]    🔍 搜索   ││  ← 工具栏
+│  └──────────────────────────────────────────────────────┘│
+│  ┌────────────┐  ┌──────────────────────────────────────┐│
+│  │ 帧列表      │  │                                      ││  ← 左侧 280px
+│  │            │  │     单帧详情                           ││     右侧填充
+│  │ ┌────────┐ │  │                                      ││
+│  │ │ #0423  │ │  │   ┌─────────────┐  ┌─────────────┐   ││
+│  │ │ NG ●   │ │  │   │  原始图      │  │  预处理图    │   ││
+│  │ │ 14:32  │ │  │   │  (RawImage)  │  │(SurfaceImage)│   ││
+│  │ └────────┘ │  │   └─────────────┘  └─────────────┘   ││
+│  │ ┌────────┐ │  │                                      ││
+│  │ │ #0422  │ │  │  Defects:                            ││
+│  │ │ OK  ●  │ │  │  ┌──────────────────────────────────┐││
+│  │ │ 14:32  │ │  │  │ ● scratch  severity:0.7  conf:0.9│││
+│  │ └────────┘ │  │  │ ● dent     severity:0.3  conf:0.8│││
+│  │ ┌────────┐ │  │  └──────────────────────────────────┘││
+│  │ │ #0421  │ │  │                                      ││
+│  │ │ NG ●   │ │  │  Evidence Chain:                     ││
+│  │ │ 14:31  │ │  │  ├─ surface.refectance → 0.43        ││
+│  │ └────────┘ │  │  ├─ material.defect_history → 23%    ││
+│  │            │  │  └─ batch.reject_rate → 5.2%         ││
+│  └────────────┘  └──────────────────────────────────────┘│
+└──────────────────────────────────────────────────────────┘
+```
+
+**工具栏**：
+- 水平排列：ComboBox × 3（时间范围、SKU、缺陷类型）+ Spacer + 搜索输入框
+- 每个 ComboBox `cursorShape: Qt.PointingHandCursor`
+- 筛选条件变更时，帧列表做 200ms 淡入刷新（`OpacityAnimator`）
+
+**左侧 — 帧列表** (`ListView`)：
+- 每行一个帧摘要卡片（高度 64px）：帧 ID + verdict 色点（8px 圆形） + 时间戳 + 检出缺陷数
+- 选中行：左侧 3px 蓝色边框 + 背景 `#0f3460`（比默认卡片色亮）
+- `cursorShape: Qt.PointingHandCursor` on each delegate
+- 虚拟列表（只渲染可见行），支持键盘上下键导航
+- 滚动条样式：4px 宽，半透明，hover 时变亮
+
+**右侧 — 单帧详情**：
+- 双图并排：原始图（RawImage）+ 预处理图（SurfaceImage），之间 2px 蓝色竖线分隔
+- 每张图周围 8px padding + `#0f3460` 背景
+- 缺陷列表：每条缺陷用 `RowLayout`，带 severity 彩色圆点 + 缺陷名 + severity 进度条
+- 证据链 (`EvidenceItem[]`)：树形结构，每条左边有连接线（用 `Canvas` 绘制），key: value 用 monospace 字体
+
+### 4.6 产线配置屏 (ConfigScreen)
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  ┌──────────────────────────────────────────────────────┐│
+│  │ 配置文件: [pipeline.yaml ▼]  [rules.yaml ▼]           ││  ← 文件选择
+│  │                               [tree.yaml ▼]           ││
+│  └──────────────────────────────────────────────────────┘│
+│  ┌────────────┐  ┌──────────────────────────────────────┐│
+│  │ 结构树      │  │  YAML 编辑器                          ││  ← 左侧 240px
+│  │            │  │                                      ││     右侧填充
+│  │ ▼ pipeline │  │  pipeline:                           ││
+│  │   name     │  │    name: "seat_aoi_inspection"       ││
+│  │   version  │  │    version: "1.0"                    ││
+│  │ ▶ backpres │  │    backpressure:                     ││
+│  │ ▼ stages   │  │      default: block                  ││
+│  │   capture  │  │      stage_overrides:                ││
+│  │   preproc  │  │        capture: drop_oldest            ││
+│  │   inferenc │  │    stages:                           ││
+│  │   detect   │  │      - id: capture                   ││
+│  │   rule_eva │  │        type: Capture                 ││
+│  │   reason   │  │        ...                           ││
+│  │   export   │  │                                      ││
+│  └────────────┘  └──────────────────────────────────────┘│
+│  ┌──────────────────────────────────────────────────────┐│
+│  │  💡 此改动仅涉及参数，可即时生效      [校验YAML] [应用] ││  ← 操作栏
+│  └──────────────────────────────────────────────────────┘│
+└──────────────────────────────────────────────────────────┘
+```
+
+**文件选择 TabBar**（二级 Tab）：
+- 三个 ToggleButton：pipeline.yaml / rules.yaml / tree.yaml
+- 选中态高亮，带底部蓝色下划线
+- 切换时编辑器内容同步切换，`TextArea.text` 绑定到对应 ConfigViewModel property
+
+**左侧结构树** (`TreeView`)：
+- YAML 结构的可折叠树形视图，方便快速定位配置位置
+- 展开/折叠箭头用 `▶` / `▼` 字符，点击时带 200ms 旋转动画
+- 叶子节点点击 → 右侧编辑器自动滚动到对应行并高亮
+- `cursorShape: Qt.PointingHandCursor` on each tree node
+
+**右侧 YAML 编辑器** (`TextArea` + 语法高亮)：
+- 暗色背景 `#0d1117`（GitHub Dark 风格），等宽字体 13px
+- 语法高亮：key 蓝色、string 绿色、number 橙色、comment 灰色斜体、bool 紫色
+- 行号显示在左侧 gutter（`#161b22` 背景）
+- 当前行高亮（整行 `#1a2332` 背景）
+- 括号匹配高亮
+- `cursorShape: Qt.IBeamCursor`（文本编辑光标）
+
+**底部操作栏**：
+- 提示文字：分析变更类型，告知用户是"即时生效"还是"需要重启"
+  - 参数变更（阈值/ROI/k_nearest）→ "💡 此改动仅涉及参数，可即时生效" 绿色图标
+  - 拓扑变更 → "⚠ 此改动涉及 Pipeline 结构，需要重启生效" 橙色图标
+- 两个按钮：`[校验 YAML]`（次要按钮，白色边框） + `[应用]`（主要按钮，蓝色填充）
+- 按钮最小宽度 120px，高度 36px，圆角 8px
+- `cursorShape: Qt.PointingHandCursor` on both buttons
+- "应用"按钮 pressed 后做 600ms loading spinner 动画 + "应用成功 ✓" / "应用失败 ✗" 反馈
+
+```qml
+// 应用按钮反馈状态机
+Button {
+    text: status === "idle" ? "应用" : status === "loading" ? "应用中..." : status === "success" ? "✓ 已生效" : "✗ 失败"
+    enabled: status !== "loading"
+    cursorShape: Qt.PointingHandCursor
+    background: Rectangle {
+        color: status === "success" ? "#00c853" : status === "error" ? "#ff1744" : "#448aff"
+        radius: 8
+        Behavior on color { ColorAnimation { duration: 300 } }
+    }
+}
+```
+
+### 4.7 统计仪表盘 (DashboardScreen)
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  ┌─────────────────┐ ┌──────────┐ ┌──────────┐ ┌───────┐│
+│  │  Total Frames    │ │  OK Rate  │ │  PPM     │ │ NG    ││  ← 顶部 KPI 卡片行
+│  │    12,847        │ │  98.2%    │ │  1,847   │ │  236  ││
+│  └─────────────────┘ └──────────┘ └──────────┘ └───────┘│
+│  ┌────────────────────────────────┐ ┌───────────────────┐│
+│  │  PPM Trend (Last 24h)          │ │  Defect Type      ││  ← 左侧 60%
+│  │                                │ │  Distribution     ││     右侧 40%
+│  │  📈 折线图                      │ │  ┌──────────────┐ ││
+│  │                                │ │  │ scratch  42% │ ││
+│  │                                │ │  │ dent     28% │ ││
+│  │                                │ │  │ stain    15% │ ││
+│  │                                │ │  │ crack     8% │ ││
+│  │                                │ │  │ other     7% │ ││
+│  │                                │ │  └──────────────┘ ││
+│  └────────────────────────────────┘ └───────────────────┘│
+│  ┌──────────────────────────────────────────────────────┐│
+│  │  Stage Latency Distribution (p50 / p95 / p99)        ││
+│  │  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐         ││
+│  │  │Capture │ │Preproc │ │Inferenc│ │Detect  │ ...     ││  ← 阶段延迟
+│  │  │ 5/8/12 │ │ 3/6/10 │ │35/55/80│ │ 8/12/18│         ││     分布卡
+│  │  │   ms   │ │   ms   │ │   ms   │ │   ms   │         ││
+│  │  └────────┘ └────────┘ └────────┘ └────────┘         ││
+│  └──────────────────────────────────────────────────────┘│
+└──────────────────────────────────────────────────────────┘
+```
+
+**顶部 KPI 卡片行**（4 个指标卡片，等宽分布）：
+- 每个卡片：圆角 12px，背景 `#16213e`，内部 padding 16px
+- 数字用 Data 字号（32px Bold），标签用 Caption 字号（12px）
+- 卡片 hover 时轻微上浮（`translate y: -2px` + 阴影），`cursorShape: Qt.PointingHandCursor`
+- 数字刷新时做 500ms 数字滚动动画（`NumberAnimation` from old_value to new_value）
+
+```qml
+// KPI 卡片组件
+Rectangle {
+    color: "#16213e"; radius: 12
+    Behavior on y { NumberAnimation { duration: 200 } }
+    MouseArea {
+        anchors.fill: parent
+        cursorShape: Qt.PointingHandCursor
+        hoverEnabled: true
+        onEntered: parent.y = -2
+        onExited: parent.y = 0
+    }
+    Column {
+        anchors { centerIn: parent; margins: 16 }
+        Label { text: kpiValue; font.pixelSize: 32; font.bold: true; color: "#ffffff" }
+        Label { text: kpiLabel; font.pixelSize: 12; color: "#a0a8b8" }
+    }
+}
+```
+
+**PPM 趋势图** (`TrendChart` — Qt Charts `ChartView`)：
+- 暗色背景 `#16213e`，白色网格线 10% 透明度
+- X 轴：时间（自动格式化为 HH:mm），Y 轴：PPM 值
+- 折线颜色 `#448aff`，线宽 2px，数据点 4px 圆形
+- 支持 hover 显示 tooltip（数据点的精确时间+PPM值），`cursorShape: Qt.PointingHandCursor` on chart area
+- chart 主题：`ChartView.ChartThemeDark` / 关闭 legend 边框
+
+**缺陷类型分布**（水平条形图列表）：
+- 每个缺陷类型：标签 + 百分比 + 水平进度条（宽度 = 百分比，颜色取自 chart 调色板轮转）
+- 条形图动画：`Behavior on width { NumberAnimation { duration: 800; easing.type: Easing.OutCubic } }`
+
+**阶段延迟分布卡片行**：
+- 每个阶段一张小卡片（160px × 100px）：阶段名 + p50/p95/p99 三行数据
+- p50 绿色、p95 橙色、p99 红色（体现延迟尾部的严重程度）
+- 用 monospace 字体展示数字
+
+### 4.8 动画与过渡
+
+| 动画 | 时机 | 时长 | 缓动曲线 | 说明 |
+|------|------|------|---------|------|
+| Tab 切换 crossfade | Tab 切换 | 200ms | `EaseInOut` | 旧内容 opacity 1→0，新内容 opacity 0→1 |
+| VerdictBadge 颜色切换 | 新帧 verdict 与上帧不同 | 300ms | `EaseInOut` | `ColorAnimation` 背景色渐变 |
+| 阶段延迟条宽度 | 新 metrics 到达 | 200ms | `EaseOutCubic` | 条形图宽度平滑过渡 |
+| KPI 数字滚动 | 统计数据更新 | 500ms | `EaseOutCubic` | `NumberAnimation` from→to |
+| 缺陷框出现 | 新帧 defects 数据到达 | 150ms | `EaseOutBack` | scale 0→1 + opacity 同时动画 |
+| 按钮反馈 | 点击 | 100ms | `EaseInOut` | scale 1→0.98→1 |
+| 状态灯脉冲 | Pipeline Running | 800ms × ∞ | `Linear` | opacity 1.0↔0.3 |
+| 列表项 hover | 鼠标进入列表项 | 150ms | `EaseOut` | 背景色过渡 |
+| YAML 校验结果 | 校验完成 | 300ms | `EaseOutCubic` | 校验状态图标 scale 0→1 弹出 |
+| Tooltip 出现 | chart 数据点 hover | 150ms | `EaseOut` | 透明度 0→1 + translate y: -10→0 |
+
+### 4.9 响应式布局
+
+- **最小窗口尺寸**：1280×800（低于此尺寸显示提示"请增大窗口"）
+- **推荐窗口尺寸**：1920×1080（全屏运行于产线监控显示器）
+- 左侧/右侧比例：实时监控屏 70/30、历史回顾屏 280px/剩余、配置屏 240px/剩余
+- 窗口 resize 时各面板比例通过 `Layout.fillWidth` + `preferredWidth` 自适应
+- 字体大小不随窗口缩放——保持可读性
+
+---
+
+## 5. 模块结构
+
+### 5.1 文件布局
 
 ```
 include/sai/visualization/
@@ -193,12 +636,12 @@ tests/app/
     seat_aoi_startup_test.cpp    # 验证应用能启动 + Pipeline 构建成功
 ```
 
-### 4.2 命名空间
+### 5.2 命名空间
 
 - `sai::visualization`：7.1 Visualization 的所有公共类型（ViewModel + FrameProvider）
 - Application 不引入新命名空间，`main.cpp` 中直接使用 `sai::*` 各模块命名空间
 
-### 4.3 CMake 集成
+### 5.3 CMake 集成
 
 ```cmake
 # src/visualization/CMakeLists.txt
@@ -253,9 +696,9 @@ target_link_libraries(seat_aoi PRIVATE
 
 ---
 
-## 5. 接口设计
+## 6. 接口设计
 
-### 5.1 PipelineViewModel
+### 6.1 PipelineViewModel
 
 ```cpp
 namespace sai::visualization {
@@ -310,7 +753,7 @@ private:
 };
 ```
 
-### 5.2 InspectionViewModel
+### 6.2 InspectionViewModel
 
 ```cpp
 namespace sai::visualization {
@@ -379,7 +822,7 @@ private:
 };
 ```
 
-### 5.3 FrameProvider
+### 6.3 FrameProvider
 
 ```cpp
 namespace sai::visualization {
@@ -411,7 +854,7 @@ private:
 };
 ```
 
-### 5.4 ConfigViewModel
+### 6.4 ConfigViewModel
 
 ```cpp
 namespace sai::visualization {
@@ -462,7 +905,7 @@ private:
 };
 ```
 
-### 5.5 DashboardViewModel
+### 6.5 DashboardViewModel
 
 ```cpp
 namespace sai::visualization {
@@ -507,7 +950,7 @@ private:
 };
 ```
 
-### 5.6 Pipeline 结果回调接口
+### 6.6 Pipeline 结果回调接口
 
 为支持 ViewModel 获取每帧检测结果，在 `sai::pipeline` 中新增一个轻量回调：
 
@@ -529,7 +972,7 @@ public:
 
 **设计决策**：`ResultCallback` 在 `Export` 阶段的 WorkerPool 线程中调用，回调内部只做原子写入或 `QMutex` 保护下的数据更新，不做耗时操作。回调持有 `const ReasoningResult&` 引用，在回调返回后该引用失效——ViewModel 必须在回调内拷贝所需字段。
 
-### 5.7 IStageNode 参数热生效接口（M6 补充）
+### 6.7 IStageNode 参数热生效接口（M6 补充）
 
 为支持配置屏参数级热生效，在 `IStageNode` 接口中新增可选方法：
 
@@ -553,9 +996,9 @@ public:
 
 ---
 
-## 6. 数据流
+## 7. 数据流
 
-### 6.1 实时监控屏数据流
+### 7.1 实时监控屏数据流
 
 ```
 WorkerPool 线程（Capture）
@@ -595,7 +1038,7 @@ QML 主线程（30Hz Timer）
       └── 读取原子字段 → NOTIFY → QML 绑定刷新
 ```
 
-### 6.2 配置屏数据流
+### 7.2 配置屏数据流
 
 ```
 ConfigScreen.qml
@@ -627,7 +1070,7 @@ ConfigViewModel::RestartPipeline()
       └── reloadStatus = "Pipeline 已重启"
 ```
 
-### 6.3 帧数据所有权
+### 7.3 帧数据所有权
 
 ```
 Camera 回调线程
@@ -649,9 +1092,9 @@ FrameProvider::RegisterFrame(frame_id, const SurfaceImage*)
 
 ---
 
-## 7. 工作流
+## 8. 工作流
 
-### 7.1 应用启动
+### 8.1 应用启动
 
 ```
 Seat AOI main()
@@ -690,7 +1133,7 @@ Seat AOI main()
   └── Step 11: app.exec()  // 进入 Qt 事件循环
 ```
 
-### 7.2 运行期主循环
+### 8.2 运行期主循环
 
 ```
 Qt 事件循环（QML 主线程）
@@ -713,7 +1156,7 @@ Qt 事件循环（QML 主线程）
           └── ViewModel 内部只做轻量操作（读缓存/写文件/调热重载）
 ```
 
-### 7.3 应用关闭
+### 8.3 应用关闭
 
 ```
 main() 退出前
@@ -726,9 +1169,9 @@ main() 退出前
 
 ---
 
-## 8. 线程模型
+## 9. 线程模型
 
-### 8.1 线程分布
+### 9.1 线程分布
 
 | 线程 | 职责 | 关键约束 |
 |------|------|---------|
@@ -739,7 +1182,7 @@ main() 退出前
 | WorkerPool：Reason | RuleEval + Reason（决策树遍历） | CPU 密集型，不涉及 GPU |
 | WorkerPool：Export | JSON 导出 + `ResultCallback(frame_id, reasoning_result)` | 回调内 ViewModel 原子写入（~100ns）+ DashboardViewModel deque 追加（~1μs） |
 
-### 8.2 线程安全约定
+### 9.2 线程安全约定
 
 | 对象 | 线程模型 | 同步机制 |
 |------|---------|---------|
@@ -750,7 +1193,7 @@ main() 退出前
 | `DashboardViewModel` | Export 线程（ResultCallback）写 deque + atomic，QML 主线程读 | deque 写 `unique_lock(mutex_)`（写频 5Hz），atomic 字段 wait-free |
 | `DefectModel` / `EvidenceModel` | Export 线程写（ResultCallback），QML 主线程读 | `QAbstractListModel::beginResetModel/endResetModel` 内部处理竞争 |
 
-### 8.3 死锁预防
+### 9.3 死锁预防
 
 - ViewModel 的 `Q_PROPERTY` getter 只读 `std::atomic` 或 `shared_lock`——永不尝试获取第二个锁
 - `FrameProvider::requestImage()` 只 `shared_lock` 读环形缓存，不调任何可能获取锁的回调
@@ -759,9 +1202,9 @@ main() 退出前
 
 ---
 
-## 9. 性能
+## 10. 性能
 
-### 9.1 性能目标
+### 10.1 性能目标
 
 | 指标 | 目标 | 测量方法 |
 |------|------|---------|
@@ -772,7 +1215,7 @@ main() 退出前
 | ViewModel 属性读取 | < 1μs | `std::atomic` load + 简单算术 |
 | Pipeline 结果回调 | < 10μs | ViewModel 原子写入 + deque 追加 |
 
-### 9.2 性能策略
+### 10.2 性能策略
 
 - **帧缓存容量 = 16 帧**——环形缓存覆盖 ~0.5s 窗口（@30fps QML 刷新），QML 端永不因等待帧拷贝而丢帧
 - **Metrics 轮询在 QML 主线程**——读取 `std::atomic`（wait-free），避免跨线程信号槽的锁竞争
@@ -782,7 +1225,7 @@ main() 退出前
 
 ---
 
-## 10. 内存
+## 11. 内存
 
 | 对象 | 生命周期 | 分配策略 |
 |------|---------|---------|
@@ -794,7 +1237,7 @@ main() 退出前
 
 ---
 
-## 11. ErrorCode
+## 12. ErrorCode
 
 M7 新增 `Visualization_*` 错误码，append-only 追加在 M6 错误码 `Scheduler_QueueCreateFailed` 之后：
 
@@ -808,7 +1251,7 @@ M7 新增 `Visualization_*` 错误码，append-only 追加在 M6 错误码 `Sche
 
 ---
 
-## 12. 未来扩展
+## 13. 未来扩展
 
 | 扩展点 | 方向 | 触发条件 |
 |--------|------|---------|
@@ -822,7 +1265,7 @@ M7 新增 `Visualization_*` 错误码，append-only 追加在 M6 错误码 `Sche
 
 ---
 
-## 13. 最佳实践
+## 14. 最佳实践
 
 1. **ViewModel 只持有裸指针，不持有所有权**——Pipeline/RuleEngine/Reasoner 的生命周期由 Context 管理，ViewModel 不应干预
 2. **QML 端只做声明式绑定，不调 C++ API**——`Image.source: "image://pipeline/frame?t=" + Date.now()`，不通过 `Button.onClicked` 调 `pipeline.submit()`
@@ -834,7 +1277,7 @@ M7 新增 `Visualization_*` 错误码，append-only 追加在 M6 错误码 `Sche
 
 ---
 
-## 14. 反模式
+## 15. 反模式
 
 1. **在 QML 中调用 `pipelineVM.start()` / `pipelineVM.submit()`**——Pipeline 生命周期控制应该通过 `ConfigViewModel` 的封装方法，不直接暴露给 QML
 2. **在 `requestImage()` 中做像素格式转换**——必须在 `RegisterFrame()` 时预转换为 `QImage::Format_RGBA8888`，`requestImage()` 只做纯拷贝
@@ -846,7 +1289,7 @@ M7 新增 `Visualization_*` 错误码，append-only 追加在 M6 错误码 `Sche
 
 ---
 
-## 15. 验证点
+## 16. 验证点
 
 **主验证点**：Seat AOI 应用启动，四屏切换正常，模拟一帧走完 Pipeline 全链路，实时监控屏正确展示检测结果。
 
@@ -870,9 +1313,9 @@ M7 新增 `Visualization_*` 错误码，append-only 追加在 M6 错误码 `Sche
 
 ---
 
-## 16. 契约增量
+## 17. 契约增量
 
-### 16.1 概念归属表新增
+### 17.1 概念归属表新增
 
 | 概念名称 | 归属批次 | 定义所在文档 | 说明 |
 |---------|---------|-------------|------|
@@ -884,7 +1327,7 @@ M7 新增 `Visualization_*` 错误码，append-only 追加在 M6 错误码 `Sche
 | `ResultCallback` | 7.1 | design/milestone-07-visualization-application/7.1-visualization.md | Pipeline 结果回调：每帧完成时通知 ViewModel |
 | `Seat AOI` | 7.2 | design/milestone-07-visualization-application/7.2-application.md | 参考应用：零业务逻辑的模块组装，验证"Product 只是 metadata" |
 
-### 16.2 接口签名表新增
+### 17.2 接口签名表新增
 
 | 接口名称 | 归属批次 | 定义所在文档 | 签名摘要 |
 |---------|---------|-------------|---------|
