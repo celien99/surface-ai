@@ -193,12 +193,11 @@ auto RuleEngine::EvaluateAll(FactBase& facts)
     std::vector<std::future<std::vector<ResolvedRule>>> futures;
     futures.reserve(rule_sets_.size());
 
-    for (const auto& [set_name, rules] : rule_sets_) {
-        (void)set_name;
+    for (auto it = rule_sets_.begin(); it != rule_sets_.end(); ++it) {
         futures.push_back(
             std::async(std::launch::async,
-                       [this, fb = facts.Snapshot(), &rules]() mutable {
-                           return EvaluateRuleSet(fb, rules);
+                       [this, fb = facts.Snapshot(), rules_ptr = &it->second]() mutable {
+                           return EvaluateRuleSet(fb, *rules_ptr);
                        }));
     }
 
