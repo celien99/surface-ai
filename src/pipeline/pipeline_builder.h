@@ -30,7 +30,7 @@ private:
         const StageConfig& upstream,
         const StageConfig& downstream) -> bool;
 
-    static auto ParseStageConfig(const YAML::Node& node,
+    static auto ParseStageConfig(YAML::Node& node,
         const BackpressureConfig& bp) -> Result<StageConfig>;
 
     static auto MergeBackpressure(const BackpressureConfig& bp,

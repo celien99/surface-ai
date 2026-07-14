@@ -90,6 +90,8 @@ public:
     Pipeline(Pipeline&&) = delete;
     Pipeline& operator=(Pipeline&&) = delete;
 
+    ~Pipeline();
+
     auto Start() -> Result<void>;
     auto Submit(sai::image::RawImage image) -> Result<void>;
     auto Drain() -> Result<void>;

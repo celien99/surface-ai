@@ -206,7 +206,7 @@ auto PipelineBuilder::InputTypeIndex(StageType t) -> std::size_t {
     return 0;
 }
 
-auto PipelineBuilder::ParseStageConfig(const YAML::Node& node,
+auto PipelineBuilder::ParseStageConfig(YAML::Node& node,
     const BackpressureConfig& bp) -> Result<StageConfig> {
     StageConfig stage;
     stage.id = node["id"].as<std::string>();
