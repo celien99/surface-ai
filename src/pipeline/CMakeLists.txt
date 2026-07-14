@@ -24,23 +24,14 @@ target_link_libraries(sai_pipeline PUBLIC
     sai::core
     sai::runtime
     sai::infra
+    sai::device
+    sai::image
+    sai::io
+    sai::inference
+    sai::detection
+    sai::rule
+    sai::reasoner
+    sai::knowledge
+    sai::retrieval
     yaml-cpp::yaml-cpp
 )
-
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    target_link_libraries(sai_pipeline PUBLIC
-        sai::device
-        sai::image
-        sai::inference
-        sai::detection
-        sai::rule
-        sai::reasoner
-        sai::io
-    )
-else()
-    target_link_libraries(sai_pipeline PUBLIC
-        sai::device
-        sai::image
-        sai::io
-    )
-endif()
