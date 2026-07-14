@@ -127,5 +127,59 @@ TEST(StageQueueTest, SingleProducerSingleConsumer) {
     EXPECT_EQ((*q)->Depth(), 0);
 }
 
+TEST(StageQueueTest, BlockBackpressureWithThreads) {
+    auto q = IntQueue::Create(2, BackpressurePolicy::Block);
+    ASSERT_TRUE(q.has_value());
+
+    // Fill to capacity
+    EXPECT_TRUE((*q)->TryPush(std::make_unique<int>(1)));
+    EXPECT_TRUE((*q)->TryPush(std::make_unique<int>(2)));
+
+    // Start a consumer thread that pops after a delay
+    std::atomic<bool> push_succeeded{false};
+    std::thread consumer([&]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        auto val = (*q)->TryPop();
+        if (val) push_succeeded.store(true);
+    });
+
+    // PushBlocking should wait for consumer to pop
+    auto start = std::chrono::steady_clock::now();
+    (*q)->PushBlocking(std::make_unique<int>(3));
+    auto elapsed = std::chrono::steady_clock::now() - start;
+
+    consumer.join();
+    EXPECT_TRUE(push_succeeded.load());
+    EXPECT_GE(elapsed, std::chrono::milliseconds(10)); // actually waited
+}
+
+TEST(StageQueueTest, DropOldestKeepsNewest) {
+    auto q = IntQueue::Create(2, BackpressurePolicy::DropOldest);
+    ASSERT_TRUE(q.has_value());
+
+    EXPECT_TRUE((*q)->TryPush(std::make_unique<int>(1)));
+    EXPECT_TRUE((*q)->TryPush(std::make_unique<int>(2)));
+    // Full. Push 3 -> drops 1, keeps [2, 3]
+    EXPECT_TRUE((*q)->TryPush(std::make_unique<int>(3)));
+
+    EXPECT_EQ(*(*q)->TryPop(), 2);
+    EXPECT_EQ(*(*q)->TryPop(), 3);
+    EXPECT_EQ((*q)->TryPop(), nullptr);
+}
+
+TEST(StageQueueTest, DropOldestRepeatedly) {
+    auto q = IntQueue::Create(2, BackpressurePolicy::DropOldest);
+    ASSERT_TRUE(q.has_value());
+
+    // Push 5 items into a capacity-2 queue, verify FIFO of survivors
+    for (int i = 1; i <= 5; ++i) {
+        (*q)->TryPush(std::make_unique<int>(i));
+    }
+    // Should have kept [4, 5]
+    EXPECT_EQ(*(*q)->TryPop(), 4);
+    EXPECT_EQ(*(*q)->TryPop(), 5);
+    EXPECT_EQ((*q)->TryPop(), nullptr);
+}
+
 }  // namespace
 }  // namespace sai::pipeline

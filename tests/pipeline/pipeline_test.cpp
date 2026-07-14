@@ -86,5 +86,69 @@ TEST(IStageNodeTest, GetTypeAndId) {
     EXPECT_EQ(stage.GetId(), "my_id");
 }
 
+class FailingStage : public IStageNode {
+public:
+    FailingStage(std::string id, bool fail_on_process = true)
+        : id_(std::move(id)), fail_(fail_on_process) {}
+
+    auto GetType() const noexcept -> StageType override { return StageType::Custom; }
+    auto GetId() const -> std::string_view override { return id_; }
+    auto OnInitialize(Context&) -> Result<void> override { return {}; }
+    auto OnStart(Context&) -> Result<void> override { return {}; }
+    auto OnStop(Context&) -> Result<void> override { return {}; }
+    auto Process(StageInput) -> Result<StageOutput> override {
+        if (fail_) {
+            return tl::make_unexpected(ErrorInfo{
+                ErrorCode::Pipeline_StageInitFailed,
+                "simulated stage failure"});
+        }
+        return StageOutput(RawImage::FromOwnedBuffer(
+            std::vector<uint8_t>{42}, sai::image::ImageMeta{}));
+    }
+
+    void SetFail(bool f) { fail_ = f; }
+
+private:
+    std::string id_;
+    bool fail_;
+};
+
+TEST(PipelineFailureTest, StageFailureDoesNotCrash) {
+    // Verify that a failing Process() returns an error, not an exception
+    FailingStage stage("failing", true);
+    sai::Context ctx;
+    stage.OnInitialize(ctx);
+
+    RawImage mock = RawImage::FromOwnedBuffer(
+        std::vector<uint8_t>{1, 2, 3}, sai::image::ImageMeta{});
+    StageInput input(std::move(mock));
+    auto result = stage.Process(std::move(input));
+    EXPECT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, ErrorCode::Pipeline_StageInitFailed);
+}
+
+TEST(PipelineFailureTest, StageRecoversAfterFailure) {
+    // A stage that fails once then succeeds on the next call
+    FailingStage stage("recover", true);
+    sai::Context ctx;
+    stage.OnInitialize(ctx);
+
+    // First call fails
+    {
+        RawImage mock = RawImage::FromOwnedBuffer(
+            std::vector<uint8_t>{1}, sai::image::ImageMeta{});
+        EXPECT_FALSE(stage.Process(StageInput(std::move(mock))).has_value());
+    }
+
+    // Second call succeeds (stage recovered)
+    stage.SetFail(false);
+    {
+        RawImage mock = RawImage::FromOwnedBuffer(
+            std::vector<uint8_t>{1}, sai::image::ImageMeta{});
+        auto result = stage.Process(StageInput(std::move(mock)));
+        EXPECT_TRUE(result.has_value());
+    }
+}
+
 } // namespace
 } // namespace sai::pipeline

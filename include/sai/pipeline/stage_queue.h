@@ -120,7 +120,11 @@ public:
     }
 
     auto TryPush(std::unique_ptr<T> item) -> bool {
-        return ring_.TryPush(std::move(item));
+        bool ok = ring_.TryPush(std::move(item));
+        if (ok) {
+            cv_.notify_one();  // wake pop side (PopBlocking or PushBlocking)
+        }
+        return ok;
     }
 
     auto PushBlocking(std::unique_ptr<T> item) -> void {
@@ -131,7 +135,11 @@ public:
     }
 
     auto TryPop() -> std::unique_ptr<T> {
-        return ring_.TryPop();
+        auto item = ring_.TryPop();
+        if (item) {
+            cv_.notify_one();  // wake push side (PushBlocking or PopBlocking)
+        }
+        return item;
     }
 
     auto PopBlocking() -> std::unique_ptr<T> {
