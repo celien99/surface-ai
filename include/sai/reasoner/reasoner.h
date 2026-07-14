@@ -33,6 +33,7 @@ struct ReasoningResult {
 // -----------------------------------------------------------------------
 class IReasoner : public sai::IService {
 public:
+    SAI_DECLARE_TYPE_ID(sai::reasoner::IReasoner)
     /// Evaluate facts through the decision tree, merge rule results, and
     /// produce a complete ReasoningResult (verdict, severity, trace,
     /// evidence, triggered/overridden rule lists).

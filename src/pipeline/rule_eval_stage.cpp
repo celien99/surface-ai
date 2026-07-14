@@ -19,28 +19,17 @@ RuleEvalStage::RuleEvalStage(std::string id, YAML::Node config)
 auto RuleEvalStage::GetType() const noexcept -> StageType { return StageType::RuleEval; }
 auto RuleEvalStage::GetId() const -> std::string_view { return id_; }
 
-auto RuleEvalStage::OnInitialize(Context& ctx) -> Result<void> {
-    // Resolve RuleEngine
-    auto re = ctx.Resolve<rule::RuleEngine>();
-    if (!re) return {};  // stay stub
-    rule_engine_ = *re;
-
-    // Load YAML rules
-    if (!rule_file_.empty()) {
+auto RuleEvalStage::OnInitialize(Context& /*ctx*/) -> Result<void> {
+    // RuleEngine, KnowledgeGraph, VectorPath are concrete classes, not
+    // IService subtypes — set externally via setters before Start().
+    if (!rule_file_.empty() && rule_engine_) {
         auto load_result = rule_engine_->LoadFromYAML(rule_file_);
         if (!load_result) return load_result;
     }
-
-    // Try to resolve KnowledgeGraph + VectorPath for FactBuilder
-    auto kg = ctx.Resolve<knowledge::KnowledgeGraph>();
-    auto vp = ctx.Resolve<retrieval::VectorPath>();
-    if (kg && vp) {
-        kg_ = *kg;
-        vp_ = *vp;
+    if (kg_ && vp_) {
         fact_builder_ = std::make_unique<rule::FactBuilder>(kg_, vp_);
     }
-
-    stub_ = false;
+    if (rule_engine_) stub_ = false;
     return {};
 }
 

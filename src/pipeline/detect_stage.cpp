@@ -11,12 +11,8 @@ DetectStage::DetectStage(std::string id, YAML::Node /*config*/)
 auto DetectStage::GetType() const noexcept -> StageType { return StageType::Detect; }
 auto DetectStage::GetId() const -> std::string_view { return id_; }
 
-auto DetectStage::OnInitialize(Context& ctx) -> Result<void> {
-    auto detector = ctx.Resolve<detection::IDetector>();
-    if (detector) {
-        detector_ = *detector;
-        stub_ = false;
-    }
+auto DetectStage::OnInitialize(Context& /*ctx*/) -> Result<void> {
+    // IDetector extends Object, not IService — set externally via SetDetector()
     return {};
 }
 

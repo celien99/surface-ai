@@ -14,12 +14,10 @@ InferenceStage::InferenceStage(std::string id, YAML::Node config)
 auto InferenceStage::GetType() const noexcept -> StageType { return StageType::Inference; }
 auto InferenceStage::GetId() const -> std::string_view { return id_; }
 
-auto InferenceStage::OnInitialize(Context& ctx) -> Result<void> {
-    auto engine = ctx.Resolve<inference::IInferenceEngine>();
-    if (engine) {
-        engine_ = *engine;
-        stub_ = false;
-    }
+auto InferenceStage::OnInitialize(Context& /*ctx*/) -> Result<void> {
+    // IInferenceEngine extends Object, not IService — Context::Resolve
+    // requires IService. When DI supports non-IService resolution,
+    // resolve here. For now, engine is set externally via SetEngine().
     return {};
 }
 
