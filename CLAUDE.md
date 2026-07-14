@@ -6,8 +6,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Surface AI Framework: a from-scratch design for an industrial-grade C++20 framework for surface understanding / anomaly detection (AOI-style: PCB, glass, fabric, steel, automotive, etc.). The core principle is "everything is Surface" — the framework is never coupled to a specific product; product is metadata.
 
-The original unconstrained spec is `prompt.md` (17 layers, exhaustive "support A/B/C/D" style requirements). That spec is intentionally too broad to execute directly — it has been converted into a concrete, sequenced plan. **Always work from the derived planning docs below, not from `prompt.md` directly.**
-
 As of 2026-07-14: All 7 milestones complete. 572 tests pass.
 
 - **Milestone 1** (foundation): Core / Runtime / Memory / Plugin / Infra — 6 design docs frozen, 84 tests pass
@@ -52,14 +50,13 @@ The `default` CMake preset uses the vcpkg toolchain and targets Debug on macOS a
 ## Repo structure
 
 ```
-prompt.md                                          # original unconstrained master prompt (do not execute directly)
 docs/superpowers/specs/                            # phased-plan spec + per-milestone design specs (Approved)
 docs/superpowers/plans/                            # superpowers execution plans (task-by-task, checkbox tracked)
 docs/surface-ai/design/milestone-01-foundation/    # 6 design docs (1.1-1.6), 14-section structure each
 docs/surface-ai/glossary-and-contracts.md          # LIVE cross-batch contract doc — concept ownership + frozen interface signatures
 .superpowers/sdd/                                  # per-task briefs, reports, and review diffs for the SDD workflow
 include/sai/                                       # public headers, mirrored from src/ (sai::core, sai::runtime, etc.)
-src/                                               # implementation (.cpp) + per-module CMakeLists.txt (16 modules)
+src/                                               # implementation (.cpp) + per-module CMakeLists.txt (18 modules)
 tests/                                             # GoogleTest suites, one dir per module + tests/integration/ (end-to-end pipelines)
 ```
 
@@ -99,7 +96,7 @@ Design docs follow a fixed, non-negotiable 14-section structure (see any file in
 
 `docs/surface-ai/glossary-and-contracts.md` is the cross-batch source of truth: each concept/interface is owned by exactly one batch and defined in exactly one doc. Other batches reference it, never redefine it. Before writing any new design doc or code that touches a cross-cutting type (`Object`, `Result<T>`, `IModule`, `Registry<TInterface>`, `IMemoryPool`, etc.), check this file for the frozen signature and reuse it verbatim.
 
-**Design chapters ("## 3. Design") must never use list-style hedging** ("supports A/B/C/D"). They must commit: "uses X because ..., rejects Y because ...". This is enforced by grep checks in the plan and is the single biggest structural difference from the original `prompt.md` style.
+**Design chapters ("## 3. Design") must never use list-style hedging** ("supports A/B/C/D"). They must commit: "uses X because ..., rejects Y because ...". This is enforced by grep checks in the plan.
 
 ## Locked technology stack
 
