@@ -10,9 +10,13 @@ target_sources(sai_visualization PRIVATE
     pipeline_viewmodel.cpp
     inspection_viewmodel.cpp
     frame_provider.cpp
+    config_viewmodel.cpp
+    dashboard_viewmodel.cpp
     ${CMAKE_SOURCE_DIR}/include/sai/visualization/pipeline_viewmodel.h
     ${CMAKE_SOURCE_DIR}/include/sai/visualization/inspection_viewmodel.h
     ${CMAKE_SOURCE_DIR}/include/sai/visualization/frame_provider.h
+    ${CMAKE_SOURCE_DIR}/include/sai/visualization/config_viewmodel.h
+    ${CMAKE_SOURCE_DIR}/include/sai/visualization/dashboard_viewmodel.h
 )
 
 target_link_libraries(sai_visualization PUBLIC

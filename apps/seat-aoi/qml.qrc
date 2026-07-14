@@ -1,0 +1,12 @@
+<RCC>
+    <qresource prefix="/">
+        <file alias="MainWindow.qml">../../src/visualization/qml/MainWindow.qml</file>
+        <file alias="MonitorScreen.qml">../../src/visualization/qml/MonitorScreen.qml</file>
+        <file alias="HistoryScreen.qml">../../src/visualization/qml/HistoryScreen.qml</file>
+        <file alias="ConfigScreen.qml">../../src/visualization/qml/ConfigScreen.qml</file>
+        <file alias="DashboardScreen.qml">../../src/visualization/qml/DashboardScreen.qml</file>
+        <file alias="components/DefectOverlay.qml">../../src/visualization/qml/components/DefectOverlay.qml</file>
+        <file alias="components/VerdictBadge.qml">../../src/visualization/qml/components/VerdictBadge.qml</file>
+        <file alias="components/TrendChart.qml">../../src/visualization/qml/components/TrendChart.qml</file>
+    </qresource>
+</RCC>
