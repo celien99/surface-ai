@@ -1,8 +1,5 @@
 #include "sai/visualization/pipeline_viewmodel.h"
 #include "sai/pipeline/pipeline.h"
-#include <algorithm>
-#include <chrono>
-#include <cmath>
 
 namespace sai::visualization {
 
@@ -28,6 +25,9 @@ void PipelineViewModel::BindToPipeline(const sai::pipeline::Pipeline* pipeline) 
     // Build StageMetricsObject list once on bind
     if (pipeline_) {
         pipeline_status_ = "Running";
+        // Clear stale entries on re-bind
+        qDeleteAll(stage_metrics_objects_);
+        stage_metrics_objects_.clear();
         const auto metrics = pipeline_->Metrics();
         for (const auto& m : metrics) {
             auto* obj = new StageMetricsObject(
