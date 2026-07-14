@@ -8,5 +8,6 @@
         <file alias="components/DefectOverlay.qml">../../src/visualization/qml/components/DefectOverlay.qml</file>
         <file alias="components/VerdictBadge.qml">../../src/visualization/qml/components/VerdictBadge.qml</file>
         <file alias="components/TrendChart.qml">../../src/visualization/qml/components/TrendChart.qml</file>
+        <file alias="components/StageMetricsBar.qml">../../src/visualization/qml/components/StageMetricsBar.qml</file>
     </qresource>
 </RCC>

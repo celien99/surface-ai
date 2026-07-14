@@ -77,7 +77,7 @@ ApplicationWindow {
         }
     }
 
-    // Content area
+    // Content area with crossfade transition
     SwipeView {
         id: swipeView
         anchors {
@@ -87,6 +87,14 @@ ApplicationWindow {
         }
         currentIndex: tabBar.currentIndex
         interactive: false
+
+        // Crossfade transition on tab change
+        popEnter: Transition {
+            OpacityAnimator { from: 0.0; to: 1.0; duration: 200; easing.type: Easing.InOutQuad }
+        }
+        popExit: Transition {
+            OpacityAnimator { from: 1.0; to: 0.0; duration: 200; easing.type: Easing.InOutQuad }
+        }
 
         MonitorScreen {}
         HistoryScreen {}

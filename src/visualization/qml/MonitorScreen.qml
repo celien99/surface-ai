@@ -74,43 +74,14 @@ Item {
                     color: "#e4e6eb"; font { pixelSize: 16; bold: true }
                 }
 
-                ColumnLayout {
-                    spacing: 6
-                    Layout.fillWidth: true
+                Repeater {
+                    model: pipelineVM ? pipelineVM.stageMetrics : []
 
-                    Repeater {
-                        model: pipelineVM ? pipelineVM.stageMetrics : []
-
-                        delegate: RowLayout {
-                            spacing: 8
-                            Layout.fillWidth: true
-
-                            Label {
-                                text: modelData.stageType
-                                Layout.preferredWidth: 90
-                                color: "#a0a8b8"; font.pixelSize: 13
-                            }
-
-                            Rectangle {
-                                Layout.fillWidth: true
-                                height: 6; radius: 3
-                                color: "#1f3460"
-
-                                Rectangle {
-                                    width: parent.width * Math.min(modelData.avgLatencyMs / 100.0, 1.0)
-                                    height: parent.height; radius: 3
-                                    color: modelData.avgLatencyMs > 50 ? "#ff1744" : "#448aff"
-                                    Behavior on width { NumberAnimation { duration: 200 } }
-                                }
-                            }
-
-                            Label {
-                                text: modelData.avgLatencyMs.toFixed(1) + "ms"
-                                Layout.preferredWidth: 55
-                                color: "#a0a8b8"
-                                font { pixelSize: 12; family: "monospace" }
-                            }
-                        }
+                    delegate: StageMetricsBar {
+                        stageName: modelData.stageType
+                        latencyMs: modelData.avgLatencyMs
+                        maxLatencyMs: 100.0
+                        thresholdMs: 50.0
                     }
                 }
             }
