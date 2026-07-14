@@ -1,0 +1,55 @@
+pipeline:
+  name: "seat_aoi_inspection"
+  version: "1.0"
+  backpressure:
+    default: block
+    stage_overrides:
+      capture: drop_oldest
+
+  stages:
+    - id: capture
+      type: Capture
+      depends_on: []
+      config:
+        device: "mock_camera_0"
+
+    - id: preprocess
+      type: Preprocess
+      depends_on: [capture]
+      config:
+        steps: [debayer, white_balance, resize]
+        resize_width: 1024
+        resize_height: 1024
+
+    - id: inference
+      type: Inference
+      depends_on: [preprocess]
+      config:
+        engine: MockEngine
+        model: dino_v3_vit_base
+
+    - id: detect
+      type: Detect
+      depends_on: [inference]
+      config:
+        detector: PatchCore
+        k_nearest: 5
+
+    - id: rule_eval
+      type: RuleEval
+      depends_on: [detect]
+      config:
+        rule_file: "rules/seat_leather_defects.yaml"
+
+    - id: reason
+      type: Reason
+      depends_on: [rule_eval]
+      config:
+        tree_file: "trees/seat_leather_inspection.yaml"
+
+    - id: export
+      type: Export
+      depends_on: [reason]
+      config:
+        exporter: JsonExporter
+        output_dir: "/tmp/surface-ai/results/"

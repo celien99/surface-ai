@@ -71,4 +71,13 @@ auto DefaultReasoner::Reason(
     return result;
 }
 
+auto DefaultReasoner::ReloadTree(std::filesystem::path path) -> Result<void> {
+    auto new_tree = DecisionTree::LoadFromYAML(path);
+    if (!new_tree) {
+        return tl::unexpected(new_tree.error());
+    }
+    tree_ = std::move(*new_tree);
+    return {};
+}
+
 }  // namespace sai::reasoner

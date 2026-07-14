@@ -40,6 +40,11 @@ public:
         const rule::FactBase& facts,
         const std::vector<rule::ResolvedRule>& rules
     ) -> Result<ReasoningResult> = 0;
+
+    /// M7: Hot-reload the decision tree from a YAML file.
+    /// Called by ConfigViewModel::ApplyTreeChanges. On success, the next
+    /// Reason() call uses the new tree. On failure, the old tree is retained.
+    virtual auto ReloadTree(std::filesystem::path path) -> Result<void> = 0;
 };
 
 // -----------------------------------------------------------------------
@@ -55,6 +60,8 @@ public:
     auto Reason(const rule::FactBase& facts,
                 const std::vector<rule::ResolvedRule>& rules)
         -> Result<ReasoningResult> override;
+
+    auto ReloadTree(std::filesystem::path path) -> Result<void> override;
 
 private:
     std::unique_ptr<DecisionTree> tree_;

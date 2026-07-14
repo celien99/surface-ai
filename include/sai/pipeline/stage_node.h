@@ -36,6 +36,12 @@ public:
     virtual auto OnStart(Context&) -> Result<void> = 0;
     virtual auto OnStop(Context&) -> Result<void> = 0;
     virtual auto Process(StageInput) -> Result<StageOutput> = 0;
+
+    // M7: optional hot-reload of stage parameters. Default: no-op (returns success
+    // but does nothing; caller should check logs, not rely on behavioural change).
+    virtual auto ReloadConfig(const YAML::Node& /*config*/) -> Result<void> {
+        return {};
+    }
 };
 
 }  // namespace sai::pipeline

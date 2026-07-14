@@ -55,4 +55,8 @@ add_subdirectory(tests/pipeline)
 add_subdirectory(src/scheduler)
 add_subdirectory(tests/scheduler)
 
+add_subdirectory(src/visualization)
+add_subdirectory(apps/seat-aoi)
+add_subdirectory(tests/visualization)
+
 add_subdirectory(tests/integration)

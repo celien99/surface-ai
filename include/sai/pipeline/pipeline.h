@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <stop_token>
@@ -28,6 +29,9 @@ class WorkerPool;
 }  // namespace sai::runtime
 
 namespace sai::pipeline {
+
+// M7: result callback type — invoked in Export worker thread per completed frame
+using ResultCallback = std::function<void(int frame_id, const sai::reasoner::ReasoningResult&)>;
 
 struct StageMetrics {
     std::string stage_id;
@@ -109,6 +113,8 @@ public:
     auto Stop() -> Result<void>;
     auto Metrics() const -> std::vector<StageMetrics>;
 
+    auto SetResultCallback(ResultCallback callback) -> void;
+
 private:
     Pipeline() = default;
 
@@ -138,6 +144,8 @@ private:
     std::stop_source stop_source_;
     std::atomic<bool> running_{false};
     std::atomic<bool> draining_{false};
+    ResultCallback result_callback_;
+    std::atomic<int> frame_counter_{0};
     std::vector<std::unique_ptr<runtime::WorkerPool>> pools_;
     std::string entry_stage_id_;  // first stage with empty depends_on
     Context* ctx_ = nullptr;      // stored during LoadFromYAML for lifecycle hooks
