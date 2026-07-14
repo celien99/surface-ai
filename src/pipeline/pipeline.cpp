@@ -138,7 +138,7 @@ auto Pipeline::LoadFromYAML(std::filesystem::path yaml_path, Context& ctx)
 
     // Step 3: Create stage nodes via StageFactory
     for (auto& stage_cfg : config->stages) {
-        auto node = StageFactory::Create(stage_cfg, ctx);
+        auto node = StageFactory::Create(stage_cfg, ctx, pipeline.get());
         if (!node.has_value()) return tl::make_unexpected(std::move(node).error());
 
         // metrics entry constructed in-place (std::atomic is not copyable)

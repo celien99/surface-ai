@@ -8,9 +8,12 @@
 
 namespace sai::pipeline {
 
+class Pipeline;
+
 class StageFactory {
 public:
-    static auto Create(const StageConfig& config, Context& ctx)
+    static auto Create(const StageConfig& config, Context& ctx,
+                       Pipeline* pipeline = nullptr)
         -> Result<std::unique_ptr<IStageNode>>;
 };
 

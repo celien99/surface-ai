@@ -4,7 +4,8 @@
 
 namespace sai::pipeline {
 
-auto StageFactory::Create(const StageConfig& config, Context& ctx)
+auto StageFactory::Create(const StageConfig& config, Context& ctx,
+                             Pipeline* pipeline)
     -> Result<std::unique_ptr<IStageNode>> {
     // For M6: all stages return mock implementations.
     // Production implementations wire to M2/M3/M5 real objects
@@ -13,7 +14,7 @@ auto StageFactory::Create(const StageConfig& config, Context& ctx)
     switch (config.type) {
         case StageType::Capture: {
             auto stage = std::make_unique<CaptureStage>(
-                config.id, config.config);
+                config.id, config.config, pipeline);
             auto result = stage->OnInitialize(ctx);
             if (!result.has_value())
                 return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_StageInitFailed,
