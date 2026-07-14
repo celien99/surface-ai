@@ -30,6 +30,14 @@
 | `Logger` | 1.6 | design/milestone-01-foundation/1.6-cross-cutting.md | 按类别（category）持有的日志入口，封装 `spdlog::async_logger` + 独立后台 IO 线程，`Trace`/`Debug` 与 `Warning`+ 分两级队列采用不同溢出策略 |
 | `ConfigStore` | 1.6 | design/milestone-01-foundation/1.6-cross-cutting.md | 封装 yaml-cpp 解析 + `ConfigSchema` 校验的配置加载/查询/热重载入口，启动期一次性加载校验，热重载失败保留旧配置生效 |
 | `ErrorCode 分类表` | 1.6 | design/milestone-01-foundation/1.6-cross-cutting.md | 汇总 1.1-1.5 已提交的 `Core_*`/`Lifecycle_*`/`Plugin_*`/`Runtime_*`/`Memory_*` 前缀并新增 `Infra_*`，规定模块前缀命名规则与追加纪律，不重新定义 `ErrorInfo`/`Result<T>` 本身 |
+| `FactBase` | 5.1 | design/milestone-05-inference-decision/5.1-rule-engine.md | 扁平键值表，求值前批量物化外部数据（Detection + Knowledge + Retrieval），每条记录带 `FactSource` 溯源元数据 |
+| `FactSource` | 5.1 | design/milestone-05-inference-decision/5.1-rule-engine.md | 事实来源元数据（Direct/GraphPath/VectorSearch/Computed/Default），含 SQL 语句/FAISS 参数/耗时 |
+| `Rule` | 5.1 | design/milestone-05-inference-decision/5.1-rule-engine.md | YAML 定义的工业判定规则（name + condition AST + action + overrides/overridden_by + rule_set） |
+| `RuleEngine` | 5.1 | design/milestone-05-inference-decision/5.1-rule-engine.md | 规则求值引擎，批量加载 YAML、并行求值、冲突消解、热重载 |
+| `DecisionTree` | 5.2 | design/milestone-05-inference-decision/5.2-reasoner.md | YAML 配置的分层决策树（BranchNode + LeafNode + ScoreFormula），叶子用加权 sigmoid 评分 |
+| `ReasoningResult` | 5.2 | design/milestone-05-inference-decision/5.2-reasoner.md | 推理产出：verdict（OK/NG/WARN/UNCERTAIN）+ severity + recommendation + confidence + trace[] + evidence[] |
+| `TraceStep` | 5.1 | design/milestone-05-inference-decision/5.1-rule-engine.md | 算子级溯源步骤（Expression/Rule/TreeBranch/Scoring 四级），含描述、源码位置、父节点引用。定义于 `sai::rule` 命名空间，5.2 Reasoner 复用 |
+| `EvidenceItem` | 5.2 | design/milestone-05-inference-decision/5.2-reasoner.md | 全链路证据项：FactBase 键值对 + FactSource 溯源 + TraceStep 关联 |
 
 ## 2. 核心接口签名表
 
@@ -83,6 +91,13 @@
 | `BasicImporter` | 2.3 | specs/2026-07-10-milestone-2-acquisition-imaging-design.md §5.4 | `class BasicImporter final : public IImporter` — 内置 YAML 元数据 + PPM 图像导入 |
 | `DefectRecord` | 2.3 | specs/2026-07-10-milestone-2-acquisition-imaging-design.md §5.4 | `struct DefectRecord {string label,severity; float confidence; Rect location; string evidence_path;}` |
 | `InspectionResult` | 2.3 | specs/2026-07-10-milestone-2-acquisition-imaging-design.md §5.4 | `struct InspectionResult {string sku_id,serial_number; system_clock::time_point timestamp; vector<DefectRecord> defects; string verdict;}` |
+| `IExpression` | 5.1 | design/milestone-05-inference-decision/5.1-rule-engine.md | `class IExpression : public Object { virtual auto Evaluate(FactBase&) const -> Result<Value> = 0; virtual auto CollectFieldRefs() const -> vector<string> = 0; virtual auto SourceText() const -> string_view = 0; }` |
+| `FactBase` | 5.1 | design/milestone-05-inference-decision/5.1-rule-engine.md | `class FactBase { auto Set(string_view, Value, FactSource) -> void; auto Get(string_view) const -> optional<Value>; auto Has(string_view) const -> bool; auto SourceOf(string_view) const -> const FactSource&; auto AllEntries() const -> vector<pair<string,Value>>; auto AllSources() const -> vector<pair<string,FactSource>>; }` |
+| `FactBuilder` | 5.1 | design/milestone-05-inference-decision/5.1-rule-engine.md | `class FactBuilder { explicit FactBuilder(shared_ptr<KnowledgeGraph>, shared_ptr<VectorPath>); auto Build(string_view surface_id, const DetectionResult&, const vector<string>& graph_paths) -> Result<FactBase>; }` |
+| `RuleEngine` | 5.1 | design/milestone-05-inference-decision/5.1-rule-engine.md | `class RuleEngine { auto LoadFromYAML(path) -> Result<void>; auto EvaluateAll(FactBase&) -> Result<vector<ResolvedRule>>; auto ResolveConflicts(const vector<ResolvedRule>&) -> vector<ResolvedRule>; auto EnableHotReload(path, stop_token) -> Result<void>; auto DetectOverlaps() const -> vector<OverlapWarning>; }` |
+| `DecisionTree` | 5.2 | design/milestone-05-inference-decision/5.2-reasoner.md | `class DecisionTree { static auto LoadFromYAML(path) -> Result<unique_ptr<DecisionTree>>; auto Root() const -> const IDecisionNode&; }` |
+| `IReasoner` | 5.2 | design/milestone-05-inference-decision/5.2-reasoner.md | `class IReasoner : public IService { virtual auto Reason(const FactBase&, const vector<ResolvedRule>&) -> Result<ReasoningResult> = 0; }` |
+| `DefaultReasoner` | 5.2 | design/milestone-05-inference-decision/5.2-reasoner.md | `class DefaultReasoner final : public IReasoner { explicit DefaultReasoner(unique_ptr<DecisionTree>); auto Reason(const FactBase&, const vector<ResolvedRule>&) -> Result<ReasoningResult> override; }` |
 
 ## 里程碑 2 偏差记录（2026-07-12）
 

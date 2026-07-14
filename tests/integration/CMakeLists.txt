@@ -60,7 +60,23 @@ target_link_libraries(sai_integration_knowledge_retrieval_pipeline_test PRIVATE
     GTest::gtest_main
 )
 
+# M5: Rule → Reasoner 端到端集成测试
+add_executable(sai_integration_rule_reasoner_pipeline_test
+    rule_reasoner_pipeline_test.cpp
+)
+target_include_directories(sai_integration_rule_reasoner_pipeline_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+target_link_libraries(sai_integration_rule_reasoner_pipeline_test PRIVATE
+    sai::reasoner
+    sai::rule
+    sai::knowledge
+    sai::retrieval
+    sai::detection
+    GTest::gtest_main
+)
 include(GoogleTest)
 gtest_discover_tests(sai_integration_acquisition_to_export_test)
 gtest_discover_tests(sai_integration_inference_pipeline_test)
 gtest_discover_tests(sai_integration_knowledge_retrieval_pipeline_test)
+gtest_discover_tests(sai_integration_rule_reasoner_pipeline_test)
