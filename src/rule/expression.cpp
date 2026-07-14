@@ -238,6 +238,8 @@ auto UnaryExpr::Evaluate(FactBase& ctx) const -> Result<Value> {
                 }
                 return Value::Null();
             }
+            default:
+                return Value::Null();
         }
     });
 }
@@ -359,6 +361,8 @@ auto FunctionExpr::Evaluate(FactBase& ctx) const -> Result<Value> {
                 }
                 return Value::Null();
             }
+            default:
+                return Value::Null();
         }
     });
 }
