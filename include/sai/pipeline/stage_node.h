@@ -18,10 +18,16 @@
 
 namespace sai::pipeline {
 
+struct RuleEvalOutput {
+    sai::rule::FactBase facts;
+    std::vector<sai::rule::ResolvedRule> rules;
+};
+
 using StageInput = std::variant<
     sai::image::RawImage,
     sai::image::SurfaceImage,
     sai::detection::DetectionResult,
+    sai::pipeline::RuleEvalOutput,
     std::vector<sai::rule::ResolvedRule>,
     sai::reasoner::ReasoningResult
 >;

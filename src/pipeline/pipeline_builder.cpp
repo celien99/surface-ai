@@ -242,9 +242,9 @@ auto PipelineBuilder::OutputTypeIndex(StageType t) -> std::size_t {
         case StageType::Preprocess:  return 1;  // SurfaceImage
         case StageType::Inference:   return 2;  // DetectionResult
         case StageType::Detect:      return 2;  // DetectionResult
-        case StageType::RuleEval:    return 3;  // ResolvedRule[]
-        case StageType::Reason:      return 4;  // ReasoningResult
-        case StageType::Export:      return 4;  // ReasoningResult (in)
+        case StageType::RuleEval:    return 3;  // RuleEvalOutput
+        case StageType::Reason:      return 5;  // ReasoningResult
+        case StageType::Export:      return 5;  // ReasoningResult (in)
         case StageType::Custom:      return 0;  // flexible, don't check here
     }
     return 0;
@@ -257,8 +257,8 @@ auto PipelineBuilder::InputTypeIndex(StageType t) -> std::size_t {
         case StageType::Inference:   return 1;  // SurfaceImage
         case StageType::Detect:      return 2;  // DetectionResult
         case StageType::RuleEval:    return 2;  // DetectionResult
-        case StageType::Reason:      return 3;  // ResolvedRule[]
-        case StageType::Export:      return 4;  // ReasoningResult
+        case StageType::Reason:      return 3;  // RuleEvalOutput
+        case StageType::Export:      return 5;  // ReasoningResult
         case StageType::Custom:      return 0;  // flexible
     }
     return 0;
