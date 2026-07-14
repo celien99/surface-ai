@@ -164,7 +164,7 @@ QString InspectionViewModel::recommendation() const {
 
 void InspectionViewModel::UpdateResult(int frame_id, const sai::reasoner::ReasoningResult& result) {
     frame_id_.store(frame_id, std::memory_order_release);
-    confidence_ = result.confidence;  // double on x64 is effectively atomic
+    confidence_.store(result.confidence, std::memory_order_release);
 
     {
         std::unique_lock lock(data_mutex_);
@@ -173,12 +173,13 @@ void InspectionViewModel::UpdateResult(int frame_id, const sai::reasoner::Reason
         recommendation_ = result.recommendation;
     }
 
-    // Update evidence model from ReasoningResult.  DefectModel is NOT updated
-    // here because ReasoningResult carries no region/defect data — regions
-    // live in DetectionResult which flows through a separate pipeline stage.
-    // Callers that need to populate defects should call
-    // defect_model_->UpdateDefects() directly with the DetectionResult regions.
-    evidence_model_->UpdateEvidence(result.evidence);
+    // Marshal evidence update to the main thread — UpdateEvidence() calls
+    // beginResetModel()/endResetModel() which must run on the owning thread.
+    // DefectModel is NOT updated here because ReasoningResult carries no
+    // region/defect data — regions live in DetectionResult which flows through
+    // a separate pipeline stage.
+    QMetaObject::invokeMethod(evidence_model_, "UpdateEvidence", Qt::QueuedConnection,
+                              Q_ARG(std::vector<sai::reasoner::EvidenceItem>, result.evidence));
 
     emit resultChanged();
 }

@@ -15,9 +15,8 @@ struct ReasoningResult;
 struct EvidenceItem;
 }  // namespace sai::reasoner
 
-namespace sai::detection {
-struct RegionProposal;
-}  // namespace sai::detection
+#include "sai/detection/detection_result.h"
+#include "sai/reasoner/evidence_collector.h"
 
 namespace sai::visualization {
 
@@ -59,7 +58,9 @@ public:
 
     /// Update from detection RegionProposals (the closest equivalent to a "defect"
     /// in the current type system — no labeled Defect struct exists yet).
-    void UpdateDefects(const std::vector<sai::detection::RegionProposal>& regions);
+    /// Must be called from the model's owning thread; cross-thread callers should
+    /// use QMetaObject::invokeMethod with Qt::QueuedConnection.
+    Q_INVOKABLE void UpdateDefects(const std::vector<sai::detection::RegionProposal>& regions);
 
 private:
     std::vector<std::unique_ptr<DefectItem>> defects_;
@@ -80,7 +81,9 @@ public:
     auto data(const QModelIndex& index, int role = Qt::DisplayRole) const -> QVariant override;
     auto roleNames() const -> QHash<int, QByteArray> override;
 
-    void UpdateEvidence(const std::vector<sai::reasoner::EvidenceItem>& evidence);
+    /// Must be called from the model's owning thread; cross-thread callers should
+    /// use QMetaObject::invokeMethod with Qt::QueuedConnection.
+    Q_INVOKABLE void UpdateEvidence(const std::vector<sai::reasoner::EvidenceItem>& evidence);
 
 private:
     struct EvidenceRow {
@@ -130,7 +133,7 @@ private:
     std::string verdict_;
     std::string severity_;
     std::string recommendation_;
-    double confidence_{0.0};
+    std::atomic<double> confidence_{0.0};
     mutable std::shared_mutex data_mutex_;
 };
 

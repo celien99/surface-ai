@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <QGuiApplication>
+#include <QCoreApplication>
 #include <thread>
 #include <vector>
 
@@ -153,6 +154,10 @@ TEST(InspectionViewModelTest, UpdateResultPopulatesEvidenceModel) {
     rr.evidence.push_back(item);
 
     vm.UpdateResult(1, rr);
+
+    // Process queued invocations (UpdateEvidence is marshalled via
+    // QMetaObject::invokeMethod with Qt::QueuedConnection for thread safety).
+    QCoreApplication::processEvents();
 
     auto* em = qobject_cast<sai::visualization::EvidenceModel*>(vm.evidenceModel());
     ASSERT_NE(em, nullptr);
