@@ -61,6 +61,16 @@ enum class ErrorCode : std::uint32_t {
     Retrieval_DimensionMismatch,  // reserved: query dim vs FeatureBank dim (validated by FAISS internally)
     Retrieval_EmptyIndex,
     Retrieval_FusionConfigInvalid,
+    // Rule (M5)
+    Rule_ParseError,
+    Rule_InvalidPath,
+    Rule_TypeMismatch,
+    Rule_CyclicOverride,
+    Rule_ReloadFailed,
+    // Reasoner (M5)
+    Reasoner_TreeLoadFailed,
+    Reasoner_InvalidTree,
+    Reasoner_ScoreComputationFailed,
 };
 
 struct ErrorInfo {

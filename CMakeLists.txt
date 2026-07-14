@@ -45,4 +45,9 @@ add_subdirectory(tests/knowledge)
 add_subdirectory(src/retrieval)
 add_subdirectory(tests/retrieval)
 
+add_subdirectory(src/rule)
+add_subdirectory(tests/rule)
+add_subdirectory(src/reasoner)
+add_subdirectory(tests/reasoner)
+
 add_subdirectory(tests/integration)
