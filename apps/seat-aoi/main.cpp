@@ -2,8 +2,10 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -13,23 +15,32 @@
 #include <sqlite3.h>
 
 #include "sai/core/context.h"
-#include "pipeline/stage_nodes.h"  // internal header: concrete stage types for DI wiring
+#include "pipeline/stage_nodes.h"
 #include "sai/device/fake_camera.h"
 #include "sai/image/raw_image.h"
 #include "sai/io/importer.h"
-#include "sai/inference/mock_engine.h"
-#include "sai/detection/patch_core.h"
-#include "sai/knowledge/knowledge_graph.h"
-#include "sai/rule/rule_engine.h"
-#include "sai/reasoner/reasoner.h"
-#include "sai/reasoner/decision_tree.h"
 #include "sai/io/exporter.h"
-#include "sai/pipeline/pipeline.h"
-#include "sai/visualization/pipeline_viewmodel.h"
-#include "sai/visualization/inspection_viewmodel.h"
-#include "sai/visualization/frame_provider.h"
-#include "sai/visualization/config_viewmodel.h"
-#include "sai/visualization/dashboard_viewmodel.h"
+
+// Inference: TensorRT on Linux+CUDA, MockEngine elsewhere
+#if defined(__linux__)
+#include <sai/inference/tensorrt_engine.h>
+#else
+#include <sai/inference/mock_engine.h>
+#endif
+
+#include <sai/detection/patch_core.h>
+#include <sai/detection/feature_bank.h>
+#include <sai/knowledge/knowledge_graph.h>
+#include <sai/retrieval/vector_path.h>
+#include <sai/rule/rule_engine.h>
+#include <sai/reasoner/reasoner.h>
+#include <sai/reasoner/decision_tree.h>
+#include <sai/pipeline/pipeline.h>
+#include <sai/visualization/pipeline_viewmodel.h>
+#include <sai/visualization/inspection_viewmodel.h>
+#include <sai/visualization/frame_provider.h>
+#include <sai/visualization/config_viewmodel.h>
+#include <sai/visualization/dashboard_viewmodel.h>
 
 namespace {
 
@@ -55,6 +66,67 @@ auto ParseArgs(int argc, char* argv[]) -> CliArgs {
     return args;
 }
 
+// Populate KnowledgeGraph with sample seat leather inspection domain data.
+// In production, this comes from MES/PLC via OPC UA.
+auto SeedKnowledgeGraph(sai::knowledge::KnowledgeGraph& kg) -> void {
+    using namespace sai::knowledge;
+
+    auto make_record = [](std::initializer_list<std::pair<const char*, FieldValue>> items) {
+        KnowledgeRecord r;
+        for (auto& [k, v] : items) r.fields[k] = v;
+        return r;
+    };
+
+    // --- Material nodes ---
+    auto mat = kg.InsertNode("Material",
+        make_record({{"name", std::string("Nappa_Leather_Black")},
+                     {"sku", std::string("SKU-NLB-001")},
+                     {"thickness_mm", 1.2}}));
+    auto mat2 = kg.InsertNode("Material",
+        make_record({{"name", std::string("Nappa_Leather_Brown")},
+                     {"sku", std::string("SKU-NLB-002")},
+                     {"thickness_mm", 1.2}}));
+
+    // --- Supplier nodes ---
+    auto supp = kg.InsertNode("Supplier",
+        make_record({{"name", std::string("LeatherWorks_GmbH")},
+                     {"location", std::string("Stuttgart_DE")},
+                     {"certification", std::string("ISO_9001")}}));
+    auto supp2 = kg.InsertNode("Supplier",
+        make_record({{"name", std::string("PremiumHide_Ltd")},
+                     {"location", std::string("Modena_IT")},
+                     {"certification", std::string("ISO_9001")}}));
+
+    // --- Batch nodes ---
+    auto batch1 = kg.InsertNode("Batch",
+        make_record({{"batch_id", std::string("B2026-001")},
+                     {"reject_rate_pct", 0.8},
+                     {"total_units", static_cast<std::int64_t>(5000)},
+                     {"surface", std::string("seat_leather_driver")}}));
+    auto batch2 = kg.InsertNode("Batch",
+        make_record({{"batch_id", std::string("B2026-002")},
+                     {"reject_rate_pct", 4.2},
+                     {"total_units", static_cast<std::int64_t>(3200)},
+                     {"surface", std::string("seat_leather_passenger")}}));
+    auto batch3 = kg.InsertNode("Batch",
+        make_record({{"batch_id", std::string("B2026-003")},
+                     {"reject_rate_pct", 1.5},
+                     {"total_units", static_cast<std::int64_t>(8000)},
+                     {"surface", std::string("seat_leather_driver")}}));
+
+    // --- Edges ---
+    (void)kg.InsertEdge(supp.value(), mat.value(), "SUPPLIES",
+        make_record({{"lead_time_days", static_cast<std::int64_t>(14)}}));
+    (void)kg.InsertEdge(supp2.value(), mat2.value(), "SUPPLIES",
+        make_record({{"lead_time_days", static_cast<std::int64_t>(21)}}));
+    (void)kg.InsertEdge(mat.value(), batch1.value(), "PRODUCED_AS",
+        make_record({{"production_line", std::string("L3")}}));
+    (void)kg.InsertEdge(mat.value(), batch3.value(), "PRODUCED_AS",
+        make_record({{"production_line", std::string("L3")}}));
+    (void)kg.InsertEdge(mat2.value(), batch2.value(), "PRODUCED_AS",
+        make_record({{"production_line", std::string("L5")}}));
+}
+
 }  // anonymous namespace
 
 auto main(int argc, char* argv[]) -> int {
@@ -63,28 +135,61 @@ auto main(int argc, char* argv[]) -> int {
     using namespace sai;
 
     // =========================================================================
-    // 1. Create DI container
+    // 1. DI container
     // =========================================================================
     auto ctx = std::make_unique<Context>();
     (void)ctx->Initialize();
     (void)ctx->Start();
 
     // =========================================================================
-    // 2. Create business objects
+    // 2. Inference Engine — TensorRT on Linux+CUDA, MockEngine on macOS
     // =========================================================================
-    auto mock_engine = std::make_shared<inference::MockEngine>();
+#if defined(__linux__)
+    auto infer_engine = std::make_shared<inference::TensorRtEngine>(/*device_ordinal=*/0);
+    std::cout << "Inference: TensorRtEngine (GPU)\n";
+#else
+    auto infer_engine = std::make_shared<inference::MockEngine>();
+    std::cout << "Inference: MockEngine (no GPU on this host)\n";
+#endif
 
-    auto patch_core = std::make_shared<detection::PatchCore>(
-        detection::PatchCore::Config{});
+    // =========================================================================
+    // 3. Detection — PatchCore with DINOv3-compatible config
+    // =========================================================================
+    detection::PatchCore::Config pc_cfg;
+    pc_cfg.embed_dim = 1024;            // DINOv3 ViT-B/14 output dim
+    pc_cfg.image_width = 1024;
+    pc_cfg.image_height = 1024;
+    pc_cfg.patch_size = 14;
+    pc_cfg.k_nearest = 5;
+    pc_cfg.anomaly_threshold = 0.8F;
+    pc_cfg.enable_adaptive_threshold = true;
+    pc_cfg.target_fpr = 0.01F;
+    auto patch_core = std::make_shared<detection::PatchCore>(std::move(pc_cfg));
     (void)patch_core->Initialize(*ctx);
 
-    auto rule_engine = std::make_shared<rule::RuleEngine>();
+    // =========================================================================
+    // 4. FeatureBank + VectorPath — FAISS vector search
+    //    FeatureBank::LoadFromFile(coreset_path, dim) loads pre-computed
+    //    coreset embeddings. VectorPath wraps it for FAISS TopK/Range search.
+    //    On first run without a coreset file, VectorPath is unavailable;
+    //    RuleEvalStage falls back to bare detection facts (no retrieval).
+    //    To enable: provide --coreset /path/to/coreset.bin after training.
+    // =========================================================================
+    std::shared_ptr<detection::FeatureBank> feature_bank;
+    std::shared_ptr<retrieval::VectorPath> vp;
 
-    // KnowledgeGraph: in-memory SQLite property graph for material/batch data.
-    // VectorPath requires FeatureBank (real embeddings), deferred to GPU target.
+    // =========================================================================
+    // 5. KnowledgeGraph — in-memory SQLite with sample seat leather data
+    // =========================================================================
     sqlite3* sqlite_db = nullptr;
     sqlite3_open(":memory:", &sqlite_db);
     auto kg = std::make_shared<knowledge::KnowledgeGraph>(sqlite_db);
+    SeedKnowledgeGraph(*kg);
+
+    // =========================================================================
+    // 6. Rule Engine + Reasoner — loaded from YAML
+    // =========================================================================
+    auto rule_engine = std::make_shared<rule::RuleEngine>();
 
     auto tree_result = reasoner::DecisionTree::LoadFromYAML(
         "resources/trees/seat_leather_inspection.yaml");
@@ -92,12 +197,17 @@ auto main(int argc, char* argv[]) -> int {
     if (tree_result) {
         reasoner = std::make_shared<reasoner::DefaultReasoner>(
             std::move(*tree_result));
+    } else {
+        std::cerr << "Warning: decision tree load failed, reasoner unavailable\n";
     }
 
+    // =========================================================================
+    // 7. Export
+    // =========================================================================
     auto exporter = std::make_shared<io::JsonExporter>();
 
     // =========================================================================
-    // 3. Load Pipeline
+    // 8. Load Pipeline from YAML
     // =========================================================================
     auto pipeline_result = pipeline::Pipeline::LoadFromYAML(
         "resources/pipeline.yaml", *ctx);
@@ -109,16 +219,17 @@ auto main(int argc, char* argv[]) -> int {
     auto pipeline = std::move(*pipeline_result);
 
     // =========================================================================
-    // 4. Wire business objects
+    // 9. Wire all business objects into Pipeline stages
     // =========================================================================
     if (auto* s = pipeline->GetStage("inference"))
-        static_cast<pipeline::InferenceStage*>(s)->SetEngine(mock_engine);
+        static_cast<pipeline::InferenceStage*>(s)->SetEngine(infer_engine);
     if (auto* s = pipeline->GetStage("detect"))
         static_cast<pipeline::DetectStage*>(s)->SetDetector(patch_core);
     if (auto* s = pipeline->GetStage("rule_eval")) {
         auto* rs = static_cast<pipeline::RuleEvalStage*>(s);
         rs->SetRuleEngine(rule_engine);
         rs->SetKnowledgeGraph(kg);
+        if (vp) rs->SetVectorPath(vp);
     }
     if (auto* s = pipeline->GetStage("reason"))
         static_cast<pipeline::ReasonStage*>(s)->SetReasoner(reasoner);
@@ -126,7 +237,7 @@ auto main(int argc, char* argv[]) -> int {
         static_cast<pipeline::ExportStage*>(s)->SetExporter(exporter);
 
     // =========================================================================
-    // 5. Start Pipeline
+    // 10. Start Pipeline
     // =========================================================================
     auto start_result = pipeline->Start();
     if (!start_result) {
@@ -136,44 +247,42 @@ auto main(int argc, char* argv[]) -> int {
     }
 
     // =========================================================================
-    // 6. Headless batch mode: process images from directory
+    // 11. Headless batch mode — process images from directory
     // =========================================================================
     if (!cli.image_dir.empty()) {
         io::BasicImporter importer;
         std::vector<std::filesystem::path> image_files;
 
-        // Collect image files sorted by name
         for (auto& entry : std::filesystem::directory_iterator(cli.image_dir)) {
-            if (entry.is_regular_file()) {
-                auto ext = entry.path().extension().string();
-                if (ext == ".ppm" || ext == ".png" || ext == ".bmp"
-                    || ext == ".jpg" || ext == ".jpeg") {
-                    image_files.push_back(entry.path());
-                }
+            if (!entry.is_regular_file()) continue;
+            auto ext = entry.path().extension().string();
+            if (ext == ".ppm" || ext == ".png" || ext == ".bmp"
+                || ext == ".jpg" || ext == ".jpeg") {
+                image_files.push_back(entry.path());
             }
         }
         std::sort(image_files.begin(), image_files.end());
 
         std::cout << "Processing " << image_files.size() << " images from "
-                  << cli.image_dir << "\n";
+                  << cli.image_dir << "\n"
+                  << "Output: " << cli.output_dir << "\n\n";
 
-        int ok_count = 0, ng_count = 0;
+        int ok = 0, ng = 0, warn = 0, uncertain = 0, failed = 0;
+        int frame_id = 0;
         for (size_t i = 0; i < image_files.size(); ++i) {
             auto& path = image_files[i];
             auto img_result = importer.ImportImage(path);
             if (!img_result) {
-                std::cerr << "Failed to import: " << path << "\n";
+                std::cerr << "FAIL import: " << path.filename() << "\n";
+                ++failed;
                 continue;
             }
 
-            // ImportImage returns unique_ptr<Image>. If it's a RawImage,
-            // pass directly; otherwise wrap buffer.
             auto* raw = dynamic_cast<image::RawImage*>(img_result->get());
             if (raw) {
                 img_result->release();
                 (void)pipeline->Submit(std::move(*raw));
             } else {
-                // Wrap as RawImage from buffer
                 auto meta = (*img_result)->Meta();
                 const auto* data = (*img_result)->Data();
                 auto size = (*img_result)->SizeBytes();
@@ -182,22 +291,59 @@ auto main(int argc, char* argv[]) -> int {
                     image::RawImage::FromOwnedBuffer(std::move(buffer), meta));
             }
 
-            // Drain after each frame to wait for pipeline completion
             (void)pipeline->Drain();
+            ++frame_id;
+
+            // Read the exported JSON result
+            auto result_path = std::filesystem::path(cli.output_dir)
+                / "default" / "unknown" / "result.json";
+            std::string verdict = "?";
+            if (std::filesystem::exists(result_path)) {
+                // Quick parse: check verdict field
+                std::ifstream ifs(result_path);
+                std::string line;
+                while (std::getline(ifs, line)) {
+                    auto pos = line.find("\"verdict\"");
+                    if (pos != std::string::npos) {
+                        pos = line.find(':', pos);
+                        if (pos != std::string::npos) {
+                            auto start = line.find('"', pos);
+                            auto end = line.find('"', start + 1);
+                            if (start != std::string::npos && end != std::string::npos) {
+                                verdict = line.substr(start + 1, end - start - 1);
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+
+            if (verdict == "OK") ++ok;
+            else if (verdict == "NG") ++ng;
+            else if (verdict == "WARN") ++warn;
+            else if (verdict == "UNCERTAIN") ++uncertain;
+            else ++failed;
 
             std::cout << "[" << (i + 1) << "/" << image_files.size() << "] "
-                      << path.filename().string() << "\n";
+                      << path.filename().string() << " → " << verdict << "\n";
         }
 
-        (void)pipeline->Drain();
+        std::cout << "\n===== Summary =====\n"
+                  << "Total:   " << image_files.size() << "\n"
+                  << "OK:      " << ok << "\n"
+                  << "NG:      " << ng << "\n"
+                  << "WARN:    " << warn << "\n"
+                  << "UNCERTAIN: " << uncertain << "\n"
+                  << "Failed:  " << failed << "\n"
+                  << "Results: " << cli.output_dir << "\n";
+
         (void)pipeline->Stop();
         (void)ctx->Stop();
-        std::cout << "Done. Results in " << cli.output_dir << "\n";
-        return 0;
+        return (ng > 0 || failed > 0) ? 1 : 0;
     }
 
     // =========================================================================
-    // 7. GUI mode: FakeCamera drives the frame loop
+    // 12. GUI mode — FakeCamera drives the frame loop
     // =========================================================================
     QGuiApplication app(argc, argv);
     QQmlApplicationEngine engine;
@@ -210,10 +356,10 @@ auto main(int argc, char* argv[]) -> int {
     auto* frame_provider = new visualization::FrameProvider();
 
     pipeline->SetResultCallback(
-        [=](int frame_id, const reasoner::ReasoningResult& result) {
-            inspection_vm->UpdateResult(frame_id, result);
+        [=](int fid, const reasoner::ReasoningResult& result) {
+            inspection_vm->UpdateResult(fid, result);
             visualization::FrameSummary summary;
-            summary.frame_id = frame_id;
+            summary.frame_id = fid;
             summary.verdict = result.verdict;
             summary.severity = std::to_string(result.severity);
             summary.timestamp = std::chrono::system_clock::now();
