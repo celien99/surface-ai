@@ -6,6 +6,8 @@ target_sources(sai_visualization_test PRIVATE
     pipeline_viewmodel_test.cpp
     inspection_viewmodel_test.cpp
     frame_provider_test.cpp
+    config_viewmodel_test.cpp
+    dashboard_viewmodel_test.cpp
 )
 
 target_include_directories(sai_visualization_test PRIVATE
