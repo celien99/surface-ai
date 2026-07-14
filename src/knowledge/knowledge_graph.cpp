@@ -234,9 +234,19 @@ auto KnowledgeGraph::GetEdge(EdgeId id) const noexcept -> Result<KnowledgeEdge> 
 auto KnowledgeGraph::Traverse(NodeId from, std::string_view relationship,
                                std::size_t max_depth) const noexcept
     -> Result<std::vector<GraphPath>> {
+    std::unordered_set<NodeId> visited;
+    return TraverseImpl(from, relationship, max_depth, visited);
+}
+
+auto KnowledgeGraph::TraverseImpl(NodeId from, std::string_view relationship,
+                                   std::size_t max_depth,
+                                   std::unordered_set<NodeId>& visited) const noexcept
+    -> Result<std::vector<GraphPath>> {
     if (max_depth == 0) {
         return std::vector<GraphPath>{};
     }
+
+    visited.insert(from);
 
     const char* sql =
         "SELECT e.id, n.id, n.type, n.properties_json "
@@ -274,10 +284,11 @@ auto KnowledgeGraph::Traverse(NodeId from, std::string_view relationship,
         results.push_back(std::move(path));
     }
 
-    // Recursively traverse from each neighbor for deeper levels
+    // Recursively traverse from each unvisited neighbor for deeper levels
     if (max_depth > 1) {
         for (auto neighbor_id : neighbor_ids) {
-            auto deeper = Traverse(neighbor_id, relationship, max_depth - 1);
+            if (visited.count(neighbor_id)) continue;
+            auto deeper = TraverseImpl(neighbor_id, relationship, max_depth - 1, visited);
             if (!deeper.has_value()) {
                 return tl::make_unexpected(deeper.error());
             }
@@ -294,9 +305,19 @@ auto KnowledgeGraph::Traverse(NodeId from, std::string_view relationship,
 auto KnowledgeGraph::ReverseTraverse(NodeId to, std::string_view relationship,
                                       std::size_t max_depth) const noexcept
     -> Result<std::vector<GraphPath>> {
+    std::unordered_set<NodeId> visited;
+    return ReverseTraverseImpl(to, relationship, max_depth, visited);
+}
+
+auto KnowledgeGraph::ReverseTraverseImpl(NodeId to, std::string_view relationship,
+                                          std::size_t max_depth,
+                                          std::unordered_set<NodeId>& visited) const noexcept
+    -> Result<std::vector<GraphPath>> {
     if (max_depth == 0) {
         return std::vector<GraphPath>{};
     }
+
+    visited.insert(to);
 
     const char* sql =
         "SELECT e.id, n.id, n.type, n.properties_json "
@@ -333,10 +354,11 @@ auto KnowledgeGraph::ReverseTraverse(NodeId to, std::string_view relationship,
         results.push_back(std::move(path));
     }
 
-    // Recursively reverse-traverse from each neighbor for deeper levels
+    // Recursively reverse-traverse from each unvisited neighbor for deeper levels
     if (max_depth > 1) {
         for (auto neighbor_id : neighbor_ids) {
-            auto deeper = ReverseTraverse(neighbor_id, relationship, max_depth - 1);
+            if (visited.count(neighbor_id)) continue;
+            auto deeper = ReverseTraverseImpl(neighbor_id, relationship, max_depth - 1, visited);
             if (!deeper.has_value()) {
                 return tl::make_unexpected(deeper.error());
             }

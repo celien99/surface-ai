@@ -2,6 +2,7 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include <sai/core/error.h>
@@ -69,6 +70,15 @@ public:
 
 private:
     sqlite3* db_;
+
+    [[nodiscard]] auto TraverseImpl(NodeId from, std::string_view relationship,
+                                    std::size_t max_depth,
+                                    std::unordered_set<NodeId>& visited) const noexcept
+        -> Result<std::vector<GraphPath>>;
+    [[nodiscard]] auto ReverseTraverseImpl(NodeId to, std::string_view relationship,
+                                           std::size_t max_depth,
+                                           std::unordered_set<NodeId>& visited) const noexcept
+        -> Result<std::vector<GraphPath>>;
 };
 
 }  // namespace sai::knowledge

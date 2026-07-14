@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <source_location>
+#include <string>
 
 #include <faiss/Index.h>
 #include <faiss/IndexFlat.h>
@@ -32,8 +33,17 @@ static auto topk_search(faiss::Index* index, const float* query,
     return results;
 }
 
-auto VectorPath::Search(const float* query, const Config& cfg) const noexcept
+auto VectorPath::Search(const float* query, std::size_t dim, const Config& cfg) const noexcept
     -> Result<std::vector<VectorResult>> {
+    if (dim != bank_.Dim()) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Retrieval_DimensionMismatch,
+            "query dimension " + std::to_string(dim) +
+                " does not match index dimension " + std::to_string(bank_.Dim()),
+            std::source_location::current(),
+        });
+    }
+
     auto* index = bank_.index_.get();
     if (!index || bank_.NumSamples() == 0) {
         return tl::make_unexpected(ErrorInfo{

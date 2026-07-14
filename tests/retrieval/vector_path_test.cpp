@@ -49,7 +49,7 @@ TEST_F(VectorPathTest, TopKSearch) {
     cfg.k = 3;
 
     float query[] = {0.1F, 0.1F, 0.1F, 0.1F};
-    auto results = vec_path_->Search(query, cfg);
+    auto results = vec_path_->Search(query, 4, cfg);
     ASSERT_TRUE(results.has_value());
     ASSERT_EQ(results->size(), 3);
     EXPECT_EQ(results->at(0).index, 0);  // closest to [0,0,0,0]
@@ -62,7 +62,7 @@ TEST_F(VectorPathTest, RangeSearch) {
     cfg.range_threshold = 10.0F;  // L2 distance threshold for 4-dim vectors near [0,0,0,0]
 
     float query[] = {0.0F, 0.0F, 0.0F, 0.0F};
-    auto results = vec_path_->Search(query, cfg);
+    auto results = vec_path_->Search(query, 4, cfg);
     ASSERT_TRUE(results.has_value());
     EXPECT_GT(results->size(), 0);
     for (const auto& r : *results) {
@@ -77,7 +77,7 @@ TEST_F(VectorPathTest, HybridSearch) {
     cfg.id_subset = {5, 6, 7};  // only search among indices 5-7
 
     float query[] = {5.1F, 5.1F, 5.1F, 5.1F};
-    auto results = vec_path_->Search(query, cfg);
+    auto results = vec_path_->Search(query, 4, cfg);
     ASSERT_TRUE(results.has_value());
     ASSERT_EQ(results->size(), 2);
     EXPECT_EQ(results->at(0).index, 5);  // closest in subset
@@ -105,7 +105,7 @@ TEST_F(VectorPathTest, EmptyIndexReturnsError) {
 
     float query[] = {0.0F, 0.0F, 0.0F, 0.0F};
     VectorPath::Config cfg;
-    auto result = empty_path.Search(query, cfg);
+    auto result = empty_path.Search(query, 4, cfg);
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, ErrorCode::Retrieval_EmptyIndex);
 }
@@ -118,7 +118,7 @@ TEST_F(VectorPathTest, HybridFallbackOnEmptySubset) {
     // id_subset is empty (default)
 
     float query[] = {0.1F, 0.1F, 0.1F, 0.1F};
-    auto results = vec_path_->Search(query, cfg);
+    auto results = vec_path_->Search(query, 4, cfg);
     ASSERT_TRUE(results.has_value());
     ASSERT_EQ(results->size(), 2);
     EXPECT_EQ(results->at(0).index, 0);  // closest to [0,0,0,0]

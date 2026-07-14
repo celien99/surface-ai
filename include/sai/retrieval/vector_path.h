@@ -30,7 +30,7 @@ public:
 
     explicit VectorPath(const sai::detection::FeatureBank& bank) noexcept;
 
-    [[nodiscard]] auto Search(const float* query, const Config& cfg) const noexcept
+    [[nodiscard]] auto Search(const float* query, std::size_t dim, const Config& cfg) const noexcept
         -> Result<std::vector<VectorResult>>;
 
     [[nodiscard]] auto Dim() const noexcept -> std::size_t;
