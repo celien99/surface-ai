@@ -130,6 +130,9 @@ auto RunHeadless(const CliArgs& cli, AssembledApp& app) -> int {
         std::cout << "Results: " << cli.output_dir << "\n";
 
         if (app.evolution.has_value()) app.evolution->Stop();
+        for (auto& [key, evo] : app.evolutions) {
+            evo.Stop();
+        }
         if (app.tuning_scheduler.has_value()) app.tuning_scheduler->Join();
         (void)app.pipeline->Stop();
         (void)app.ctx->Stop();

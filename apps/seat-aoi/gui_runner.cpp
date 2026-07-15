@@ -36,7 +36,7 @@ auto RunGui(int argc, char* argv[], AssembledApp& app) -> int {
     auto* dashboard_vm = new visualization::DashboardViewModel(&qapp);
     auto* frame_provider = new visualization::FrameProvider();
 
-    if (!app.evolution.has_value()) {
+    if (!app.evolution.has_value() && app.evolutions.empty()) {
         // No evolution — keep simple callback (no self-evolution capture needed)
         app.pipeline->SetResultCallback(
             [=](int fid, const reasoner::ReasoningResult& result) {
@@ -59,7 +59,8 @@ auto RunGui(int argc, char* argv[], AssembledApp& app) -> int {
                 summary.timestamp = std::chrono::system_clock::now();
                 dashboard_vm->AppendFrameSummary(std::move(summary));
 
-                if (app.evolution->IsRunning()) {
+                // Single-position evolution
+                if (app.evolution.has_value() && app.evolution->IsRunning()) {
                     const auto& ctx = app.patch_core->LastContext();
                     if (!ctx.knn_distances.empty()) {
                         app.evolution->AssessAndOffer(
@@ -76,6 +77,33 @@ auto RunGui(int argc, char* argv[], AssembledApp& app) -> int {
                             ctx.effective_threshold,
                             ctx.pca_image_score,
                             ctx.pca_self_query_p95);
+                    }
+                }
+                // Multi-position evolution
+                if (!app.evolutions.empty()) {
+                    AssembledApp::BankKey key{result.surface_id, result.position_id};
+                    auto eit = app.evolutions.find(key);
+                    if (eit != app.evolutions.end() && eit->second.IsRunning()) {
+                        auto pit = app.patch_cores.find(key);
+                        if (pit != app.patch_cores.end()) {
+                            const auto& ctx = pit->second->LastContext();
+                            if (!ctx.knn_distances.empty()) {
+                                eit->second.AssessAndOffer(
+                                    ctx.knn_distances.data(),
+                                    ctx.knn_distances.size() / ctx.k_nearest,
+                                    ctx.k_nearest,
+                                    ctx.embedding_data.data(),
+                                    ctx.grid_h,
+                                    ctx.grid_w,
+                                    ctx.dim,
+                                    ctx.detection_result,
+                                    result.triggered_rules.size(),
+                                    result.verdict,
+                                    ctx.effective_threshold,
+                                    ctx.pca_image_score,
+                                    ctx.pca_self_query_p95);
+                            }
+                        }
                     }
                 }
             });
@@ -107,6 +135,9 @@ auto RunGui(int argc, char* argv[], AssembledApp& app) -> int {
         (void)camera->Disconnect();
         (void)app.pipeline->Drain();
         if (app.evolution.has_value()) app.evolution->Stop();
+        for (auto& [key, evo] : app.evolutions) {
+            evo.Stop();
+        }
         if (app.tuning_scheduler.has_value()) app.tuning_scheduler->Join();
         (void)app.pipeline->Stop();
         (void)app.ctx->Stop();
