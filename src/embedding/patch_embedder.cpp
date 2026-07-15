@@ -48,13 +48,10 @@ auto PatchEmbedder::Extract(const sai::image::Image& image) noexcept -> Result<E
         });
     }
 
-    // GPU 推理路径：定义在 patch_embedder_cuda.cpp（CUDA 门控）。
-    // 可移植构建返回 Inference_EngineExecutionFailed stub。
-    return tl::make_unexpected(ErrorInfo{
-        .code = ErrorCode::Inference_EngineExecutionFailed,
-        .message = "PatchEmbedder::Extract: GPU inference not available on this platform",
-        .source_location = std::source_location::current(),
-    });
+    // Delegate to GPU inference path.
+    // On CUDA builds, ExtractGpu is defined in patch_embedder_cuda.cpp.
+    // On non-CUDA builds, the stub below returns an error.
+    return ExtractGpu(image);
 }
 
 auto PatchEmbedder::ExtractBatch(
@@ -85,5 +82,18 @@ auto PatchEmbedder::ExtractBatch(
         .source_location = std::source_location::current(),
     });
 }
+
+// Non-CUDA stub for ExtractGpu — overridden by patch_embedder_cuda.cpp
+// when SAI_CUDA_ENABLED is defined.
+#if !defined(SAI_CUDA_ENABLED)
+auto PatchEmbedder::ExtractGpu(const sai::image::Image& /*image*/) noexcept
+    -> Result<Embedding> {
+    return tl::make_unexpected(ErrorInfo{
+        .code = ErrorCode::Inference_EngineExecutionFailed,
+        .message = "PatchEmbedder::ExtractGpu: GPU inference not available on this platform",
+        .source_location = std::source_location::current(),
+    });
+}
+#endif
 
 }  // namespace sai::embedding

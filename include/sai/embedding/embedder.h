@@ -47,6 +47,11 @@ public:
     PatchEmbedder(const PatchEmbedder&) = delete;
     auto operator=(const PatchEmbedder&) -> PatchEmbedder& = delete;
 
+    // GPU inference path — defined in patch_embedder_cuda.cpp (CUDA-gated).
+    // On non-CUDA builds, a stub returning an error is provided in patch_embedder.cpp.
+    [[nodiscard]] auto ExtractGpu(const sai::image::Image& image) noexcept
+        -> Result<Embedding>;
+
 private:
     explicit PatchEmbedder(sai::inference::DinoV3Adapter adapter) noexcept;
     sai::inference::DinoV3Adapter adapter_;
@@ -70,6 +75,10 @@ public:
     auto operator=(GlobalEmbedder&&) noexcept -> GlobalEmbedder&;
     GlobalEmbedder(const GlobalEmbedder&) = delete;
     auto operator=(const GlobalEmbedder&) -> GlobalEmbedder& = delete;
+
+    // GPU inference path — defined in global_embedder_cuda.cpp (CUDA-gated).
+    [[nodiscard]] auto ExtractGpu(const sai::image::Image& image) noexcept
+        -> Result<Embedding>;
 
 private:
     explicit GlobalEmbedder(sai::inference::ClipAdapter adapter) noexcept;

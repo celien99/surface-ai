@@ -46,4 +46,8 @@ add_library(sai::detection ALIAS sai_detection)
 
 target_include_directories(sai_detection PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(sai_detection PUBLIC sai::core sai::embedding faiss OpenMP::OpenMP_CXX)
+if(CUDAToolkit_FOUND)
+    target_link_libraries(sai_detection PUBLIC CUDA::cudart)
+    target_compile_definitions(sai_detection PUBLIC SAI_CUDA_ENABLED)
+endif()
 target_compile_features(sai_detection PUBLIC cxx_std_20)

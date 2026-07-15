@@ -8,6 +8,10 @@
     "spdlog",
     "nlohmann-json",
     "faiss",
-    "sqlite3"
+    "sqlite3",
+    {
+      "name": "aravis",
+      "platform": "linux"
+    }
   ]
 }
