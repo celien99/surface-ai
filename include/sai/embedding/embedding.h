@@ -84,6 +84,12 @@ public:
     auto SetSurfaceId(std::string id) noexcept -> void
     { surface_id_ = std::move(id); }
 
+    // Position identity for multi-position detection routing.
+    [[nodiscard]] auto PositionId() const noexcept -> std::uint16_t
+    { return position_id_; }
+    auto SetPositionId(std::uint16_t id) noexcept -> void
+    { position_id_ = std::move(id); }
+
     // 总字节大小 = meta_.count * meta_.dim * sizeof(float)。
     [[nodiscard]] auto SizeBytes() const noexcept -> std::size_t;
 
@@ -114,6 +120,7 @@ private:
     bool on_gpu_ = false;
     std::vector<float> global_features_{};
     std::string surface_id_{};
+    std::uint16_t position_id_ = 0;
 };
 
 }  // namespace sai::embedding
