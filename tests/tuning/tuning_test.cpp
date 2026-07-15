@@ -318,3 +318,53 @@ TEST(BayesianOptimizerTest, ConvergenceReducesCost) {
     // After optimization, cost should be at least as good
     EXPECT_LE(result->cost, initial_best.cost + 0.1);
 }
+
+// ── SchedulerConfig ──────────────────────────────────────────
+
+#include <sai/tuning/tuning_scheduler.h>
+#include <sai/knowledge/knowledge_evolution.h>
+
+TEST(SchedulerConfigTest, DefaultValues) {
+    SchedulerConfig cfg;
+    EXPECT_EQ(cfg.interval, std::chrono::seconds(3600));
+    EXPECT_EQ(cfg.monitoring_window, std::chrono::seconds(300));
+    EXPECT_EQ(cfg.feedback_lookback, std::chrono::seconds(86400));
+    EXPECT_DOUBLE_EQ(cfg.min_ng_rate, 0.001);
+    EXPECT_DOUBLE_EQ(cfg.max_ng_rate, 0.50);
+    EXPECT_EQ(cfg.min_samples_for_trigger, 50U);
+}
+
+// ── TuningState enum ─────────────────────────────────────────
+
+TEST(TuningStateTest, DistinctValues) {
+    EXPECT_NE(static_cast<int>(TuningState::Idle),
+              static_cast<int>(TuningState::Evaluating));
+    EXPECT_NE(static_cast<int>(TuningState::Idle),
+              static_cast<int>(TuningState::Optimizing));
+    EXPECT_NE(static_cast<int>(TuningState::Idle),
+              static_cast<int>(TuningState::Monitoring));
+    EXPECT_NE(static_cast<int>(TuningState::Idle),
+              static_cast<int>(TuningState::RolledBack));
+}
+
+// ── TuningScheduler ──────────────────────────────────────────
+
+TEST(TuningSchedulerTest, InitialStateIsIdle) {
+    auto ks = sai::knowledge::KnowledgeStore::Create(
+        sai::knowledge::KnowledgeStore::Config{":memory:", true});
+    ASSERT_TRUE(ks.has_value());
+
+    auto db = (*ks)->DbHandle();
+    auto kg = std::make_shared<sai::knowledge::KnowledgeGraph>(db);
+    auto evo = std::make_shared<sai::knowledge::KnowledgeEvolution>(db);
+
+    auto obj = std::make_unique<MockObjective>([](const auto&) { return 0.0; });
+    TuningSpace space;
+    space.AddParameter({"x", ParameterType::Continuous, 0.0, 1.0});
+    auto opt = std::make_unique<BayesianOptimizer>(std::move(space), OptimizerConfig{});
+
+    SchedulerConfig cfg;
+    TuningScheduler scheduler(std::move(cfg), std::move(opt), std::move(obj), kg, evo);
+
+    EXPECT_EQ(scheduler.CurrentState(), TuningState::Idle);
+}

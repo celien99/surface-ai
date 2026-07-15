@@ -4,6 +4,7 @@ set(SAI_TUNING_SOURCES
     tuning_space.cpp
     tuning_objective.cpp
     bayesian_optimizer.cpp
+    tuning_scheduler.cpp
 )
 
 add_library(sai_tuning STATIC ${SAI_TUNING_SOURCES})
