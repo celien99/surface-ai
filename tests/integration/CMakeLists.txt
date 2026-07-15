@@ -104,6 +104,13 @@ target_link_libraries(sai_integration_end_to_end_regression_test PRIVATE
     sai::pipeline
     GTest::gtest_main
 )
+# Task 6: KnowledgeEvolution integration
+add_executable(sai_coreset_evolution_integration_test
+    coreset_evolution_integration_test.cpp)
+target_include_directories(sai_coreset_evolution_integration_test
+    PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(sai_coreset_evolution_integration_test
+    PRIVATE sai::detection sai::knowledge GTest::gtest_main)
 include(GoogleTest)
 gtest_discover_tests(sai_integration_acquisition_to_export_test)
 gtest_discover_tests(sai_integration_inference_pipeline_test)
@@ -111,3 +118,4 @@ gtest_discover_tests(sai_integration_knowledge_retrieval_pipeline_test)
 gtest_discover_tests(sai_integration_rule_reasoner_pipeline_test)
 gtest_discover_tests(sai_integration_m6_e2e_pipeline_test)
 gtest_discover_tests(sai_integration_end_to_end_regression_test)
+gtest_discover_tests(sai_coreset_evolution_integration_test)

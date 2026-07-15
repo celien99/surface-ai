@@ -1,6 +1,7 @@
 // coreset_evolution.cpp — CoresetEvolution 门面（PIMPL）
 #include <sai/detection/coreset_evolution.h>
 #include <sai/detection/detection_result.h>
+#include <sai/knowledge/knowledge_store.h>
 #include <sai/detection/feature_bank.h>
 #include <sai/detection/patch_core.h>
 #include <sai/embedding/embedding.h>
@@ -8,6 +9,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstddef>
 #include <filesystem>
@@ -104,6 +106,43 @@ struct CoresetEvolution::Impl {
 
     std::shared_ptr<knowledge::KnowledgeStore> knowledge_store;
     std::filesystem::path save_path;
+
+    // Sliding window for drift detection
+    std::vector<float> displacement_history;
+
+    auto CheckDrift(float new_displacement) -> void {
+        displacement_history.push_back(new_displacement);
+        if (displacement_history.size() > 5) {
+            displacement_history.erase(displacement_history.begin());
+        }
+        if (displacement_history.size() < 3) return;
+
+        // Compute mean + stddev of history
+        double sum = 0.0;
+        for (auto d : displacement_history) sum += static_cast<double>(d);
+        double mean = sum / static_cast<double>(displacement_history.size());
+        double var = 0.0;
+        for (auto d : displacement_history) {
+            double diff = static_cast<double>(d) - mean;
+            var += diff * diff;
+        }
+        double stddev = std::sqrt(var / static_cast<double>(displacement_history.size()));
+
+        // Check if last 3 are all > mean + 2*stddev
+        if (stddev > 0.0) {
+            auto threshold = mean + 2.0 * stddev;
+            auto n = displacement_history.size();
+            if (displacement_history[n-1] > threshold
+                && displacement_history[n-2] > threshold
+                && displacement_history[n-3] > threshold) {
+                sai::infra::Logger::Get("detection").Log(sai::infra::LogLevel::Warning,
+                    "[CoresetEvolution] Potential concept drift: "
+                    "mean_displacement={} exceeds 2σ threshold={}. "
+                    "Self-evolution continues.",
+                    new_displacement, threshold);
+            }
+        }
+    }
 
     Impl(EvolutionConfig c, PatchCore& d, NormalityProfile p)
         : cfg(std::move(c))
@@ -325,6 +364,27 @@ auto CoresetEvolution::Start(std::stop_token token) noexcept -> void {
                 impl_->stats.update_duration = elapsed;
                 impl_->stats.update_count++;
             }
+
+            // Record evolution event to KnowledgeStore
+            if (impl_->knowledge_store) {
+                sai::knowledge::KnowledgeRecord props;
+                props.fields["event_type"] = sai::knowledge::FieldValue{
+                    std::string{"RuntimeUpdate"}};
+                props.fields["frames_added"] = sai::knowledge::FieldValue{
+                    static_cast<std::int64_t>(candidates.size())};
+                props.fields["mean_displacement"] = sai::knowledge::FieldValue{
+                    0.0};  // computed in FullRebuild, skipped for runtime
+                props.fields["update_duration_ms"] = sai::knowledge::FieldValue{
+                    static_cast<std::int64_t>(elapsed.count())};
+
+                auto node_result = impl_->knowledge_store->InsertNode(
+                    "CoresetEvolutionEvent", std::move(props));
+                // Best-effort — failure doesn't block evolution
+                (void)node_result;
+            }
+
+            // Concept drift check (independent of knowledge store)
+            impl_->CheckDrift(0.0F);
         }
     });
 }
@@ -416,6 +476,12 @@ auto CoresetEvolution::FullRebuild(const std::filesystem::path& save_path) noexc
     // Compute new profile from the rebuilt bank
     auto new_profile = NormalityProfile::Compute(*new_bank, impl_->cfg.normality_k);
 
+    // Compute mean displacement for drift detection
+    float mean_displacement = 0.0F;
+    if (impl_->active_profile.num_samples > 0 && new_profile.num_samples > 0) {
+        mean_displacement = std::abs(new_profile.mean - impl_->active_profile.mean);
+    }
+
     // Save new coreset to file
     auto save_result = new_bank->SaveToFile(save_path);
     if (!save_result.has_value()) {
@@ -460,6 +526,24 @@ auto CoresetEvolution::FullRebuild(const std::filesystem::path& save_path) noexc
         std::lock_guard lock(impl_->stats_mutex);
         impl_->stats.update_count++;
     }
+
+    // Record evolution event to KnowledgeStore
+    if (impl_->knowledge_store) {
+        sai::knowledge::KnowledgeRecord props;
+        props.fields["event_type"] = sai::knowledge::FieldValue{
+            std::string{"FullRebuild"}};
+        props.fields["mean_displacement"] = sai::knowledge::FieldValue{
+            static_cast<double>(mean_displacement)};
+        props.fields["frames_added"] = sai::knowledge::FieldValue{
+            static_cast<std::int64_t>(candidates.size())};
+
+        auto node_result = impl_->knowledge_store->InsertNode(
+            "CoresetEvolutionEvent", std::move(props));
+        (void)node_result;
+    }
+
+    // Concept drift check
+    impl_->CheckDrift(mean_displacement);
 
     return {};
 }
