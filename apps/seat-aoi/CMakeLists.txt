@@ -2,7 +2,17 @@
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CUDAToolkit_FOUND)
     find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Charts)
 
-    add_executable(seat_aoi main.cpp qml.qrc)
+    add_executable(seat_aoi
+        main.cpp
+        app_builder.cpp
+        cli_args.cpp
+        coreset_builder.cpp
+        gui_runner.cpp
+        headless_runner.cpp
+        knowledge_seed.cpp
+        tuning_wiring.cpp
+        qml.qrc
+    )
 
     # Allow main.cpp to include internal pipeline stage headers for DI wiring
     target_include_directories(seat_aoi PRIVATE ${CMAKE_SOURCE_DIR}/src)
