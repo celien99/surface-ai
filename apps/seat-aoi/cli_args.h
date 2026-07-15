@@ -7,6 +7,7 @@ struct CliArgs {
     std::string image_dir;
     std::string output_dir = "/tmp/surface-ai/results/";
     std::string coreset_path;           // --coreset: load pre-built coreset for detection
+    std::string coreset_manifest_path;  // --coreset-manifest: multi-position YAML registry
     std::string dataset_path;            // --dataset: YAML manifest for coreset building
     std::string coreset_output_path;     // --coreset-output: where to save the built coreset
     std::string coreset_algo = "greedy"; // --coreset-algo: greedy | uniform

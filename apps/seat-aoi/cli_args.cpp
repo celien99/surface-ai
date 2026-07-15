@@ -15,6 +15,8 @@ auto ParseArgs(int argc, char* argv[]) -> CliArgs {
             args.headless = true;
         } else if (arg == "--coreset" && i + 1 < argc) {
             args.coreset_path = argv[++i];
+        } else if (arg == "--coreset-manifest" && i + 1 < argc) {
+            args.coreset_manifest_path = argv[++i];
         } else if (arg == "--dataset" && i + 1 < argc) {
             args.dataset_path = argv[++i];
         } else if (arg == "--coreset-output" && i + 1 < argc) {
