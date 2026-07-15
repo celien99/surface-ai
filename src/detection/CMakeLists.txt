@@ -23,6 +23,7 @@ if(NOT OpenMP_FOUND)
 endif()
 
 find_package(faiss CONFIG REQUIRED)
+find_package(yaml-cpp CONFIG REQUIRED)
 
 # 主检测库源文件
 set(SAI_DETECTION_SOURCES
@@ -32,6 +33,8 @@ set(SAI_DETECTION_SOURCES
     post_process_utils.cpp
     specular_filter.cpp
     pca_detector.cpp
+    normality_profile.cpp
+    normality_scorer.cpp
 )
 
 # CUDA 门控：仅在 CUDAToolkit 可用时编译 GPU FeatureBank
@@ -45,7 +48,7 @@ add_library(sai_detection STATIC ${SAI_DETECTION_SOURCES})
 add_library(sai::detection ALIAS sai_detection)
 
 target_include_directories(sai_detection PUBLIC ${CMAKE_SOURCE_DIR}/include)
-target_link_libraries(sai_detection PUBLIC sai::core sai::embedding faiss OpenMP::OpenMP_CXX)
+target_link_libraries(sai_detection PUBLIC sai::core sai::embedding faiss OpenMP::OpenMP_CXX yaml-cpp::yaml-cpp)
 if(CUDAToolkit_FOUND)
     target_link_libraries(sai_detection PUBLIC CUDA::cudart)
     target_compile_definitions(sai_detection PUBLIC SAI_CUDA_ENABLED)
