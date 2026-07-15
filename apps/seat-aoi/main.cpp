@@ -38,6 +38,10 @@
 #if defined(__linux__)
 #include <sai/inference/clip_adapter.h>
 #include <sai/inference/sam2_segmenter.h>
+#include <sai/memory/gpu_pool.h>
+#include <sai/memory/arena_allocator.h>
+#include <sai/image/gpu_image.h>
+#include <cuda_runtime.h>
 #endif
 #include <sai/detection/patch_core.h>
 #include <sai/detection/feature_bank.h>
@@ -263,6 +267,26 @@ auto BuildCoreset(const CliArgs& cli) -> int {
     // Extract embeddings from each normal image
     std::vector<embedding::Embedding> all_embeddings;
     int processed = 0;
+
+    // GPU upload path: SurfaceImage → GpuImage for DINOv3/PatchEmbedder.
+    // Only available on Linux+CUDA; on macOS SimplePatchEmbedder accepts
+    // SurfaceImage directly.
+#if defined(__linux__)
+    sai::memory::ArenaAllocator arena(64 * 1024 * 1024);  // 64 MiB metadata
+    auto gpu_pool_result = sai::memory::GpuPool::Create(
+        sai::memory::MemoryPoolConfig{
+            .slab_size = kImageSize * kImageSize * 3,   // RGB8
+            .slab_count = 16,
+        },
+        arena);
+    if (!gpu_pool_result) {
+        std::cerr << "GpuPool creation failed: "
+                  << gpu_pool_result.error().message << "\n";
+        return 1;
+    }
+    auto& gpu_pool = **gpu_pool_result;
+#endif
+
     for (auto& path : image_files) {
         auto img_result = importer.ImportImage(path);
         if (!img_result) {
@@ -279,32 +303,78 @@ auto BuildCoreset(const CliArgs& cli) -> int {
             continue;
         }
 
-        auto* surf_img = dynamic_cast<image::SurfaceImage*>(preprocess_result->get());
-        if (surf_img == nullptr) {
-            // Wrap as SurfaceImage
-            auto meta = (*preprocess_result)->Meta();
-            const auto* data = (*preprocess_result)->Data();
-            auto size = (*preprocess_result)->SizeBytes();
+        // Wrap raw Image* as SurfaceImage
+        sai::image::SurfaceImage surface = [&]() -> sai::image::SurfaceImage {
+            auto* raw = preprocess_result->get();
+            if (auto* surf = dynamic_cast<image::SurfaceImage*>(raw)) {
+                auto s = std::move(*surf);
+                delete raw;  // release unique_ptr ownership
+                return s;
+            }
+            auto meta = raw->Meta();
+            const auto* data = raw->Data();
+            auto size = raw->SizeBytes();
             std::vector<std::uint8_t> buffer(data, data + size);
-            auto surface = image::SurfaceImage::FromOwnedBuffer(std::move(buffer), meta);
-            auto emb = embedder->Extract(surface);
-            if (!emb) {
-                std::cerr << "Embedding extraction failed for "
+            delete raw;
+            return sai::image::SurfaceImage::FromOwnedBuffer(
+                std::move(buffer), meta);
+        }();
+
+        // Extract embedding. On Linux+DINOv3: HtoD → infer → DtoH.
+        // On macOS+SimplePatchEmbedder: CPU SurfaceImage → Extract directly.
+        sai::Result<embedding::Embedding> emb = tl::make_unexpected(
+            ErrorInfo{ErrorCode::Inference_EngineExecutionFailed, "no path"});
+#if defined(__linux__)
+        {
+            // HtoD: upload SurfaceImage to GPU
+            auto gpu_img_result = image::GpuImage::FromPool(
+                gpu_pool, surface.Meta());
+            if (!gpu_img_result) {
+                std::cerr << "GpuImage allocation failed for "
                           << path.filename().string() << "\n";
                 continue;
             }
-            all_embeddings.push_back(std::move(*emb));
-        } else {
-            auto emb = embedder->Extract(*surf_img);
-            if (!emb) {
-                std::cerr << "Embedding extraction failed for "
+            auto gpu_img = std::move(*gpu_img_result);
+            auto cuda_err = cudaMemcpy(
+                gpu_img.Data(), surface.Data(), surface.SizeBytes(),
+                cudaMemcpyHostToDevice);
+            if (cuda_err != cudaSuccess) {
+                std::cerr << "cudaMemcpy HtoD failed for "
                           << path.filename().string() << "\n";
                 continue;
             }
-            all_embeddings.push_back(std::move(*emb));
+
+            // Run DINOv3 inference on GPU
+            emb = embedder->Extract(gpu_img);
+            if (emb && emb->IsOnGpu()) {
+                // DtoH: download patch features to CPU for FeatureBank
+                auto byte_size = emb->SizeBytes();
+                std::vector<float> cpu_data(emb->Meta().count * emb->Meta().dim);
+                cuda_err = cudaMemcpy(
+                    cpu_data.data(), emb->Data(), byte_size,
+                    cudaMemcpyDeviceToHost);
+                if (cuda_err != cudaSuccess) {
+                    std::cerr << "cudaMemcpy DtoH failed for "
+                              << path.filename().string() << "\n";
+                    continue;
+                }
+                emb = embedding::Embedding::FromCpu(
+                    std::move(cpu_data), emb->Meta());
+            }
+        }
+#else
+        emb = embedder->Extract(surface);
+#endif
+
+        if (!emb) {
+            std::cerr << "Embedding extraction failed for "
+                      << path.filename().string() << ": "
+                      << emb.error().message << "\n";
+            continue;
         }
 
         ++processed;
+        all_embeddings.push_back(std::move(*emb));
         std::cout << "[" << processed << "/" << image_files.size() << "] "
                   << path.filename().string() << " → "
                   << all_embeddings.back().Meta().count << " patches\n";
