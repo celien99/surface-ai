@@ -161,7 +161,7 @@ TEST_F(InferencePipelineTest, MockEngineToEmbedderConstruction) {
     ASSERT_TRUE(embedder.has_value());
     EXPECT_EQ(embedder->ModelName(), "DINOv3");
 
-    // Extract with CPU image on macOS: expect GPU guard rejection
+    // Extract with CPU image: expect GPU guard rejection
     auto img = sai::image::SurfaceImage::FromOwnedBuffer(
         std::vector<std::uint8_t>(kImageSize * kImageSize * 3, 128),
         sai::image::ImageMeta{.width = kImageSize,

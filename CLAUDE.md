@@ -31,11 +31,6 @@ cmake --preset linux          # Configure
 cmake --build --preset linux  # Build
 ctest --preset linux          # Run all 621 tests
 
-# ── macOS arm64 (Apple Silicon + Homebrew) ──
-cmake --preset default          # Configure (requires libomp from Homebrew)
-cmake --build --preset default  # Build
-ctest --preset default          # Run all tests
-
 # Run a single test suite by name pattern
 ctest --preset linux -R "logger"
 
@@ -53,7 +48,7 @@ cmake --build --preset linux --target seat_aoi
 ./build/linux/apps/seat-aoi/seat_aoi --dataset-path ./samples/normal --coreset-output ./coreset.bin  # Coreset build + save
 ```
 
-The `default` CMake preset targets macOS arm64 (Homebrew libomp, Apple Clang). The `linux` preset targets Ubuntu 22.04 x64 (g++-12, system OpenMP, CUDA-gated code enabled). CUDA-gated code and Linux-gated code are excluded from macOS builds — they are written per frozen design but compile-verified only on the target platform. Each module's CMakeLists.txt gates compilation at the target level (no `#ifdef` shims).
+The `linux` CMake preset targets Ubuntu 22.04 x64 (g++-12, system OpenMP, CUDA-gated code enabled). CUDA-gated code is compiled only when the CUDA Toolkit is found. Each module's CMakeLists.txt gates compilation at the target level (no `#ifdef` shims).
 
 **Linux dev prerequisites (Ubuntu 22.04 x64 / WSL):**
 - `vcpkg` (manifest mode) + `VCPKG_ROOT` env var
@@ -61,10 +56,6 @@ The `default` CMake preset targets macOS arm64 (Homebrew libomp, Apple Clang). T
 - CUDA Toolkit 12.x (for TensorRT-gated code: `embedding`, `detection`, `seat_aoi`)
 - FAISS is built from a local overlay port at `vcpkg-overlays/faiss/`
 
-**macOS dev prerequisites (Apple Silicon):**
-- `vcpkg` (manifest mode) + `VCPKG_ROOT` env var
-- OpenMP via Homebrew: `brew install libomp`
-- FAISS from local overlay port at `vcpkg-overlays/faiss/`
 
 ## Repo structure
 

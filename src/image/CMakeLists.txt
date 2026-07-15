@@ -1,7 +1,7 @@
 # gpu_image.cpp 和 gpu_preprocess.cpp 包装真实的 CUDA Runtime API 调用
 # (cudaMalloc/cudaFree/cudaMemcpy)，仅用于目标平台 (Ubuntu x64 + NVIDIA GPU)。
-# 在没有 CUDA Toolkit 的宿主机 (如 macOS arm64 开发机) 上，这两个文件不在
-# 源文件列表中，不会被编译——见下方的 if(CUDAToolkit_FOUND) 门控逻辑。
+# 在没有 CUDA Toolkit 的宿主机上，这两个文件不在源文件列表中，不会被编译——
+# 见下方的 if(CUDAToolkit_FOUND) 门控逻辑。
 find_package(CUDAToolkit QUIET)
 
 set(SAI_IMAGE_SOURCES

@@ -1,8 +1,8 @@
 // gpu_image.cpp — GpuImage 实现（CUDA 门控，仅在 CUDAToolkit_FOUND 时编译）
 //
 // 本文件包装真实的 CUDA Runtime API 调用（cudaMalloc/cudaFree），用于目标平台
-// （Ubuntu x64 + NVIDIA GPU）。在没有 CUDA Toolkit 的宿主机（如 macOS arm64 开发机）
-// 上，此文件不在源文件列表中，不会被编译——见 src/image/CMakeLists.txt 的门控逻辑。
+// （Ubuntu x64 + NVIDIA GPU）。在没有 CUDA Toolkit 的宿主机上，此文件不在源文件
+// 列表中，不会被编译——见 src/image/CMakeLists.txt 的门控逻辑。
 
 #include <sai/image/gpu_image.h>
 

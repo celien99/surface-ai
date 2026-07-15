@@ -15,8 +15,7 @@ namespace sai::embedding {
 // this embedder operates on CPU-backed SurfaceImage and computes real, deterministic
 // feature vectors from per-patch statistics: raw pixel values, RGB histograms,
 // gradient magnitude/orientation histograms, color moments, LBP, and spatial
-// downsampling. This enables end-to-end testing and development on macOS arm64
-// without a GPU.
+// downsampling. This enables end-to-end testing and development without a GPU.
 //
 // The feature space is designed to be discriminative for surface defect detection:
 // different patches produce meaningfully different vectors, and similar patches

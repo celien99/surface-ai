@@ -1,8 +1,7 @@
 # tensorrt_engine.cpp / dino_v3_adapter.cpp / sam2_adapter.cpp / clip_adapter.cpp
 # 包含真实的 CUDA Runtime API 和 TensorRT API 调用，仅用于目标平台
-# (Ubuntu x64 + NVIDIA GPU)。在没有 CUDA Toolkit 的宿主机 (如 macOS arm64
-# 开发机) 上，这些文件不在源文件列表中，不会被编译——见下方的
-# if(CUDAToolkit_FOUND) 门控逻辑。
+# (Ubuntu x64 + NVIDIA GPU)。在没有 CUDA Toolkit 的宿主机上，这些文件不在
+# 源文件列表中，不会被编译——见下方的 if(CUDAToolkit_FOUND) 门控逻辑。
 find_package(tl-expected CONFIG REQUIRED)
 find_package(CUDAToolkit QUIET)
 

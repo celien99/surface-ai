@@ -1,6 +1,6 @@
 // tensorrt_engine.cpp — TensorRtEngine 实现（批次 3.1，CUDA 门控）
 // 该文件仅在目标平台（Ubuntu x64 + NVIDIA GPU + TensorRT SDK）上编译。
-// 可移植构建中此文件不在源文件列表中，因此 macOS 上不会触发编译错误。
+// 可移植构建中此文件不在源文件列表中，不会触发编译错误。
 
 #include <sai/inference/tensorrt_engine.h>
 

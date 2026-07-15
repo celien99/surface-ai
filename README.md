@@ -199,19 +199,19 @@ export VCPKG_ROOT=~/vcpkg
 
 ```bash
 # 配置（使用 vcpkg 清单模式）
-cmake --preset default
+cmake --preset linux
 
 # 构建
-cmake --build --preset default
+cmake --build --preset linux
 
 # 运行全部 621 个测试
-ctest --preset default
+ctest --preset linux
 
 # 按名称过滤测试
-ctest --preset default -R "tuning"
+ctest --preset linux -R "tuning"
 
 # 运行单个测试用例
-cd build/default && ctest -R "BayesianOptimizer.FindsMinimumOfQuadratic" --output-on-failure
+cd build/linux && ctest -R "BayesianOptimizer.FindsMinimumOfQuadratic" --output-on-failure
 ```
 
 ---

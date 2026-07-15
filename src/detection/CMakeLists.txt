@@ -1,26 +1,6 @@
 find_package(tl-expected CONFIG REQUIRED)
 
-# On macOS with Apple Clang, CMake's FindOpenMP cannot detect the correct flag
-# combination for Homebrew libomp. We create a synthetic imported target that
-# matches what FAISS exports (OpenMP::OpenMP_CXX).
-if(APPLE AND NOT OpenMP_FOUND)
-    set(OPENMP_INCLUDE_DIR "/opt/homebrew/opt/libomp/include")
-    set(OPENMP_LIBRARY "/opt/homebrew/opt/libomp/lib/libomp.dylib")
-    if(EXISTS "${OPENMP_LIBRARY}")
-        add_library(OpenMP::OpenMP_CXX SHARED IMPORTED)
-        set_target_properties(OpenMP::OpenMP_CXX PROPERTIES
-            IMPORTED_LOCATION "${OPENMP_LIBRARY}"
-            INTERFACE_INCLUDE_DIRECTORIES "${OPENMP_INCLUDE_DIR}"
-            INTERFACE_COMPILE_OPTIONS "-Xclang;-fopenmp"
-        )
-        set(OpenMP_FOUND TRUE)
-        message(STATUS "OpenMP: using synthetic target (Homebrew libomp)")
-    endif()
-endif()
-
-if(NOT OpenMP_FOUND)
-    find_package(OpenMP REQUIRED)
-endif()
+find_package(OpenMP REQUIRED)
 
 find_package(faiss CONFIG REQUIRED)
 find_package(yaml-cpp CONFIG REQUIRED)

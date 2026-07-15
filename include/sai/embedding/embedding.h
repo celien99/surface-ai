@@ -97,7 +97,7 @@ public:
     [[nodiscard]] auto IsOnGpu() const noexcept -> bool { return on_gpu_; }
 
     // 声明但不定义（CUDA 门控）——需要 GpuStreamQueue + PinnedPool 实现异步 DtoH 搬移。
-    // 定义位于 CUDA 门控的 .cpp 文件中，macOS 编译时不可用。
+    // 定义位于 CUDA 门控的 .cpp 文件中。
     [[nodiscard]] auto ToCpuAsync(sai::runtime::GpuStreamQueue& queue,
                                    sai::memory::PinnedPool& pinned,
                                    std::stop_token token) noexcept

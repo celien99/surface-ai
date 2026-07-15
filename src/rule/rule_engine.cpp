@@ -284,7 +284,7 @@ auto RuleEngine::DetectOverlaps() const -> std::vector<OverlapWarning> {
 }
 
 // ===========================================================================
-// EnableHotReload  —  Linux: inotify; macOS: no-op
+// EnableHotReload  —  Linux: inotify
 // ===========================================================================
 
 auto RuleEngine::EnableHotReload(std::filesystem::path /*path*/,
@@ -294,7 +294,7 @@ auto RuleEngine::EnableHotReload(std::filesystem::path /*path*/,
     //   on each event call LoadFromYAML(current_path_); on parse failure log
     //   and keep the previous rule set. Use stop_token to shut down the
     //   watch thread.
-    // On macOS this is intentionally a no-op — inotify is Linux-specific.
+    // On non-Linux platforms this is intentionally a no-op — inotify is Linux-specific.
     return {};
 }
 

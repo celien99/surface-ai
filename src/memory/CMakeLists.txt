@@ -1,9 +1,7 @@
 # GpuPool/PinnedPool (gpu_pool.cpp/pinned_pool.cpp) wrap real CUDA Runtime API
 # calls (cudaMalloc/cudaFree/cudaHostAlloc/cudaFreeHost) for the target
-# platform (Ubuntu x64 + NVIDIA GPU). There is no dev-machine fallback
-# implementation — on hosts without the CUDA Toolkit (e.g. this macOS arm64
-# dev machine), these two files are simply absent from the source list below
-# and are never compiled.
+# platform (Ubuntu x64 + NVIDIA GPU). Without the CUDA Toolkit these two files
+# are absent from the source list below and are never compiled.
 find_package(CUDAToolkit QUIET)
 
 set(SAI_MEMORY_SOURCES arena_allocator.cpp)

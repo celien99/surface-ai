@@ -1,10 +1,9 @@
 # gpu_stream_queue.cpp wraps real CUDA Runtime API calls (cudaStreamCreate/
 # cudaMemcpyAsync/cudaStreamAddCallback/cudaStreamDestroy) for the target
-# platform (Ubuntu x64 + NVIDIA GPU). There is no dev-machine fallback — on
-# hosts without the CUDA Toolkit (e.g. this macOS arm64 dev machine) this file
-# is simply absent from the source list below and is never compiled. It also
-# depends on batch 1.5's gated PinnedPool symbol, so sai::memory is only linked
-# when CUDA is present too.
+# platform (Ubuntu x64 + NVIDIA GPU). Without the CUDA Toolkit this file is
+# absent from the source list below and is never compiled. It also depends on
+# batch 1.5's gated PinnedPool symbol, so sai::memory is only linked when CUDA
+# is present too.
 find_package(Threads REQUIRED)
 find_package(CUDAToolkit QUIET)
 

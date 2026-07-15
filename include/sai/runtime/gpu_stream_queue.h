@@ -18,9 +18,8 @@
 // CUDA-gated: this header pulls in <cuda_runtime.h> and the translation unit
 // gpu_stream_queue.cpp is only compiled into sai_runtime when
 // find_package(CUDAToolkit) succeeds (see src/runtime/CMakeLists.txt). It is
-// not built, and not expected to build, on hosts without the CUDA Toolkit
-// (e.g. the macOS arm64 dev machine); nothing in the portable test suite
-// includes this header.
+// not built, and not expected to build, on hosts without the CUDA Toolkit;
+// nothing in the portable test suite includes this header.
 
 #include <atomic>
 #include <coroutine>

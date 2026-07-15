@@ -1,7 +1,7 @@
 // tensorrt_engine.h — TensorRT 推理引擎（批次 3.1，CUDA 门控）
 // 该头文件仅在目标平台（Ubuntu x64 + NVIDIA GPU）上可编译——它直接包含
 // <NvInfer.h> 以使用 nvinfer1::IRuntime/ICudaEngine/IExecutionContext 的
-// 完整类型。可移植头文件不会包含此文件，因此 macOS 构建不受影响。
+// 完整类型。非 CUDA 构建不会包含此文件。
 #pragma once
 
 #include <atomic>

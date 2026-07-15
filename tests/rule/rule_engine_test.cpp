@@ -218,7 +218,7 @@ rule_sets:
 }
 
 // ===========================================================================
-// EnableHotReload — no-op on macOS, just verify it doesn't error
+// EnableHotReload — no-op on non-Linux, just verify it doesn't error
 // ===========================================================================
 
 TEST(RuleEngineTest, EnableHotReload) {
@@ -226,7 +226,7 @@ TEST(RuleEngineTest, EnableHotReload) {
     std::stop_source source;
     auto result = engine.EnableHotReload("/tmp/nonexistent.yaml",
                                           source.get_token());
-    // Always succeeds on macOS (no-op)
+    // Always succeeds on non-Linux (no-op)
     EXPECT_TRUE(result.has_value());
 }
 

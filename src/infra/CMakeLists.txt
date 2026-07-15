@@ -7,10 +7,7 @@ add_library(sai_infra STATIC
     config_store.cpp
 )
 # config_store_inotify.cpp defines ConfigStore::EnableHotReload against the Linux
-# inotify API (<sys/inotify.h>) for the target platform (Ubuntu x64). It has no
-# portable stub or macOS fallback, so it is only compiled on Linux; on this macOS
-# arm64 dev host it is gated out entirely and EnableHotReload stays
-# declared-but-undefined (nothing in the portable subset ODR-uses it).
+# inotify API (<sys/inotify.h>) for the target platform (Ubuntu x64).
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_sources(sai_infra PRIVATE config_store_inotify.cpp)
 endif()

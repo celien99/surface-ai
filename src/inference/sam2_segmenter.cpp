@@ -30,8 +30,8 @@ auto Sam2Segmenter::Refine(
         // with the region's bounding box rendered as a binary mask.
         //
         // On non-CUDA platforms this stub returns an empty vector.
-        // The platform gate is at CMake level; on macOS this file is
-        // not compiled.
+        // The platform gate is at CMake level; on non-CUDA builds
+        // this file is not compiled.
 
         // Stub: skip on non-CUDA builds (CMakeLists.txt gate).
         (void)image;

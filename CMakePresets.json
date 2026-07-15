@@ -3,32 +3,13 @@
   "configurePresets": [
     {
       "name": "linux",
-      "displayName": "Linux (WSL / Ubuntu 22.04 x64)",
+      "displayName": "Linux (Ubuntu 22.04 x64)",
       "generator": "Unix Makefiles",
       "binaryDir": "${sourceDir}/build/linux",
       "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "VCPKG_OVERLAY_PORTS": "${sourceDir}/vcpkg-overlays"
-      }
-    },
-    {
-      "name": "default",
-      "displayName": "macOS arm64 (Homebrew)",
-      "generator": "Unix Makefiles",
-      "binaryDir": "${sourceDir}/build/default",
-      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
-      "environment": {
-        "OpenMP_ROOT": "/opt/homebrew/opt/libomp"
-      },
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "VCPKG_OVERLAY_PORTS": "${sourceDir}/vcpkg-overlays",
-        "OpenMP_ROOT": "/opt/homebrew/opt/libomp",
-        "OpenMP_CXX_FLAGS": "-Xclang -fopenmp",
-        "OpenMP_CXX_LIB_NAMES": "omp",
-        "OpenMP_C_LIB_NAMES": "omp",
-        "OpenMP_omp_LIBRARY": "/opt/homebrew/opt/libomp/lib/libomp.dylib"
       }
     }
   ],
@@ -37,11 +18,6 @@
       "name": "linux",
       "displayName": "Linux Debug",
       "configurePreset": "linux"
-    },
-    {
-      "name": "default",
-      "displayName": "macOS Debug",
-      "configurePreset": "default"
     }
   ],
   "testPresets": [
@@ -49,12 +25,6 @@
       "name": "linux",
       "displayName": "Linux Tests",
       "configurePreset": "linux",
-      "output": { "outputOnFailure": true }
-    },
-    {
-      "name": "default",
-      "displayName": "macOS Tests",
-      "configurePreset": "default",
       "output": { "outputOnFailure": true }
     }
   ]

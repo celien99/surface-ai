@@ -1,12 +1,11 @@
 // Linux-only definition of ConfigStore::EnableHotReload.
 //
 // This translation unit is gated to Linux by src/infra/CMakeLists.txt
-// (`if(CMAKE_SYSTEM_NAME STREQUAL "Linux")`) and is NEVER compiled on the macOS
-// arm64 dev host. It contains the real inotify implementation for the target
-// platform (Ubuntu x64); there is deliberately no macOS FSEvents/kqueue fallback
-// and no portable stub — on non-Linux builds EnableHotReload stays
-// declared-but-undefined, which is fine because nothing in the portable subset
-// ODR-uses it. See design doc 1.6-cross-cutting.md §3/§5/§8.
+// (`if(CMAKE_SYSTEM_NAME STREQUAL "Linux")`). It contains the real inotify
+// implementation for the target platform (Ubuntu x64); on non-Linux builds
+// EnableHotReload stays declared-but-undefined, which is fine because nothing
+// in the portable subset ODR-uses it.
+// See design doc 1.6-cross-cutting.md §3/§5/§8.
 #include <sai/infra/config_store.h>
 
 #include <array>
