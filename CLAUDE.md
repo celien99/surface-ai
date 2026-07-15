@@ -6,11 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Surface AI Framework: a from-scratch design for an industrial-grade C++20 framework for surface understanding / anomaly detection (AOI-style: PCB, glass, fabric, steel, automotive, etc.). The core principle is "everything is Surface" — the framework is never coupled to a specific product; product is metadata.
 
-As of 2026-07-14: All 7 milestones complete. 572 tests pass.
+As of 2026-07-15: All 7 milestones complete. 598 tests pass.
 
 - **Milestone 1** (foundation): Core / Runtime / Memory / Plugin / Infra — 6 design docs frozen, 84 tests pass
 - **Milestone 2** (acquisition + imaging + I/O): Device interfaces, image type system, preprocessing chains, import/export
-- **Milestone 3** (AI inference core): `inference` (IInferenceEngine, MockEngine, TensorRtEngine CUDA-gated, CLIP/DINOv3/SAM2 adapters, multi-layer feature aggregation), `embedding` (Embedding, PatchEmbedder, GlobalEmbedder, DimensionReducer/PCA, FeatureCache), `detection` (DetectionResult, PatchCore, FeatureBank/FAISS, PcaDetector, SpecularFilter, post_process_utils)
+- **Milestone 3** (AI inference core): `inference` (IInferenceEngine, MockEngine, TensorRtEngine CUDA-gated, CLIP/DINOv3/SAM2 adapters, multi-layer feature aggregation), `embedding` (Embedding, PatchEmbedder, GlobalEmbedder, DimensionReducer/PCA, FeatureCache), `detection` (DetectionResult, PatchCore, FeatureBank/FAISS, PcaDetector, SpecularFilter, CoresetEvolution, CoresetUpdater, MultiSignalConsensus, NoveltyFilter, NormalityScorer, post_process_utils)
 - **Milestone 4** (knowledge & retrieval): `knowledge` (KnowledgeRecord, KnowledgeGraph SQLite property graph, KnowledgeEvolution changelog, KnowledgeSnapshot SAVEPOINT-based, KnowledgeStore unified facade), `retrieval` (VectorPath FAISS TopK/Range/Hybrid, MetadataPath SQLite filtering, IScoreFusion/WeightedFusion/RRFFusion, HybridRetriever dual-path orchestration)
 
 - **Milestone 5** (inference decision): `rule` (RuleEngine, AST expression engine, YAML rule storage, FactBase/ConflictResolver), `reasoner` (IReasoner/DefaultReasoner, DecisionTree traversal, ScoreCalculator, TraceRecorder, EvidenceCollector)
@@ -38,6 +38,14 @@ ctest --preset default -R "logger"
 
 # Run a specific test case
 cd build/default && ctest -R "LoggerTest.SetLevelRoundTripsFilterDecision" --output-on-failure
+
+# Run a single test binary directly (faster iteration, supports --gtest_filter)
+cd build/default && ./tests/detection/sai_detection_test --gtest_filter="PatchCore*"
+
+# Build and run the Seat AOI reference app
+cmake --build --preset default --target seat_aoi
+./build/default/apps/seat-aoi/seat_aoi                                       # GUI mode (FakeCamera + QML)
+./build/default/apps/seat-aoi/seat_aoi --image-dir ./samples --output-dir ./results  # Batch mode
 ```
 
 The `default` CMake preset uses the vcpkg toolchain and targets Debug on macOS arm64. CUDA-gated code and Linux-gated code are excluded from the local build — they are written per frozen design but compile-verified only on the target platform (Ubuntu 22.04 x64 + NVIDIA GPU). Each module's CMakeLists.txt gates compilation at the target level (no `#ifdef` shims).
@@ -74,7 +82,7 @@ tests/                                             # GoogleTest suites, one dir 
 | `io` | `sai::io` | IImporter/BasicImporter (YAML metadata + PPM), IExporter/JsonExporter (JSON reports) |
 | `inference` | `sai::inference` | IInferenceEngine, MockEngine, TensorRtEngine (CUDA-gated), model adapters (CLIP, DINOv3, SAM2) |
 | `embedding` | `sai::embedding` | Embedding (double storage), IEmbedder/PatchEmbedder/GlobalEmbedder, DimensionReducer, FeatureCache |
-| `detection` | `sai::detection` | DetectionResult, IDetector/PatchCore, FeatureBank (FAISS) |
+| `detection` | `sai::detection` | DetectionResult, IDetector/PatchCore, FeatureBank (FAISS), PcaDetector, SpecularFilter, CoresetEvolution/CoresetUpdater, MultiSignalConsensus, NoveltyFilter/CandidateBuffer, NormalityProfile/NormalityScorer |
 | `knowledge` | `sai::knowledge` | KnowledgeRecord/FieldValue, KnowledgeGraph (SQLite property graph), KnowledgeEvolution (changelog), KnowledgeSnapshot (SAVEPOINT-based), KnowledgeStore (unified facade) |
 | `retrieval` | `sai::retrieval` | VectorPath (FAISS TopK/Range/Hybrid), MetadataPath (SQLite filtering), IScoreFusion/WeightedFusion/RRFFusion, HybridRetriever (dual-path orchestration) |
 | `rule` | `sai::rule` | RuleEngine (AST expression engine, YAML rule storage), FactBase/ConflictResolver, Lexer/Parser |
@@ -130,7 +138,7 @@ Decided in `docs/superpowers/specs/2026-07-07-surface-ai-framework-phased-plan-d
 - **Milestone 4** (knowledge & retrieval): COMPLETE. Knowledge graph (SQLite property graph), knowledge evolution, vector-path retrieval (FAISS), metadata-path retrieval (SQLite), hybrid retrieval.
 - **Milestone 5** (inference decision): COMPLETE. Rule engine (AST expression, YAML rules, FactBase/ConflictResolver), reasoner (DecisionTree, ScoreCalculator, TraceRecorder, EvidenceCollector).
 - **Milestone 6** (orchestration & scheduling): COMPLETE. Pipeline (LoadFromYAML/Start/Submit/Drain/Stop), PipelineBuilder, StageFactory, StageQueue, Scheduler.
-- **Milestone 7** (visualization & application): COMPLETE. ViewModels (PipelineViewModel, InspectionViewModel, FrameProvider, ConfigViewModel, DashboardViewModel), QML 4-screen industrial dark UI, Seat AOI reference app. 572 tests pass.
+- **Milestone 7** (visualization & application): COMPLETE. ViewModels (PipelineViewModel, InspectionViewModel, FrameProvider, ConfigViewModel, DashboardViewModel), QML 4-screen industrial dark UI, Seat AOI reference app. 598 tests pass.
 
 Within milestone 1, batch execution order deviates from the numeric order: 1.1 -> 1.2 -> 1.3 -> **1.5 -> 1.4** -> 1.6, because Runtime (1.4)'s GPU stream queue depends on Memory (1.5)'s `GpuPool`/`PinnedPool`, so Memory was pulled forward. Don't "fix" this back to numeric order.
 
