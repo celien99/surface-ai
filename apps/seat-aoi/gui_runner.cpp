@@ -10,6 +10,7 @@
 #include <QQmlContext>
 
 #include "app_builder.h"
+#include "evolution_offer.h"
 
 #include <sai/device/fake_camera.h>
 #include <sai/image/raw_image.h>
@@ -60,49 +61,19 @@ auto RunGui(int argc, char* argv[], AssembledApp& app) -> int {
                 dashboard_vm->AppendFrameSummary(std::move(summary));
 
                 // Single-position evolution
-                if (app.evolution.has_value() && app.evolution->IsRunning()) {
-                    const auto& ctx = app.patch_core->LastContext();
-                    if (!ctx.knn_distances.empty()) {
-                        app.evolution->AssessAndOffer(
-                            ctx.knn_distances.data(),
-                            ctx.knn_distances.size() / ctx.k_nearest,
-                            ctx.k_nearest,
-                            ctx.embedding_data.data(),
-                            ctx.grid_h,
-                            ctx.grid_w,
-                            ctx.dim,
-                            ctx.detection_result,
-                            result.triggered_rules.size(),
-                            result.verdict,
-                            ctx.effective_threshold,
-                            ctx.pca_image_score,
-                            ctx.pca_self_query_p95);
-                    }
+                if (app.evolution.has_value()) {
+                    OfferToEvolution(*app.evolution, app.patch_core->LastContext(),
+                                    result);
                 }
                 // Multi-position evolution
                 if (!app.evolutions.empty()) {
                     AssembledApp::BankKey key{result.surface_id, result.position_id};
                     auto eit = app.evolutions.find(key);
-                    if (eit != app.evolutions.end() && eit->second.IsRunning()) {
+                    if (eit != app.evolutions.end()) {
                         auto pit = app.patch_cores.find(key);
                         if (pit != app.patch_cores.end()) {
-                            const auto& ctx = pit->second->LastContext();
-                            if (!ctx.knn_distances.empty()) {
-                                eit->second.AssessAndOffer(
-                                    ctx.knn_distances.data(),
-                                    ctx.knn_distances.size() / ctx.k_nearest,
-                                    ctx.k_nearest,
-                                    ctx.embedding_data.data(),
-                                    ctx.grid_h,
-                                    ctx.grid_w,
-                                    ctx.dim,
-                                    ctx.detection_result,
-                                    result.triggered_rules.size(),
-                                    result.verdict,
-                                    ctx.effective_threshold,
-                                    ctx.pca_image_score,
-                                    ctx.pca_self_query_p95);
-                            }
+                            OfferToEvolution(eit->second, pit->second->LastContext(),
+                                            result);
                         }
                     }
                 }

@@ -11,6 +11,8 @@
 #include "app_builder.h"
 #include "cli_args.h"
 
+#include <nlohmann/json.hpp>
+
 #include <sai/io/importer.h>
 #include <sai/image/raw_image.h>
 #include <sai/reasoner/reasoner.h>
@@ -64,20 +66,11 @@ auto RunHeadless(const CliArgs& cli, AssembledApp& app) -> int {
             std::string verdict = "?";
             if (std::filesystem::exists(result_path)) {
                 std::ifstream ifs(result_path);
-                std::string line;
-                while (std::getline(ifs, line)) {
-                    auto pos = line.find("\"verdict\"");
-                    if (pos != std::string::npos) {
-                        pos = line.find(':', pos);
-                        if (pos != std::string::npos) {
-                            auto start = line.find('"', pos);
-                            auto end = line.find('"', start + 1);
-                            if (start != std::string::npos && end != std::string::npos) {
-                                verdict = line.substr(start + 1, end - start - 1);
-                            }
-                        }
-                        break;
-                    }
+                try {
+                    auto j = nlohmann::json::parse(ifs);
+                    verdict = j.value("verdict", "?");
+                } catch (const nlohmann::json::exception& e) {
+                    std::cerr << "JSON parse error: " << e.what() << "\n";
                 }
             }
 

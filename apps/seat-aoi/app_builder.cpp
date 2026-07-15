@@ -12,6 +12,7 @@
 
 #include "app_config.h"
 #include "cli_args.h"
+#include "evolution_offer.h"
 #include "knowledge_seed.h"
 #include "tuning_wiring.h"
 
@@ -69,6 +70,14 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     // =========================================================================
     // 2. Inference / embedding setup — TensorRT + DINOv3 (1024-dim)
     // =========================================================================
+
+    // Validate required engine files exist (fail fast with clear message)
+    if (!std::filesystem::exists(kDinoV3Engine)) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Core_ConstructionFailed,
+            "DINOv3 engine not found: " + std::string(kDinoV3Engine)});
+    }
+
     auto infer_engine = std::make_shared<inference::TensorRtEngine>(/*device_ordinal=*/0);
     std::cout << "Inference: TensorRtEngine (GPU)\n";
 
@@ -99,29 +108,34 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     {
         auto global_cfg = pipeline_yaml["pipeline"]["stages"][2]["config"]["global_model"];
         if (global_cfg.IsDefined() && global_cfg["enabled"].as<bool>(false)) {
-            auto clip_engine = std::make_shared<inference::TensorRtEngine>(
-                /*device_ordinal=*/0);
-            inference::ClipConfig clip_cfg;
-            clip_cfg.engine_path = kClipEngine;
-            clip_cfg.image_size = 224;
-            clip_cfg.embed_dim = 512;
-
-            auto clip_adapter = inference::ClipAdapter::Create(
-                *clip_engine, clip_cfg);
-            if (clip_adapter) {
-                auto global_emb = embedding::GlobalEmbedder::Create(
-                    std::move(*clip_adapter));
-                if (global_emb) {
-                    global_embedder = std::make_shared<embedding::GlobalEmbedder>(
-                        std::move(*global_emb));
-                    std::cout << "GlobalEmbedder: CLIP (enabled)\n";
-                } else {
-                    std::cerr << "Warning: GlobalEmbedder creation failed: "
-                              << global_emb.error().message << "\n";
-                }
+            if (!std::filesystem::exists(kClipEngine)) {
+                std::cerr << "Warning: CLIP engine not found at "
+                          << kClipEngine << " — skipping global embedder\n";
             } else {
-                std::cerr << "Warning: ClipAdapter creation failed: "
-                          << clip_adapter.error().message << "\n";
+                auto clip_engine = std::make_shared<inference::TensorRtEngine>(
+                    /*device_ordinal=*/0);
+                inference::ClipConfig clip_cfg;
+                clip_cfg.engine_path = kClipEngine;
+                clip_cfg.image_size = 224;
+                clip_cfg.embed_dim = 512;
+
+                auto clip_adapter = inference::ClipAdapter::Create(
+                    *clip_engine, clip_cfg);
+                if (clip_adapter) {
+                    auto global_emb = embedding::GlobalEmbedder::Create(
+                        std::move(*clip_adapter));
+                    if (global_emb) {
+                        global_embedder = std::make_shared<embedding::GlobalEmbedder>(
+                            std::move(*global_emb));
+                        std::cout << "GlobalEmbedder: CLIP (enabled)\n";
+                    } else {
+                        std::cerr << "Warning: GlobalEmbedder creation failed: "
+                                  << global_emb.error().message << "\n";
+                    }
+                } else {
+                    std::cerr << "Warning: ClipAdapter creation failed: "
+                              << clip_adapter.error().message << "\n";
+                }
             }
         }
     }
@@ -288,27 +302,32 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     {
         auto sam2_cfg = pipeline_yaml["pipeline"]["stages"][5]["config"]["sam2"];
         if (sam2_cfg.IsDefined() && sam2_cfg["enabled"].as<bool>(false)) {
-            auto sam2_engine = std::make_shared<inference::TensorRtEngine>(
-                /*device_ordinal=*/0);
-            inference::Sam2Config s2_cfg;
-            s2_cfg.engine_path = kSam2Engine;
-            s2_cfg.image_size = kImageSize;
-
-            auto sam2_adapter = inference::Sam2Adapter::Create(
-                *sam2_engine, s2_cfg);
-            if (sam2_adapter) {
-                auto seg_result = inference::Sam2Segmenter::Create(
-                    std::move(*sam2_adapter));
-                if (seg_result) {
-                    sam2_segmenter =
-                        std::make_shared<inference::Sam2Segmenter>(
-                            std::move(*seg_result));
-                    std::cout << "Sam2Segmenter: enabled\n";
-                }
+            if (!std::filesystem::exists(kSam2Engine)) {
+                std::cerr << "Warning: SAM2 engine not found at "
+                          << kSam2Engine << " — skipping segmenter\n";
             } else {
-                std::cerr << "Warning: Sam2Adapter creation failed: "
-                          << sam2_adapter.error().message << "\n";
-            }
+                auto sam2_engine = std::make_shared<inference::TensorRtEngine>(
+                    /*device_ordinal=*/0);
+                inference::Sam2Config s2_cfg;
+                s2_cfg.engine_path = kSam2Engine;
+                s2_cfg.image_size = kImageSize;
+
+                auto sam2_adapter = inference::Sam2Adapter::Create(
+                    *sam2_engine, s2_cfg);
+                if (sam2_adapter) {
+                    auto seg_result = inference::Sam2Segmenter::Create(
+                        std::move(*sam2_adapter));
+                    if (seg_result) {
+                        sam2_segmenter =
+                            std::make_shared<inference::Sam2Segmenter>(
+                                std::move(*seg_result));
+                        std::cout << "Sam2Segmenter: enabled\n";
+                    }
+                } else {
+                    std::cerr << "Warning: Sam2Adapter creation failed: "
+                              << sam2_adapter.error().message << "\n";
+                }
+            }  // file check else
         }
     }
 
@@ -408,49 +427,18 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
             (int fid, const reasoner::ReasoningResult& result) {
                 (void)fid;
                 // Single-position evolution
-                if (evo.has_value() && evo->IsRunning()) {
-                    const auto& ctx = patch_core->LastContext();
-                    if (!ctx.knn_distances.empty()) {
-                        evo->AssessAndOffer(
-                            ctx.knn_distances.data(),
-                            ctx.knn_distances.size() / ctx.k_nearest,
-                            ctx.k_nearest,
-                            ctx.embedding_data.data(),
-                            ctx.grid_h,
-                            ctx.grid_w,
-                            ctx.dim,
-                            ctx.detection_result,
-                            result.triggered_rules.size(),
-                            result.verdict,
-                            ctx.effective_threshold,
-                            ctx.pca_image_score,
-                            ctx.pca_self_query_p95);
-                    }
+                if (evo.has_value()) {
+                    OfferToEvolution(*evo, patch_core->LastContext(), result);
                 }
                 // Multi-position evolution
                 if (!evos.empty()) {
                     BankKey key{result.surface_id, result.position_id};
                     auto eit = evos.find(key);
-                    if (eit != evos.end() && eit->second.IsRunning()) {
+                    if (eit != evos.end()) {
                         auto pit = pcs.find(key);
                         if (pit != pcs.end()) {
-                            const auto& ctx = pit->second->LastContext();
-                            if (!ctx.knn_distances.empty()) {
-                                eit->second.AssessAndOffer(
-                                    ctx.knn_distances.data(),
-                                    ctx.knn_distances.size() / ctx.k_nearest,
-                                    ctx.k_nearest,
-                                    ctx.embedding_data.data(),
-                                    ctx.grid_h,
-                                    ctx.grid_w,
-                                    ctx.dim,
-                                    ctx.detection_result,
-                                    result.triggered_rules.size(),
-                                    result.verdict,
-                                    ctx.effective_threshold,
-                                    ctx.pca_image_score,
-                                    ctx.pca_self_query_p95);
-                            }
+                            OfferToEvolution(eit->second, pit->second->LastContext(),
+                                             result);
                         }
                     }
                 }

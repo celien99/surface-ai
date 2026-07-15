@@ -33,9 +33,14 @@ struct AssembledApp {
     std::shared_ptr<sai::rule::RuleEngine> rule_engine;
     std::shared_ptr<sai::io::JsonExporter> exporter;
 
-    // ── Knowledge ──
+    // ── Knowledge (kg/evolution are non-owning aliases into knowledge_store) ──
+    // WARNING: knowledge_store MUST be declared before kg/kg_evolution in this
+    // struct so it is destroyed last. Pipeline stages hold shared_ptr copies of
+    // kg/kg_evolution — if knowledge_store is destroyed first, those become dangling.
     std::unique_ptr<sai::knowledge::KnowledgeStore> knowledge_store;
+    // No-op deleter — ownership lives in KnowledgeStore::Graph()
     std::shared_ptr<sai::knowledge::KnowledgeGraph> kg;
+    // No-op deleter — ownership lives in KnowledgeStore::Evolution()
     std::shared_ptr<sai::knowledge::KnowledgeEvolution> kg_evolution;
 
     // ── Optional components ──
@@ -43,6 +48,7 @@ struct AssembledApp {
     std::shared_ptr<sai::inference::Sam2Segmenter> sam2_segmenter;
     std::shared_ptr<sai::reasoner::IReasoner> reasoner;
     std::shared_ptr<sai::detection::FeatureBank> feature_bank;
+    // VectorPath wraps feature_bank's data by reference — keep feature_bank alive.
     std::shared_ptr<sai::retrieval::VectorPath> vector_path;
 
     std::optional<sai::detection::CoresetEvolution> evolution;

@@ -1,6 +1,7 @@
 # seat_aoi: Linux + GPU only (CUDA/TensorRT required)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CUDAToolkit_FOUND)
     find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Charts)
+    find_package(nlohmann_json CONFIG REQUIRED)
 
     add_executable(seat_aoi
         main.cpp
@@ -37,5 +38,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CUDAToolkit_FOUND)
         sai::memory
         sai::plugin
         sai::runtime
+        nlohmann_json::nlohmann_json
     )
 endif()

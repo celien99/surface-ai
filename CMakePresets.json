@@ -2,7 +2,19 @@
   "version": 3,
   "configurePresets": [
     {
+      "name": "linux",
+      "displayName": "Linux (WSL / Ubuntu 22.04 x64)",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/linux",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "VCPKG_OVERLAY_PORTS": "${sourceDir}/vcpkg-overlays"
+      }
+    },
+    {
       "name": "default",
+      "displayName": "macOS arm64 (Homebrew)",
       "generator": "Unix Makefiles",
       "binaryDir": "${sourceDir}/build/default",
       "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
@@ -22,13 +34,26 @@
   ],
   "buildPresets": [
     {
+      "name": "linux",
+      "displayName": "Linux Debug",
+      "configurePreset": "linux"
+    },
+    {
       "name": "default",
+      "displayName": "macOS Debug",
       "configurePreset": "default"
     }
   ],
   "testPresets": [
     {
+      "name": "linux",
+      "displayName": "Linux Tests",
+      "configurePreset": "linux",
+      "output": { "outputOnFailure": true }
+    },
+    {
       "name": "default",
+      "displayName": "macOS Tests",
       "configurePreset": "default",
       "output": { "outputOnFailure": true }
     }
