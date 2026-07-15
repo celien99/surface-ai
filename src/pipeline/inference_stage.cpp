@@ -24,22 +24,32 @@ auto InferenceStage::OnStop(Context&) -> Result<void> { return {}; }
 
 auto InferenceStage::Process(StageInput input) -> Result<StageOutput> {
     if (auto* img = std::get_if<sai::image::SurfaceImage>(&input)) {
-        // Prefer IEmbedder path (CPU SimplePatchEmbedder or GPU PatchEmbedder).
-        if (!stub_ && embedder_) {
-            auto result = embedder_->Extract(*img);
-            if (!result) return tl::make_unexpected(result.error());
-            return StageOutput(std::move(*result));
+        // Primary: Patch embedder (DINOv3 → patch features for PatchCore)
+        sai::embedding::Embedding embedding = [&]() -> sai::embedding::Embedding {
+            if (!stub_ && embedder_) {
+                auto result = embedder_->Extract(*img);
+                if (result) return std::move(*result);
+            }
+            return sai::embedding::Embedding::FromCpu(
+                std::vector<float>{}, sai::embedding::EmbeddingMeta{});
+        }();
+
+        // Secondary: Global embedder (CLIP → global features for retrieval)
+        if (!stub_ && global_embedder_) {
+            auto global_result = global_embedder_->Extract(*img);
+            if (global_result) {
+                const auto& global_meta = global_result->Meta();
+                auto count = global_meta.count;
+                auto dim = global_meta.dim;
+                if (count > 0 && dim > 0) {
+                    const float* src = global_result->Data();
+                    std::vector<float> features(src, src + count * dim);
+                    embedding.SetGlobalFeatures(std::move(features));
+                }
+            }
         }
-        // Fallback: raw IInferenceEngine path (GPU TensorRtEngine without adapter).
-        if (!stub_ && engine_) {
-            auto result = engine_->Infer();
-            if (!result) return tl::make_unexpected(result.error());
-        }
-        // Output Embedding for downstream DetectStage.
-        // Real adapter (CLIP/DINOv3/SAM2) or SimplePatchEmbedder populates this
-        // with features extracted from the SurfaceImage.
-        return StageOutput(sai::embedding::Embedding::FromCpu(
-            std::vector<float>{}, sai::embedding::EmbeddingMeta{}));
+
+        return StageOutput(std::move(embedding));
     }
     return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_StageTypeMismatch,
         "Inference expects SurfaceImage input"});

@@ -78,10 +78,14 @@ public:
     auto SetEmbedder(std::shared_ptr<sai::embedding::IEmbedder> emb) -> void {
         embedder_ = std::move(emb); stub_ = false;
     }
+    auto SetGlobalEmbedder(std::shared_ptr<sai::embedding::IEmbedder> emb) -> void {
+        global_embedder_ = std::move(emb); stub_ = false;
+    }
 private:
     std::string id_;
     std::shared_ptr<sai::inference::IInferenceEngine> engine_;
     std::shared_ptr<sai::embedding::IEmbedder> embedder_;
+    std::shared_ptr<sai::embedding::IEmbedder> global_embedder_;
     std::string model_name_;
     bool stub_ = true;
 };
