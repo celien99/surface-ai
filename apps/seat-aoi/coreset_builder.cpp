@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -20,6 +21,7 @@
 #include <sai/embedding/patch_embedder.h>
 #include <sai/embedding/embedding.h>
 #include <sai/detection/feature_bank.h>
+#include <sai/io/coreset_manifest.h>
 #include <sai/memory/gpu_pool.h>
 #include <sai/memory/arena_allocator.h>
 #include <cuda_runtime.h>
@@ -77,10 +79,6 @@ auto BuildCoreset(const CliArgs& cli) -> int {
         image::MakeResize(kImageSize, kImageSize)
     });
 
-    // Extract embeddings from each normal image
-    std::vector<embedding::Embedding> all_embeddings;
-    int processed = 0;
-
     // GPU upload: SurfaceImage → GpuImage → DINOv3 → DtoH
     sai::memory::ArenaAllocator arena(64 * 1024 * 1024);  // 64 MiB metadata
     auto gpu_pool_result = sai::memory::GpuPool::Create(
@@ -95,6 +93,19 @@ auto BuildCoreset(const CliArgs& cli) -> int {
         return 1;
     }
     auto& gpu_pool = **gpu_pool_result;
+
+    // Group entries by position_id for per-position coreset building
+    std::map<std::uint16_t, std::vector<decltype(entries)::value_type>> pos_entries;
+    std::string surface_id;
+    for (auto& e : entries) {
+        pos_entries[e.position_id].push_back(e);
+        if (surface_id.empty()) surface_id = e.surface_id;
+    }
+    std::cout << "Positions: " << pos_entries.size() << "\n";
+
+    // Group embeddings by position_id
+    std::map<std::uint16_t, std::vector<embedding::Embedding>> pos_embeddings;
+    int processed = 0;
 
     for (auto& entry : entries) {
         auto img_result = importer.ImportImage(entry.path);
@@ -183,59 +194,79 @@ auto BuildCoreset(const CliArgs& cli) -> int {
         }
 
         ++processed;
-        all_embeddings.push_back(std::move(*emb));
+        pos_embeddings[entry.position_id].push_back(std::move(*emb));
         std::cout << "[" << processed << "/" << entries.size() << "] "
                   << entry.path.filename().string() << " → "
-                  << all_embeddings.back().Meta().count << " patches\n";
+                  << pos_embeddings[entry.position_id].back().Meta().count << " patches\n";
     }
 
-    if (all_embeddings.empty()) {
-        std::cerr << "No embeddings extracted — coreset build failed\n";
-        return 1;
-    }
-
-    // Build FeatureBank from all embeddings
-    std::vector<const embedding::Embedding*> emb_ptrs;
-    emb_ptrs.reserve(all_embeddings.size());
-    for (auto& e : all_embeddings) emb_ptrs.push_back(&e);
-
-    Result<detection::FeatureBank> bank_result = tl::make_unexpected(ErrorInfo{
-        ErrorCode::Detection_FeatureBankLoadFailed,
-        "No algorithm selected"});
-
+    // Build per-position FeatureBanks and manifest
     bool use_greedy = (cli.coreset_algo == "greedy");
-    std::cout << "Coreset algorithm: " << (use_greedy ? "greedy (furthest-point sampling)" : "uniform")
-              << "\nMax samples: " << cli.coreset_max_samples << "\n";
+    std::cout << "\nCoreset algorithm: " << (use_greedy ? "greedy (furthest-point sampling)" : "uniform")
+              << "\nMax samples: " << cli.coreset_max_samples << "\n\n";
 
-    if (use_greedy) {
-        bank_result = detection::FeatureBank::BuildWithGreedyCoreset(
-            emb_ptrs, kEmbedDim, cli.coreset_max_samples);
-    } else {
-        bank_result = detection::FeatureBank::BuildFromEmbeddings(
-            emb_ptrs, kEmbedDim, cli.coreset_max_samples);
+    auto output_dir = std::filesystem::path(cli.coreset_output_path);
+    io::CoresetManifest manifest;
+    manifest.surface_id = surface_id;
+
+    for (auto& [pid, embeddings] : pos_embeddings) {
+        if (embeddings.empty()) {
+            std::cerr << "Position " << pid << ": no embeddings — skipped\n";
+            continue;
+        }
+
+        std::vector<const embedding::Embedding*> emb_ptrs;
+        emb_ptrs.reserve(embeddings.size());
+        for (auto& e : embeddings) emb_ptrs.push_back(&e);
+
+        Result<detection::FeatureBank> bank_result = tl::make_unexpected(ErrorInfo{
+            ErrorCode::Detection_FeatureBankLoadFailed, "No algorithm selected"});
+
+        if (use_greedy) {
+            bank_result = detection::FeatureBank::BuildWithGreedyCoreset(
+                emb_ptrs, kEmbedDim, cli.coreset_max_samples);
+        } else {
+            bank_result = detection::FeatureBank::BuildFromEmbeddings(
+                emb_ptrs, kEmbedDim, cli.coreset_max_samples);
+        }
+
+        if (!bank_result) {
+            std::cerr << "Position " << pid << ": FeatureBank build failed: "
+                      << bank_result.error().message << "\n";
+            return 1;
+        }
+
+        auto bank_path = output_dir / ("pos_" + std::to_string(pid) + ".bin");
+        auto save_result = bank_result->SaveToFile(bank_path);
+        if (!save_result) {
+            std::cerr << "Position " << pid << ": failed to save coreset: "
+                      << save_result.error().message << "\n";
+            return 1;
+        }
+
+        manifest.banks.push_back(io::CoresetBankEntry{
+            .position_id = pid,
+            .path = bank_path,
+        });
+
+        std::cout << "Position " << pid << ":\n"
+                  << "  Images:       " << embeddings.size() << "\n"
+                  << "  Coreset size: " << bank_result->NumSamples() << "\n"
+                  << "  Feature dim:  " << bank_result->Dim() << "\n"
+                  << "  Output:       " << bank_path.string() << "\n\n";
     }
 
-    if (!bank_result) {
-        std::cerr << "FeatureBank build failed: "
-                  << bank_result.error().message << "\n";
+    // Save manifest
+    auto manifest_path = output_dir / (surface_id + ".yaml");
+    auto manifest_save = io::SaveCoresetManifest(manifest_path, manifest);
+    if (!manifest_save) {
+        std::cerr << "Failed to save coreset manifest: "
+                  << manifest_save.error().message << "\n";
         return 1;
     }
 
-    // Save to file
-    auto save_result = bank_result->SaveToFile(cli.coreset_output_path);
-    if (!save_result) {
-        std::cerr << "Failed to save coreset: "
-                  << save_result.error().message << "\n";
-        return 1;
-    }
-
-    // Output coverage statistics for greedy mode
-    std::cout << "\nCoreset built successfully:\n"
-              << "  Algorithm:    " << cli.coreset_algo << "\n"
-              << "  Images:       " << processed << "\n"
-              << "  Total patches:" << all_embeddings.size() * kEmbedDim << "\n"
-              << "  Coreset size: " << bank_result->NumSamples() << "\n"
-              << "  Feature dim:  " << bank_result->Dim() << "\n"
-              << "  Output:       " << cli.coreset_output_path << "\n";
+    std::cout << "Coreset manifest: " << manifest_path.string() << "\n"
+              << "Total positions:  " << manifest.banks.size() << "\n"
+              << "Total images:     " << processed << "\n";
     return 0;
 }
