@@ -10,9 +10,9 @@
 namespace sai::image {
 
 enum class PixelFormat : std::uint16_t {
-    Mono8, Mono10, Mono12,
-    BayerRG8, BayerRG10, BayerRG12,
-    RGB8, BGR8,
+    Mono8, Mono10, Mono12, Mono16,
+    BayerRG8, BayerRG10, BayerRG12, BayerRG16,
+    RGB8, BGR8, RGB16,
     Undefined = 0xFFFF,
 };
 
@@ -21,17 +21,21 @@ struct ImageMeta {
     std::size_t height = 0;
     std::size_t channels = 0;
     PixelFormat pixel_format = PixelFormat::Undefined;
+    std::size_t bits_per_sample = 8;  // 8/10/12/16 — for correct clamping in preprocess
     std::chrono::nanoseconds timestamp{0};
     std::uint32_t frame_index = 0;
 };
 
-// 每采样字节数：8-bit 格式 1 字节，10/12-bit 打包到 2 字节，Undefined 保守取 1。
+// 每采样字节数：8-bit 格式 1 字节，10/12-bit 打包到 2 字节，16-bit 2 字节，Undefined 保守取 1。
 [[nodiscard]] constexpr auto BytesPerChannel(PixelFormat format) noexcept -> std::size_t {
     switch (format) {
         case PixelFormat::Mono10:
         case PixelFormat::Mono12:
         case PixelFormat::BayerRG10:
         case PixelFormat::BayerRG12:
+        case PixelFormat::Mono16:
+        case PixelFormat::BayerRG16:
+        case PixelFormat::RGB16:
             return 2;
         default:
             return 1;
