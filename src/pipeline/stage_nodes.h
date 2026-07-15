@@ -21,6 +21,7 @@
 #include <sai/knowledge/knowledge_graph.h>
 #include <sai/retrieval/vector_path.h>
 #include <sai/reasoner/reasoner.h>
+#include <sai/inference/sam2_segmenter.h>
 #include <sai/io/exporter.h>
 
 namespace sai::pipeline {
@@ -153,9 +154,13 @@ public:
     auto SetReasoner(std::shared_ptr<sai::reasoner::IReasoner> r) -> void {
         reasoner_ = std::move(r); stub_ = false;
     }
+    auto SetSam2Segmenter(std::shared_ptr<sai::inference::Sam2Segmenter> seg) -> void {
+        sam2_segmenter_ = std::move(seg);
+    }
 private:
     std::string id_;
     std::shared_ptr<sai::reasoner::IReasoner> reasoner_;
+    std::shared_ptr<sai::inference::Sam2Segmenter> sam2_segmenter_;
     std::string tree_file_;
     bool stub_ = true;
 };
