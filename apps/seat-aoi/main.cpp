@@ -167,28 +167,74 @@ auto SeedKnowledgeGraph(sai::knowledge::KnowledgeGraph& kg) -> void {
 }
 
 // Build coreset from normal (defect-free) sample images.
-// Uses SimplePatchEmbedder for portable CPU feature extraction.
+// Uses the same embedder as the inference pipeline:
+//   Linux + GPU: DINOv3 → PatchEmbedder (1024-dim)
+//   macOS (dev):  SimplePatchEmbedder (128-dim) as fallback
 auto BuildCoreset(const CliArgs& cli) -> int {
     using namespace sai;
 
     std::cout << "Building coreset from normal samples in: "
               << cli.build_coreset_dir << "\n";
 
-    io::BasicImporter importer;
-    embedding::SimplePatchEmbedderConfig sp_cfg;
-    sp_cfg.image_width = 1024;
-    sp_cfg.image_height = 1024;
-    sp_cfg.patch_size = 14;
-    sp_cfg.feature_dim = 128;
+#if defined(__linux__)
+    constexpr std::size_t kEmbedDim = 1024;
+    constexpr std::size_t kImageSize = 1024;
+    constexpr std::size_t kPatchSize = 14;
+#else
+    constexpr std::size_t kEmbedDim = 128;
+    constexpr std::size_t kImageSize = 1024;
+    constexpr std::size_t kPatchSize = 14;
+#endif
 
-    auto emb_result = embedding::SimplePatchEmbedder::Create(sp_cfg);
-    if (!emb_result) {
-        std::cerr << "Failed to create SimplePatchEmbedder: "
-                  << emb_result.error().message << "\n";
-        return 1;
+    io::BasicImporter importer;
+
+    // ── Create embedder (GPU path on Linux, CPU fallback on macOS) ──
+    std::unique_ptr<embedding::IEmbedder> embedder;
+#if defined(__linux__)
+    {
+        auto infer_engine = std::make_shared<inference::TensorRtEngine>(
+            /*device_ordinal=*/0);
+        inference::DinoV3Config dino_cfg;
+        dino_cfg.engine_path = "resources/models/dino_v3_vit_base.engine";
+        dino_cfg.image_size = kImageSize;
+        dino_cfg.patch_size = kPatchSize;
+        dino_cfg.embed_dim = kEmbedDim;
+
+        auto dino_adapter = inference::DinoV3Adapter::Create(
+            *infer_engine, dino_cfg);
+        if (dino_adapter) {
+            auto patch_emb = embedding::PatchEmbedder::Create(
+                std::move(*dino_adapter));
+            if (patch_emb) {
+                embedder = std::make_unique<embedding::PatchEmbedder>(
+                    std::move(*patch_emb));
+                std::cout << "Embedder: PatchEmbedder (DINOv3, dim="
+                          << kEmbedDim << ")\n";
+            }
+        }
+        if (!embedder) {
+            std::cerr << "DINOv3 embedder unavailable, falling back to CPU\n";
+        }
     }
-    auto embedder = std::make_unique<embedding::SimplePatchEmbedder>(
-        std::move(*emb_result));
+#endif
+    if (!embedder) {
+        embedding::SimplePatchEmbedderConfig sp_cfg;
+        sp_cfg.image_width = kImageSize;
+        sp_cfg.image_height = kImageSize;
+        sp_cfg.patch_size = kPatchSize;
+        sp_cfg.feature_dim = kEmbedDim;
+
+        auto sp_result = embedding::SimplePatchEmbedder::Create(sp_cfg);
+        if (!sp_result) {
+            std::cerr << "Failed to create embedder: "
+                      << sp_result.error().message << "\n";
+            return 1;
+        }
+        embedder = std::make_unique<embedding::SimplePatchEmbedder>(
+            std::move(*sp_result));
+        std::cout << "Embedder: SimplePatchEmbedder (CPU, dim="
+                  << kEmbedDim << ")\n";
+    }
 
     // Scan directory for image files
     std::vector<std::filesystem::path> image_files;
@@ -211,7 +257,7 @@ auto BuildCoreset(const CliArgs& cli) -> int {
 
     // Preprocess chain: resize to embedder's expected size
     auto preprocess_chain = image::Compose({
-        image::MakeResize(sp_cfg.image_width, sp_cfg.image_height)
+        image::MakeResize(kImageSize, kImageSize)
     });
 
     // Extract embeddings from each normal image
@@ -284,10 +330,10 @@ auto BuildCoreset(const CliArgs& cli) -> int {
 
     if (use_greedy) {
         bank_result = detection::FeatureBank::BuildWithGreedyCoreset(
-            emb_ptrs, sp_cfg.feature_dim, cli.coreset_max_samples);
+            emb_ptrs, kEmbedDim, cli.coreset_max_samples);
     } else {
         bank_result = detection::FeatureBank::BuildFromEmbeddings(
-            emb_ptrs, sp_cfg.feature_dim, cli.coreset_max_samples);
+            emb_ptrs, kEmbedDim, cli.coreset_max_samples);
     }
 
     if (!bank_result) {
@@ -308,7 +354,7 @@ auto BuildCoreset(const CliArgs& cli) -> int {
     std::cout << "\nCoreset built successfully:\n"
               << "  Algorithm:    " << cli.coreset_algo << "\n"
               << "  Images:       " << processed << "\n"
-              << "  Total patches:" << all_embeddings.size() * sp_cfg.feature_dim << "\n"
+              << "  Total patches:" << all_embeddings.size() * kEmbedDim << "\n"
               << "  Coreset size: " << bank_result->NumSamples() << "\n"
               << "  Feature dim:  " << bank_result->Dim() << "\n"
               << "  Output:       " << cli.coreset_output_path << "\n";
