@@ -3,6 +3,7 @@ find_package(yaml-cpp CONFIG REQUIRED)
 set(SAI_TUNING_SOURCES
     tuning_space.cpp
     tuning_objective.cpp
+    bayesian_optimizer.cpp
 )
 
 add_library(sai_tuning STATIC ${SAI_TUNING_SOURCES})
