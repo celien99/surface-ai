@@ -35,6 +35,10 @@
 #endif
 
 #include <sai/embedding/simple_patch_embedder.h>
+#if defined(__linux__)
+#include <sai/inference/clip_adapter.h>
+#include <sai/inference/sam2_segmenter.h>
+#endif
 #include <sai/detection/patch_core.h>
 #include <sai/detection/feature_bank.h>
 #include <sai/detection/coreset_evolution.h>
@@ -469,6 +473,42 @@ auto main(int argc, char* argv[]) -> int {
         std::cout << "Embedder: SimplePatchEmbedder (CPU, dim=" << kEmbedDim << ")\n";
     }
 
+    // Global embedder (CLIP) for cross-modal vector retrieval.
+    // Conditionally created when CLIP engine file and GPU are available.
+    std::shared_ptr<embedding::IEmbedder> global_embedder;
+#if defined(__linux__)
+    {
+        auto pipeline_yaml = YAML::LoadFile("resources/pipeline.yaml");
+        auto global_cfg = pipeline_yaml["pipeline"]["stages"][2]["config"]["global_model"];
+        if (global_cfg.IsDefined() && global_cfg["enabled"].as<bool>(false)) {
+            auto clip_engine = std::make_shared<inference::TensorRtEngine>(
+                /*device_ordinal=*/0);
+            inference::ClipConfig clip_cfg;
+            clip_cfg.engine_path = "resources/models/clip_vit_b32.engine";
+            clip_cfg.image_size = 224;
+            clip_cfg.embed_dim = 512;
+
+            auto clip_adapter = inference::ClipAdapter::Create(
+                *clip_engine, clip_cfg);
+            if (clip_adapter) {
+                auto global_emb = embedding::GlobalEmbedder::Create(
+                    std::move(*clip_adapter));
+                if (global_emb) {
+                    global_embedder = std::make_shared<embedding::GlobalEmbedder>(
+                        std::move(*global_emb));
+                    std::cout << "GlobalEmbedder: CLIP (enabled)\n";
+                } else {
+                    std::cerr << "Warning: GlobalEmbedder creation failed: "
+                              << global_emb.error().message << "\n";
+                }
+            } else {
+                std::cerr << "Warning: ClipAdapter creation failed: "
+                          << clip_adapter.error().message << "\n";
+            }
+        }
+    }
+#endif
+
     // =========================================================================
     // 3. Detection — PatchCore with matched embed_dim
     // =========================================================================
@@ -560,6 +600,40 @@ auto main(int argc, char* argv[]) -> int {
         &ks->Evolution(), [](auto*) {});
 
     // =========================================================================
+    // 5b. SAM2 segmenter (M5 placeholder — wired but not yet activated).
+    // =========================================================================
+    std::shared_ptr<inference::Sam2Segmenter> sam2_segmenter;
+#if defined(__linux__)
+    {
+        auto pipeline_yaml = YAML::LoadFile("resources/pipeline.yaml");
+        auto sam2_cfg = pipeline_yaml["pipeline"]["stages"][5]["config"]["sam2"];
+        if (sam2_cfg.IsDefined() && sam2_cfg["enabled"].as<bool>(false)) {
+            auto sam2_engine = std::make_shared<inference::TensorRtEngine>(
+                /*device_ordinal=*/0);
+            inference::Sam2Config s2_cfg;
+            s2_cfg.engine_path = "resources/models/sam2_vit_h.engine";
+            s2_cfg.image_size = 1024;
+
+            auto sam2_adapter = inference::Sam2Adapter::Create(
+                *sam2_engine, s2_cfg);
+            if (sam2_adapter) {
+                auto seg_result = inference::Sam2Segmenter::Create(
+                    std::move(*sam2_adapter));
+                if (seg_result) {
+                    sam2_segmenter =
+                        std::make_shared<inference::Sam2Segmenter>(
+                            std::move(*seg_result));
+                    std::cout << "Sam2Segmenter: enabled\n";
+                }
+            } else {
+                std::cerr << "Warning: Sam2Adapter creation failed: "
+                          << sam2_adapter.error().message << "\n";
+            }
+        }
+    }
+#endif
+
+    // =========================================================================
     // 6. Rule Engine + Reasoner — loaded from YAML
     // =========================================================================
     auto rule_engine = std::make_shared<rule::RuleEngine>();
@@ -594,8 +668,12 @@ auto main(int argc, char* argv[]) -> int {
     // =========================================================================
     // 9. Wire all business objects into Pipeline stages
     // =========================================================================
-    if (auto* s = pipeline->GetStage("inference"))
+    if (auto* s = pipeline->GetStage("inference")) {
         static_cast<pipeline::InferenceStage*>(s)->SetEmbedder(embedder);
+        if (global_embedder)
+            static_cast<pipeline::InferenceStage*>(s)->SetGlobalEmbedder(
+                global_embedder);
+    }
     if (auto* s = pipeline->GetStage("detect"))
         static_cast<pipeline::DetectStage*>(s)->SetDetector(patch_core);
     if (auto* s = pipeline->GetStage("rule_eval")) {
@@ -604,8 +682,12 @@ auto main(int argc, char* argv[]) -> int {
         rs->SetKnowledgeGraph(kg);
         if (vp) rs->SetVectorPath(vp);
     }
-    if (auto* s = pipeline->GetStage("reason"))
+    if (auto* s = pipeline->GetStage("reason")) {
         static_cast<pipeline::ReasonStage*>(s)->SetReasoner(reasoner);
+        if (sam2_segmenter)
+            static_cast<pipeline::ReasonStage*>(s)->SetSam2Segmenter(
+                sam2_segmenter);
+    }
     if (auto* s = pipeline->GetStage("export"))
         static_cast<pipeline::ExportStage*>(s)->SetExporter(exporter);
 
