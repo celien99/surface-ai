@@ -30,6 +30,11 @@ enum class TuningState : std::uint8_t {
     RolledBack,
 };
 
+struct MetricsSnapshot {
+    double ng_rate{0.0};
+    std::size_t sample_count{0};
+};
+
 struct SchedulerConfig {
     std::chrono::seconds interval{3600};
     std::chrono::seconds monitoring_window{300};
@@ -42,7 +47,7 @@ struct SchedulerConfig {
 class TuningScheduler final {
 public:
     using ParameterApplier = std::function<Result<void>(const std::vector<double>&)>;
-    using MetricsPoller = std::function<Result<double>()>;
+    using MetricsPoller = std::function<Result<MetricsSnapshot>()>;
 
     TuningScheduler(SchedulerConfig config,
                     std::unique_ptr<BayesianOptimizer> optimizer,
@@ -52,6 +57,8 @@ public:
 
     auto SetParameterApplier(ParameterApplier fn) -> void;
     auto SetMetricsPoller(MetricsPoller fn) -> void;
+
+    ~TuningScheduler() { Join(); }
 
     auto Start(std::stop_token token) -> void;
     auto Join() -> void;

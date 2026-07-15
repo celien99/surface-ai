@@ -1,6 +1,7 @@
 // tuning_scheduler.cpp — TuningScheduler implementation
 #include <sai/tuning/tuning_scheduler.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <sstream>
 #include <string>
@@ -110,7 +111,12 @@ auto TuningScheduler::MainLoop(std::stop_token token) -> void {
         auto best = std::move(*opt_result);
 
         // Check for significant improvement (≥5% cost reduction)
-        if (current_cost_ > 0.0 && best.cost >= current_cost_ * 0.95) {
+        if (current_cost_ <= 0.0) {
+            sai::infra::Logger::Get("tuning").Log(
+                sai::infra::LogLevel::Warning,
+                "TuningScheduler current_cost_={} <= 0 — applying new params without improvement check",
+                current_cost_);
+        } else if (best.cost >= current_cost_ * 0.95) {
             sai::infra::Logger::Get("tuning").Log(
                 sai::infra::LogLevel::Info,
                 "TuningScheduler no significant improvement: current={}, best={}",
@@ -168,8 +174,12 @@ auto TuningScheduler::MainLoop(std::stop_token token) -> void {
                     "TuningScheduler parameter apply failed: {}",
                     apply_result.error().message);
                 // Rollback to old params
-                if (apply_params_) {
-                    (void)apply_params_(old_params);
+                auto rollback_result = apply_params_(old_params);
+                if (!rollback_result.has_value()) {
+                    sai::infra::Logger::Get("tuning").Log(
+                        sai::infra::LogLevel::Error,
+                        "TuningScheduler rollback failed: {}",
+                        rollback_result.error().message);
                 }
                 state_.store(TuningState::RolledBack, std::memory_order_release);
                 continue;
@@ -187,17 +197,23 @@ auto TuningScheduler::MainLoop(std::stop_token token) -> void {
         while (std::chrono::steady_clock::now() < monitor_deadline) {
             if (token.stop_requested()) return;
 
-            // Poll at 30s intervals within the monitoring window
-            std::this_thread::sleep_for(std::chrono::seconds(30));
+            // Sleep capped to remaining time within the monitoring window
+            auto now = std::chrono::steady_clock::now();
+            auto remaining = std::chrono::duration_cast<std::chrono::seconds>(
+                monitor_deadline - now);
+            if (remaining.count() <= 0) break;
+            std::this_thread::sleep_for(std::min(std::chrono::seconds(30), remaining));
 
             if (poll_ng_rate_) {
                 auto ng_result = poll_ng_rate_();
                 if (ng_result.has_value()) {
-                    double ng_rate = *ng_result;
-                    if (ng_rate < config_.min_ng_rate ||
-                        ng_rate > config_.max_ng_rate) {
-                        should_rollback = true;
-                        break;
+                    auto& snapshot = *ng_result;
+                    if (snapshot.sample_count >= config_.min_samples_for_trigger) {
+                        if (snapshot.ng_rate < config_.min_ng_rate ||
+                            snapshot.ng_rate > config_.max_ng_rate) {
+                            should_rollback = true;
+                            break;
+                        }
                     }
                 }
             }
@@ -211,7 +227,13 @@ auto TuningScheduler::MainLoop(std::stop_token token) -> void {
                 "TuningScheduler NG rate out of bounds — rolling back");
 
             if (apply_params_) {
-                (void)apply_params_(old_params);
+                auto rollback_result = apply_params_(old_params);
+                if (!rollback_result.has_value()) {
+                    sai::infra::Logger::Get("tuning").Log(
+                        sai::infra::LogLevel::Error,
+                        "TuningScheduler monitoring rollback failed: {}",
+                        rollback_result.error().message);
+                }
             }
             current_params_ = old_params;
 
