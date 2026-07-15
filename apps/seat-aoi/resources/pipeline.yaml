@@ -73,3 +73,10 @@ pipeline:
       config:
         exporter: JsonExporter
         output_dir: "/tmp/surface-ai/results/"
+
+  # Optional: Bayesian Auto-Tuning (disabled by default; enable via enabled: true)
+  tuning:
+    enabled: false
+    objective:
+      fp_cost: 1.0
+      fn_cost: 5.0

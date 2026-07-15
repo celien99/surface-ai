@@ -9,6 +9,7 @@ target_link_libraries(seat_aoi PRIVATE
     sai::visualization
     sai::pipeline
     sai::scheduler
+    sai::tuning
     sai::rule
     sai::reasoner
     sai::detection

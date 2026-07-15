@@ -1,0 +1,38 @@
+tuning:
+  enabled: true
+  scheduler:
+    interval_sec: 3600
+    monitoring_window_sec: 300
+    feedback_lookback_sec: 86400
+  objective:
+    fp_cost: 1.0
+    fn_cost: 5.0
+  safety:
+    min_ng_rate: 0.001
+    max_ng_rate: 0.50
+    min_samples_for_trigger: 50
+  optimizer:
+    max_iterations: 50
+    initial_random_points: 5
+    noise_level: 0.01
+  parameters:
+    - name: "leaf_0.formula_0.weight_0"
+      type: continuous
+      min: 0.1
+      max: 0.9
+    - name: "leaf_0.formula_0.weight_1"
+      type: continuous
+      min: 0.1
+      max: 0.9
+    - name: "leaf_0.formula_0.threshold"
+      type: continuous
+      min: 0.1
+      max: 0.7
+    - name: "verdict_mapping.ng_threshold"
+      type: continuous
+      min: 0.5
+      max: 0.9
+    - name: "verdict_mapping.warn_threshold"
+      type: continuous
+      min: 0.1
+      max: 0.5

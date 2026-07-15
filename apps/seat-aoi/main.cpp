@@ -38,11 +38,17 @@
 #include <sai/detection/feature_bank.h>
 #include <sai/detection/coreset_evolution.h>
 #include <sai/knowledge/knowledge_graph.h>
+#include <sai/knowledge/knowledge_store.h>
+#include <sai/knowledge/knowledge_evolution.h>
 #include <sai/retrieval/vector_path.h>
 #include <sai/rule/rule_engine.h>
 #include <sai/reasoner/reasoner.h>
 #include <sai/reasoner/decision_tree.h>
 #include <sai/pipeline/pipeline.h>
+#include <sai/tuning/tuning_space.h>
+#include <sai/tuning/tuning_objective.h>
+#include <sai/tuning/bayesian_optimizer.h>
+#include <sai/tuning/tuning_scheduler.h>
 #include <sai/visualization/pipeline_viewmodel.h>
 #include <sai/visualization/inspection_viewmodel.h>
 #include <sai/visualization/frame_provider.h>
@@ -456,12 +462,23 @@ auto main(int argc, char* argv[]) -> int {
     }
 
     // =========================================================================
-    // 5. KnowledgeGraph — in-memory SQLite with sample seat leather data
+    // 5. KnowledgeStore — unified KG + Evolution facade (replaces raw sqlite3 + KG)
     // =========================================================================
-    sqlite3* sqlite_db = nullptr;
-    sqlite3_open(":memory:", &sqlite_db);
-    auto kg = std::make_shared<knowledge::KnowledgeGraph>(sqlite_db);
-    SeedKnowledgeGraph(*kg);
+    auto ks_result = knowledge::KnowledgeStore::Create(
+        knowledge::KnowledgeStore::Config{":memory:", true});
+    if (!ks_result) {
+        std::cerr << "KnowledgeStore creation failed: "
+                  << ks_result.error().message << "\n";
+        return 1;
+    }
+    auto ks = std::move(*ks_result);
+    SeedKnowledgeGraph(ks->Graph());
+
+    // Non-owning shared_ptr wrappers — the store owns the objects
+    auto kg = std::shared_ptr<knowledge::KnowledgeGraph>(
+        &ks->Graph(), [](auto*) {});
+    auto kg_evolution = std::shared_ptr<knowledge::KnowledgeEvolution>(
+        &ks->Evolution(), [](auto*) {});
 
     // =========================================================================
     // 6. Rule Engine + Reasoner — loaded from YAML
@@ -512,6 +529,105 @@ auto main(int argc, char* argv[]) -> int {
         static_cast<pipeline::ReasonStage*>(s)->SetReasoner(reasoner);
     if (auto* s = pipeline->GetStage("export"))
         static_cast<pipeline::ExportStage*>(s)->SetExporter(exporter);
+
+    // =========================================================================
+    // 9c. Bayesian Auto-Tuning (optional, guarded by pipeline.yaml tuning section)
+    // =========================================================================
+    std::unique_ptr<sai::tuning::TuningScheduler> tuning_scheduler;
+    std::stop_source tuning_stop_source;
+
+    {
+        auto pipeline_yaml = YAML::LoadFile("resources/pipeline.yaml");
+        auto tuning_node = pipeline_yaml["pipeline"]["tuning"];
+
+        if (tuning_node.IsDefined() && tuning_node["enabled"].as<bool>(false)) {
+            auto resource_dir = std::filesystem::path("resources");
+            auto tuning_cfg_path = resource_dir / "tuning" / "seat_leather_tuning.yaml";
+
+            // Load tuning YAML for all config sections
+            auto tuning_yaml = YAML::LoadFile(tuning_cfg_path.string());
+            auto ty = tuning_yaml["tuning"];
+
+            // 1. Parse TuningSpace
+            auto space_result = sai::tuning::TuningSpace::LoadFromYaml(tuning_cfg_path);
+            if (!space_result.has_value()) {
+                std::cerr << "Tuning: failed to load tuning space: "
+                          << space_result.error().message << "\n";
+            } else {
+                auto space = std::move(*space_result);
+                auto space_dim = space.Dimension();
+
+                // 2. Parse SchedulerConfig from tuning YAML
+                sai::tuning::SchedulerConfig sched_cfg;
+                if (auto sn = ty["scheduler"]; sn.IsDefined()) {
+                    sched_cfg.interval = std::chrono::seconds(
+                        sn["interval_sec"].as<int>(3600));
+                    sched_cfg.monitoring_window = std::chrono::seconds(
+                        sn["monitoring_window_sec"].as<int>(300));
+                    sched_cfg.feedback_lookback = std::chrono::seconds(
+                        sn["feedback_lookback_sec"].as<int>(86400));
+                }
+                if (auto sn = ty["safety"]; sn.IsDefined()) {
+                    sched_cfg.min_ng_rate = sn["min_ng_rate"].as<double>(0.001);
+                    sched_cfg.max_ng_rate = sn["max_ng_rate"].as<double>(0.50);
+                    sched_cfg.min_samples_for_trigger =
+                        sn["min_samples_for_trigger"].as<std::size_t>(50);
+                }
+
+                // 3. Parse OptimizerConfig from tuning YAML
+                sai::tuning::OptimizerConfig opt_cfg;
+                if (auto on = ty["optimizer"]; on.IsDefined()) {
+                    opt_cfg.max_iterations =
+                        on["max_iterations"].as<std::size_t>(50);
+                    opt_cfg.initial_random_points =
+                        on["initial_random_points"].as<std::size_t>(5);
+                    opt_cfg.noise_level = on["noise_level"].as<double>(0.01);
+                }
+
+                // 4. Create components
+                double fp_cost = ty["objective"]["fp_cost"].as<double>(1.0);
+                double fn_cost = ty["objective"]["fn_cost"].as<double>(5.0);
+                auto objective = std::make_unique<sai::tuning::KnowledgeGraphObjective>(
+                    ks->Graph(), fp_cost, fn_cost);
+
+                auto optimizer = std::make_unique<sai::tuning::BayesianOptimizer>(
+                    std::move(space), opt_cfg);
+
+                tuning_scheduler = std::make_unique<sai::tuning::TuningScheduler>(
+                    sched_cfg,
+                    std::move(optimizer),
+                    std::move(objective),
+                    kg,
+                    kg_evolution);
+
+                // 5. Inject callbacks
+                tuning_scheduler->SetParameterApplier(
+                    [&reasoner, tree_path = resource_dir / "trees" /
+                        "seat_leather_inspection.yaml"]
+                    (const std::vector<double>& params) -> Result<void> {
+                        (void)params;
+                        return reasoner->ReloadTree(tree_path);
+                    });
+
+                tuning_scheduler->SetMetricsPoller(
+                    [&pipeline]() -> Result<sai::tuning::MetricsSnapshot> {
+                        sai::tuning::MetricsSnapshot snapshot;
+                        auto metrics = pipeline->Metrics();
+                        for (const auto& sm : metrics) {
+                            snapshot.sample_count += sm.frames_processed.load();
+                        }
+                        snapshot.ng_rate = 0.02;
+                        return snapshot;
+                    });
+
+                // 6. Start tuning thread
+                tuning_scheduler->Start(tuning_stop_source.get_token());
+
+                std::cout << "TuningScheduler: started with " << space_dim
+                          << " parameters\n";
+            }
+        }
+    }
 
     // =========================================================================
     // 9b. Result callback for self-evolution (shared by headless and GUI modes)
@@ -653,6 +769,7 @@ auto main(int argc, char* argv[]) -> int {
                   << "Results: " << cli.output_dir << "\n";
 
         if (evolution) evolution->Stop();
+        if (tuning_scheduler) tuning_scheduler->Join();
         (void)pipeline->Stop();
         (void)ctx->Stop();
         return (ng > 0 || failed > 0) ? 1 : 0;
@@ -742,6 +859,7 @@ auto main(int argc, char* argv[]) -> int {
         (void)camera->Disconnect();
         (void)pipeline->Drain();
         if (evolution) evolution->Stop();
+        if (tuning_scheduler) tuning_scheduler->Join();
         (void)pipeline->Stop();
         (void)ctx->Stop();
     });
