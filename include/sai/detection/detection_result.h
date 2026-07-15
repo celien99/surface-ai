@@ -42,6 +42,11 @@ struct DetectionResult {
     float image_level_score = 0.0F;
     std::chrono::nanoseconds inference_latency{0};
 
+    // Global image-level features (CLIP embedding) for cross-modal retrieval.
+    // Populated by DetectStage from the Embedding's global_features.
+    // Consumed by RuleEvalStage for FactBuilder::RunVectorRetrieval.
+    std::vector<float> global_features;
+
     // 图像级异常分数超过阈值则认为本帧存在缺陷
     [[nodiscard]] auto IsDefective(float threshold) const noexcept -> bool {
         return image_level_score > threshold;

@@ -21,12 +21,16 @@ auto DetectStage::OnStop(Context&) -> Result<void> { return {}; }
 
 auto DetectStage::Process(StageInput input) -> Result<StageOutput> {
     if (auto* emb = std::get_if<sai::embedding::Embedding>(&input)) {
+        sai::detection::DetectionResult result;
         if (!stub_ && detector_) {
-            auto result = detector_->Detect(*emb);
-            if (result) return StageOutput(std::move(*result));
-            // On failure, fall through to empty DetectionResult
+            auto det_result = detector_->Detect(*emb);
+            if (det_result) result = std::move(*det_result);
         }
-        return StageOutput(sai::detection::DetectionResult{});
+        // Carry forward CLIP global features for RuleEvalStage.
+        if (emb->HasGlobalFeatures()) {
+            result.global_features = emb->GlobalFeatures();
+        }
+        return StageOutput(std::move(result));
     }
     return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_StageTypeMismatch,
         "Detect expects Embedding input"});
