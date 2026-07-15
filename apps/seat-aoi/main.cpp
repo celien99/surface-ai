@@ -62,7 +62,7 @@ struct CliArgs {
     std::string image_dir;
     std::string output_dir = "/tmp/surface-ai/results/";
     std::string coreset_path;           // --coreset: load pre-built coreset for detection
-    std::string build_coreset_dir;      // --build-coreset: dir of normal images for coreset building
+    std::string dataset_path;            // --dataset: YAML manifest for coreset building
     std::string coreset_output_path;     // --coreset-output: where to save the built coreset
     std::string coreset_algo = "greedy"; // --coreset-algo: greedy | uniform
     std::size_t coreset_max_samples = 10000; // --coreset-max-samples N
@@ -83,8 +83,8 @@ auto ParseArgs(int argc, char* argv[]) -> CliArgs {
             args.headless = true;
         } else if (arg == "--coreset" && i + 1 < argc) {
             args.coreset_path = argv[++i];
-        } else if (arg == "--build-coreset" && i + 1 < argc) {
-            args.build_coreset_dir = argv[++i];
+        } else if (arg == "--dataset" && i + 1 < argc) {
+            args.dataset_path = argv[++i];
         } else if (arg == "--coreset-output" && i + 1 < argc) {
             args.coreset_output_path = argv[++i];
         } else if (arg == "--coreset-algo" && i + 1 < argc) {
@@ -95,7 +95,7 @@ auto ParseArgs(int argc, char* argv[]) -> CliArgs {
             args.cpu_mode = true;
         }
     }
-    if (!args.build_coreset_dir.empty() && args.coreset_output_path.empty()) {
+    if (!args.dataset_path.empty() && args.coreset_output_path.empty()) {
         args.coreset_output_path = "resources/coreset.bin";
     }
     return args;
@@ -167,8 +167,8 @@ auto SeedKnowledgeGraph(sai::knowledge::KnowledgeGraph& kg) -> void {
 auto BuildCoreset(const CliArgs& cli) -> int {
     using namespace sai;
 
-    std::cout << "Building coreset from normal samples in: "
-              << cli.build_coreset_dir << "\n";
+    std::cout << "Building coreset from dataset: "
+              << cli.dataset_path << "\n";
 
     constexpr std::size_t kEmbedDim = 1024;
     constexpr std::size_t kImageSize = 1024;
@@ -203,24 +203,15 @@ auto BuildCoreset(const CliArgs& cli) -> int {
     std::cout << "Embedder: PatchEmbedder (DINOv3, dim="
               << kEmbedDim << ")\n";
 
-    // Scan directory for image files
-    std::vector<std::filesystem::path> image_files;
-    for (auto& entry : std::filesystem::directory_iterator(cli.build_coreset_dir)) {
-        if (!entry.is_regular_file()) continue;
-        auto ext = entry.path().extension().string();
-        if (ext == ".ppm" || ext == ".png" || ext == ".bmp"
-            || ext == ".jpg" || ext == ".jpeg") {
-            image_files.push_back(entry.path());
-        }
-    }
-    std::sort(image_files.begin(), image_files.end());
-
-    if (image_files.empty()) {
-        std::cerr << "No image files found in " << cli.build_coreset_dir << "\n";
+    // Read dataset manifest
+    auto dataset_result = importer.ImportDataset(cli.dataset_path);
+    if (!dataset_result) {
+        std::cerr << "Dataset import failed: "
+                  << dataset_result.error().message << "\n";
         return 1;
     }
-
-    std::cout << "Found " << image_files.size() << " normal sample images\n";
+    auto& entries = *dataset_result;
+    std::cout << "Found " << entries.size() << " normal sample images\n";
 
     // Preprocess chain: resize to embedder's expected size
     auto preprocess_chain = image::Compose({
@@ -246,18 +237,23 @@ auto BuildCoreset(const CliArgs& cli) -> int {
     }
     auto& gpu_pool = **gpu_pool_result;
 
-    for (auto& path : image_files) {
-        auto img_result = importer.ImportImage(path);
+    for (auto& entry : entries) {
+        auto img_result = importer.ImportImage(entry.path);
         if (!img_result) {
-            std::cerr << "Failed to import " << path.filename().string()
+            std::cerr << "Failed to import " << entry.entry.path.filename().string()
                       << ": " << img_result.error().message << "\n";
             continue;
         }
 
+        // Stamp image metadata from dataset entry
+        (*img_result)->Meta().surface_id = entry.surface_id;
+        (*img_result)->Meta().position_id = entry.position_id;
+        (*img_result)->Meta().light_id = entry.light_id;
+
         // Run through preprocess (resize) to get SurfaceImage
         auto preprocess_result = preprocess_chain(std::move(*img_result));
         if (!preprocess_result) {
-            std::cerr << "Preprocess failed for " << path.filename().string()
+            std::cerr << "Preprocess failed for " << entry.path.filename().string()
                       << ": " << preprocess_result.error().message << "\n";
             continue;
         }
@@ -288,7 +284,7 @@ auto BuildCoreset(const CliArgs& cli) -> int {
                 gpu_pool, surface.Meta());
             if (!gpu_img_result) {
                 std::cerr << "GpuImage allocation failed for "
-                          << path.filename().string() << "\n";
+                          << entry.path.filename().string() << "\n";
                 continue;
             }
             auto gpu_img = std::move(*gpu_img_result);
@@ -297,7 +293,7 @@ auto BuildCoreset(const CliArgs& cli) -> int {
                 cudaMemcpyHostToDevice);
             if (cuda_err != cudaSuccess) {
                 std::cerr << "cudaMemcpy HtoD failed for "
-                          << path.filename().string() << "\n";
+                          << entry.path.filename().string() << "\n";
                 continue;
             }
 
@@ -312,7 +308,7 @@ auto BuildCoreset(const CliArgs& cli) -> int {
                     cudaMemcpyDeviceToHost);
                 if (cuda_err != cudaSuccess) {
                     std::cerr << "cudaMemcpy DtoH failed for "
-                              << path.filename().string() << "\n";
+                              << entry.path.filename().string() << "\n";
                     continue;
                 }
                 emb = embedding::Embedding::FromCpu(
@@ -322,7 +318,7 @@ auto BuildCoreset(const CliArgs& cli) -> int {
 
         if (!emb) {
             std::cerr << "Embedding extraction failed for "
-                      << path.filename().string() << ": "
+                      << entry.path.filename().string() << ": "
                       << emb.error().message << "\n";
             continue;
         }
@@ -330,7 +326,7 @@ auto BuildCoreset(const CliArgs& cli) -> int {
         ++processed;
         all_embeddings.push_back(std::move(*emb));
         std::cout << "[" << processed << "/" << image_files.size() << "] "
-                  << path.filename().string() << " → "
+                  << entry.path.filename().string() << " → "
                   << all_embeddings.back().Meta().count << " patches\n";
     }
 
@@ -471,9 +467,9 @@ auto main(int argc, char* argv[]) -> int {
     using namespace sai;
 
     // =========================================================================
-    // --build-coreset mode: build FeatureBank from normal samples
+    // --dataset mode: build FeatureBank from normal sample dataset YAML
     // =========================================================================
-    if (!cli.build_coreset_dir.empty()) {
+    if (!cli.dataset_path.empty()) {
         return BuildCoreset(cli);
     }
 
@@ -999,7 +995,7 @@ auto main(int argc, char* argv[]) -> int {
             else ++failed;
 
             std::cout << "[" << (i + 1) << "/" << image_files.size() << "] "
-                      << path.filename().string() << " → " << verdict << "\n";
+                      << entry.path.filename().string() << " → " << verdict << "\n";
         }
 
         std::cout << "\n===== Summary =====\n"

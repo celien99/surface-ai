@@ -24,6 +24,12 @@ struct ImageMeta {
     std::size_t bits_per_sample = 8;  // 8/10/12/16 — for correct clamping in preprocess
     std::chrono::nanoseconds timestamp{0};
     std::uint32_t frame_index = 0;
+
+    // Multi-light AOI metadata — identifies which product/position/light
+    // this frame belongs to.  Set by ImportDataset or CaptureStage.
+    std::string surface_id;            // product barcode / serial
+    std::uint16_t position_id = 0;     // camera position index
+    std::uint16_t light_id = 0;        // light source index
 };
 
 // 每采样字节数：8-bit 格式 1 字节，10/12-bit 打包到 2 字节，16-bit 2 字节，Undefined 保守取 1。
@@ -57,6 +63,7 @@ struct ImageMeta {
 class Image : public Resource {
 public:
     [[nodiscard]] auto Meta() const noexcept -> const ImageMeta& { return meta_; }
+    [[nodiscard]] auto Meta() noexcept -> ImageMeta& { return meta_; }
     [[nodiscard]] auto Data() const noexcept -> const std::uint8_t* { return data_; }
     [[nodiscard]] auto Data() noexcept -> std::uint8_t* { return data_; }
     [[nodiscard]] auto SizeBytes() const noexcept -> std::size_t { return size_bytes_; }

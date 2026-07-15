@@ -49,6 +49,12 @@ auto InferenceStage::Process(StageInput input) -> Result<StageOutput> {
             }
         }
 
+        // Carry surface identity from image metadata through the pipeline.
+        const auto& img_meta = img->Meta();
+        if (!img_meta.surface_id.empty()) {
+            embedding.SetSurfaceId(img_meta.surface_id);
+        }
+
         return StageOutput(std::move(embedding));
     }
     return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_StageTypeMismatch,

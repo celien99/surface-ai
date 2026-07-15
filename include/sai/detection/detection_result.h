@@ -47,6 +47,10 @@ struct DetectionResult {
     // Consumed by RuleEvalStage for FactBuilder::RunVectorRetrieval.
     std::vector<float> global_features;
 
+    // Surface identity — carried from image metadata through the pipeline.
+    // Set by DetectStage from Embedding::SurfaceId, consumed by RuleEvalStage.
+    std::string surface_id;
+
     // 图像级异常分数超过阈值则认为本帧存在缺陷
     [[nodiscard]] auto IsDefective(float threshold) const noexcept -> bool {
         return image_level_score > threshold;

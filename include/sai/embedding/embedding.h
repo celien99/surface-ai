@@ -78,6 +78,12 @@ public:
     auto SetGlobalFeatures(std::vector<float> features) noexcept -> void
     { global_features_ = std::move(features); }
 
+    // Surface identity carried from image metadata through the pipeline.
+    [[nodiscard]] auto SurfaceId() const noexcept -> const std::string&
+    { return surface_id_; }
+    auto SetSurfaceId(std::string id) noexcept -> void
+    { surface_id_ = std::move(id); }
+
     // 总字节大小 = meta_.count * meta_.dim * sizeof(float)。
     [[nodiscard]] auto SizeBytes() const noexcept -> std::size_t;
 
@@ -107,6 +113,7 @@ private:
     EmbeddingMeta meta_{};
     bool on_gpu_ = false;
     std::vector<float> global_features_{};
+    std::string surface_id_{};
 };
 
 }  // namespace sai::embedding

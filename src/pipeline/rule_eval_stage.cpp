@@ -46,8 +46,10 @@ auto RuleEvalStage::Process(StageInput input) -> Result<StageOutput> {
                 std::vector<std::string> graph_paths;
                 // Resolve graph paths specified in rule conditions
                 auto all_entries = fb.AllEntries();
+                auto surface_id = det->surface_id.empty()
+                    ? "default" : det->surface_id;
                 auto build_result = fact_builder_->Build(
-                    "default", *det, graph_paths);
+                    surface_id, *det, graph_paths);
                 if (build_result) {
                     fb = std::move(*build_result);
                 }

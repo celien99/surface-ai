@@ -30,6 +30,10 @@ auto DetectStage::Process(StageInput input) -> Result<StageOutput> {
         if (emb->HasGlobalFeatures()) {
             result.global_features = emb->GlobalFeatures();
         }
+        // Carry forward surface identity.
+        if (!emb->SurfaceId().empty()) {
+            result.surface_id = emb->SurfaceId();
+        }
         return StageOutput(std::move(result));
     }
     return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_StageTypeMismatch,

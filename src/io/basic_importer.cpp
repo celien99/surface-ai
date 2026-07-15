@@ -19,6 +19,60 @@
 
 namespace sai::io {
 
+auto BasicImporter::ImportDataset(std::filesystem::path yaml_path) noexcept
+    -> Result<std::vector<DatasetEntry>> {
+    std::error_code ec;
+    if (!std::filesystem::exists(yaml_path, ec) || ec) {
+        return tl::make_unexpected(ErrorInfo{
+            .code = ErrorCode::Io_ImportFileNotFound,
+            .message = "Dataset manifest not found: " + yaml_path.string(),
+        });
+    }
+
+    YAML::Node root;
+    try {
+        root = YAML::LoadFile(yaml_path.string());
+    } catch (const YAML::Exception& e) {
+        return tl::make_unexpected(ErrorInfo{
+            .code = ErrorCode::Io_ImportParseFailed,
+            .message = std::string("Failed to parse dataset YAML: ") + e.what(),
+        });
+    }
+
+    if (!root["surface"].IsDefined() || !root["images"].IsDefined()) {
+        return tl::make_unexpected(ErrorInfo{
+            .code = ErrorCode::Io_ImportParseFailed,
+            .message = "Dataset YAML must contain 'surface' and 'images' keys",
+        });
+    }
+
+    std::string surface_id = root["surface"].as<std::string>();
+    auto images_node = root["images"];
+    if (!images_node.IsSequence()) {
+        return tl::make_unexpected(ErrorInfo{
+            .code = ErrorCode::Io_ImportParseFailed,
+            .message = "'images' must be a sequence",
+        });
+    }
+
+    auto base_dir = yaml_path.parent_path();
+    std::vector<DatasetEntry> entries;
+    entries.reserve(images_node.size());
+
+    for (auto img : images_node) {
+        DatasetEntry entry;
+        entry.surface_id = surface_id;
+        entry.path = base_dir / img["path"].as<std::string>();
+        if (auto pos = img["position"]; pos.IsDefined())
+            entry.position_id = pos.as<std::uint16_t>();
+        if (auto lgt = img["light"]; lgt.IsDefined())
+            entry.light_id = lgt.as<std::uint16_t>();
+        entries.push_back(std::move(entry));
+    }
+
+    return entries;
+}
+
 auto BasicImporter::ImportMetadata(std::filesystem::path path) noexcept
     -> Result<YAML::Node> {
     // 1. Existence check

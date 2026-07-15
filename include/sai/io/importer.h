@@ -15,6 +15,16 @@ namespace sai::io {
 
 using sai::image::Image;
 
+// DatasetEntry: a single image in a multi-light dataset manifest.
+// ImportDataset() returns entries; caller imports pixels via ImportImage()
+// and sets metadata on each RawImage.
+struct DatasetEntry {
+    std::filesystem::path path;
+    std::string surface_id;
+    std::uint16_t position_id = 0;
+    std::uint16_t light_id = 0;
+};
+
 class IImporter : public IPlugin {
 public:
     [[nodiscard]] virtual auto ImportImage(std::filesystem::path path) noexcept
@@ -34,6 +44,12 @@ public:
         -> Result<std::unique_ptr<Image>> override;
     [[nodiscard]] auto ImportMetadata(std::filesystem::path path) noexcept
         -> Result<YAML::Node> override;
+
+    // ImportDataset reads a YAML manifest and returns structured entries.
+    // Does NOT load pixel data — caller iterates and calls ImportImage().
+    [[nodiscard]] static auto ImportDataset(std::filesystem::path yaml_path) noexcept
+        -> Result<std::vector<DatasetEntry>>;
+
     [[nodiscard]] auto FormatName() const noexcept -> std::string_view override
     { return "basic_import"; }
 
