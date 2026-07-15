@@ -12,6 +12,10 @@
     {
       "name": "aravis",
       "platform": "linux"
+    },
+    {
+      "name": "open62541",
+      "platform": "linux"
     }
   ]
 }

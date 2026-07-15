@@ -89,7 +89,7 @@ public:
 private:
     friend class sai::retrieval::VectorPath;
 
-    FeatureBank() noexcept = default;
+    FeatureBank() noexcept;
 
     std::unique_ptr<faiss::Index> index_;
     std::size_t dim_ = 0;

@@ -1,0 +1,28 @@
+[Unit]
+Description=Surface AI Seat AOI Inspection Service
+Documentation=https://github.com/surface-ai/surface-ai
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/surface-ai
+ExecStartPre=/usr/bin/docker compose -f /opt/surface-ai/docker-compose.yml build
+ExecStart=/usr/bin/docker compose -f /opt/surface-ai/docker-compose.yml up seat_aoi_daemon
+ExecStop=/usr/bin/docker compose -f /opt/surface-ai/docker-compose.yml down
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=surface-ai
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/surface-ai/results /opt/surface-ai/resources/coresets
+ReadOnlyPaths=/opt/surface-ai/samples /opt/surface-ai/resources/models
+
+[Install]
+WantedBy=multi-user.target

@@ -340,4 +340,6 @@ auto FeatureBank::operator=(FeatureBank&&) noexcept -> FeatureBank& = default;
 
 FeatureBank::~FeatureBank() = default;
 
+FeatureBank::FeatureBank() noexcept = default;
+
 }  // namespace sai::detection

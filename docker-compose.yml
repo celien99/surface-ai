@@ -1,0 +1,70 @@
+# Surface AI Framework — Production Deployment
+#
+# Usage:
+#   docker compose build
+#   docker compose run seat_aoi_train  # build coreset
+#   docker compose up seat_aoi_detect   # run detection service
+
+services:
+  # ── Coreset training (one-shot) ──────────────────────────────────
+  seat_aoi_train:
+    build: .
+    image: surface-ai:latest
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=0
+    volumes:
+      - ./samples/normal:/data/normal:ro
+      - ./resources/coresets:/app/resources/coresets
+      - ./resources/models:/app/resources/models:ro
+    command: >
+      train
+      --image-dir /data/normal/
+      --coreset-algo greedy
+      --coreset-max-samples 10000
+      --coreset-output /app/resources/coresets/default.bin
+    profiles:
+      - train
+
+  # ── Batch detection service ──────────────────────────────────────
+  seat_aoi_detect:
+    build: .
+    image: surface-ai:latest
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=0
+    volumes:
+      - ./samples/test:/data/samples:ro
+      - ./results:/data/results
+      - ./resources/coresets:/app/resources/coresets:ro
+      - ./resources/models:/app/resources/models:ro
+    command: >
+      detect
+      --image-dir /data/samples/
+      --coreset /app/resources/coresets/default.bin
+      --output-dir /data/results/
+    network_mode: host
+    restart: "no"
+    profiles:
+      - detect
+
+  # ── Continuous inspection daemon (camera + OPC UA) ───────────────
+  seat_aoi_daemon:
+    build: .
+    image: surface-ai:latest
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=0
+    volumes:
+      - ./results:/data/results
+      - ./resources/coresets:/app/resources/coresets:ro
+      - ./resources/models:/app/resources/models:ro
+    command: >
+      daemon
+      --coreset /app/resources/coresets/default.bin
+      --output-dir /data/results/
+      --opcua-server opc.tcp://192.168.1.100:4840
+    network_mode: host
+    restart: unless-stopped
+    profiles:
+      - daemon
