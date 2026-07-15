@@ -27,6 +27,9 @@ pipeline:
       config:
         engine: MockEngine
         model: dino_v3_vit_base
+        global_model:        # CLIP for cross-modal retrieval (disabled by default)
+          enabled: false     # enable when CLIP engine is available
+          engine: clip_vit_b32
 
     - id: detect
       type: Detect
@@ -66,6 +69,9 @@ pipeline:
       depends_on: [rule_eval]
       config:
         tree_file: "trees/seat_leather_inspection.yaml"
+        sam2:               # SAM2 for region boundary refinement (disabled by default)
+          enabled: false    # enable when SAM2 engine is available
+          engine: sam2_vit_h
 
     - id: export
       type: Export
