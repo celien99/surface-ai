@@ -246,3 +246,54 @@ TEST(CandidateBufferTest, TriggerByPatches) {
 }
 
 }  // namespace
+
+// ── MultiSignalConsensus ──────────────────────────────────────
+
+#include <sai/detection/detection_result.h>
+
+TEST(MultiSignalConsensusTest, AllPassed) {
+    sai::detection::NormalityAssessment normalcy{0.95F, 0.8F, 0.02F};
+    sai::detection::DetectionResult det;
+    det.image_level_score = 0.3F;
+    // matched_rules=0, verdict="OK", threshold=0.8, pca disabled
+    bool ok = sai::detection::MultiSignalConsensusCheck(
+        normalcy, det, 0, "OK", 0.8F, 0.0F, 0.0F);
+    EXPECT_TRUE(ok);
+}
+
+TEST(MultiSignalConsensusTest, RuleHitBlocks) {
+    sai::detection::NormalityAssessment normalcy{0.95F, 0.8F, 0.02F};
+    sai::detection::DetectionResult det;
+    det.image_level_score = 0.3F;
+    // matched_rules=1 → should fail
+    bool ok = sai::detection::MultiSignalConsensusCheck(
+        normalcy, det, 1, "OK", 0.8F, 0.0F, 0.0F);
+    EXPECT_FALSE(ok);
+}
+
+TEST(MultiSignalConsensusTest, ReasonerNGFails) {
+    sai::detection::NormalityAssessment normalcy{0.95F, 0.8F, 0.02F};
+    sai::detection::DetectionResult det;
+    det.image_level_score = 0.3F;
+    bool ok = sai::detection::MultiSignalConsensusCheck(
+        normalcy, det, 0, "NG", 0.8F, 0.0F, 0.0F);
+    EXPECT_FALSE(ok);
+}
+
+TEST(MultiSignalConsensusTest, HighAnomalyScoreFails) {
+    sai::detection::NormalityAssessment normalcy{0.95F, 0.8F, 0.02F};
+    sai::detection::DetectionResult det;
+    det.image_level_score = 0.85F;
+    bool ok = sai::detection::MultiSignalConsensusCheck(
+        normalcy, det, 0, "OK", 0.8F, 0.0F, 0.0F);
+    EXPECT_FALSE(ok);
+}
+
+TEST(MultiSignalConsensusTest, LowNormalcyFails) {
+    sai::detection::NormalityAssessment normalcy{0.5F, 0.8F, 0.15F};
+    sai::detection::DetectionResult det;
+    det.image_level_score = 0.3F;
+    bool ok = sai::detection::MultiSignalConsensusCheck(
+        normalcy, det, 0, "OK", 0.8F, 0.0F, 0.0F);
+    EXPECT_FALSE(ok);
+}

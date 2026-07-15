@@ -37,6 +37,7 @@ set(SAI_DETECTION_SOURCES
     normality_scorer.cpp
     novelty_filter.cpp
     candidate_buffer.cpp
+    multi_signal_consensus.cpp
 )
 
 # CUDA 门控：仅在 CUDAToolkit 可用时编译 GPU FeatureBank

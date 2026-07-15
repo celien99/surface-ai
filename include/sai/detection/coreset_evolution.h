@@ -105,4 +105,18 @@ private:
     std::size_t total_patches_ = 0;
 };
 
+// ── 多信号共识判定 ──
+
+// 所有输入来自已有管线产出，无需额外计算。
+// 返回 true = 所有信号一致确认"正常"。
+[[nodiscard]] auto MultiSignalConsensusCheck(
+    const NormalityAssessment& normalcy,
+    const DetectionResult& detection,
+    std::size_t matched_rules_count,
+    const std::string& reasoner_verdict,
+    float effective_threshold,
+    float pca_image_score,       // 0.0F if PCA not enabled
+    float pca_self_query_p95)    // PCA self-query threshold (0.0F if not enabled)
+    noexcept -> bool;
+
 }  // namespace sai::detection
