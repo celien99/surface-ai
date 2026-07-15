@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -51,6 +52,57 @@ struct NormalityAssessment {
     float normalcy_score = 0.0F;      // 0~1
     float concentration_ratio = 0.0F; // median(query) / profile.P50
     float tail_ratio = 0.0F;          // 超过 P95 的 patch 比例
+};
+
+// ── 冗余检测结果 ──
+
+struct NoveltyResult {
+    bool is_novel = false;
+    float coverage_ratio = 1.0F;     // 被 P50 覆盖的 patch 比例
+    std::size_t novel_patch_count = 0;
+};
+
+// ── 候选帧 ──
+
+struct EvolutionCandidate {
+    std::shared_ptr<const float> patch_vectors;
+    std::size_t grid_h = 0;
+    std::size_t grid_w = 0;
+    std::size_t dim = 0;
+    float normalcy_score = 0.0F;
+    std::chrono::steady_clock::time_point captured_at;
+};
+
+// ── 有界候选缓冲 ──
+
+class CandidateBuffer {
+public:
+    struct Config {
+        std::size_t max_frames = 50;
+        std::size_t max_patches = 50000;
+        std::size_t trigger_frames = 20;
+        std::size_t trigger_patches = 20000;
+    };
+
+    explicit CandidateBuffer(Config cfg) noexcept : cfg_(cfg) {}
+
+    // 检测线程调用。返回 true = 已加入。
+    auto Append(EvolutionCandidate candidate) -> bool;
+
+    // 任一触发条件满足？
+    [[nodiscard]] auto IsTriggered() const -> bool;
+
+    // 后台线程调用：取出全部候选并清空
+    auto DrainAll() -> std::vector<EvolutionCandidate>;
+
+    [[nodiscard]] auto FrameCount() const -> std::size_t;
+    [[nodiscard]] auto PatchCount() const -> std::size_t;
+
+private:
+    Config cfg_;
+    mutable std::mutex mutex_;
+    std::vector<EvolutionCandidate> candidates_;
+    std::size_t total_patches_ = 0;
 };
 
 }  // namespace sai::detection

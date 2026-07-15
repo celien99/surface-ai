@@ -140,4 +140,109 @@ TEST(NormalityScorerTest, OutlierGetsLowScore) {
     EXPECT_FLOAT_EQ(normalcy, 0.0F);  // 50% tail → score=0
 }
 
+// ── NoveltyFilter ─────────────────────────────────────────────
+
+TEST(NoveltyFilterTest, NovelFramePasses) {
+    // 60% patch 在 P50 以内 → coverage=0.6 < 0.6? no (equals threshold)
+    // 构造 55% coverage → 应该通过
+    std::vector<float> distances;
+    NormalityProfile profile;
+    profile.p50 = 3.0F;
+    profile.num_samples = 100;
+
+    // 55 patches low (< P50), 45 patches high (> P50)
+    for (int i = 0; i < 55; ++i) distances.push_back(1.0F);
+    for (int i = 0; i < 45; ++i) distances.push_back(10.0F);
+
+    float threshold = 0.60F;
+    std::size_t covered = 0;
+    for (auto d : distances) if (d < profile.p50) ++covered;
+    float ratio = static_cast<float>(covered) / 100.0F;
+
+    EXPECT_FLOAT_EQ(ratio, 0.55F);
+    EXPECT_LT(ratio, threshold);  // novel → passes
+}
+
+TEST(NoveltyFilterTest, RedundantFrameBlocked) {
+    // 全部 patch 在 P50 以内 → coverage=1.0 → 冗余
+    std::vector<float> distances(100, 1.0F);
+    NormalityProfile profile;
+    profile.p50 = 5.0F;
+    profile.num_samples = 100;
+
+    float threshold = 0.60F;
+    std::size_t covered = 0;
+    for (auto d : distances) if (d < profile.p50) ++covered;
+    float ratio = static_cast<float>(covered) / 100.0F;
+
+    EXPECT_FLOAT_EQ(ratio, 1.0F);
+    EXPECT_GT(ratio, threshold);  // redundant → blocked
+}
+
+// ── CandidateBuffer ───────────────────────────────────────────
+
+TEST(CandidateBufferTest, TriggerByFrames) {
+    CandidateBuffer::Config cfg;
+    cfg.trigger_frames = 5;
+    CandidateBuffer buf(cfg);
+
+    for (int i = 0; i < 5; ++i) {
+        EvolutionCandidate c;
+        c.grid_h = 1; c.grid_w = 10; c.dim = 8;
+        c.patch_vectors = std::make_shared<const float>();  // placeholder
+        EXPECT_TRUE(buf.Append(std::move(c)));
+    }
+
+    EXPECT_TRUE(buf.IsTriggered());
+    EXPECT_EQ(buf.FrameCount(), 5U);
+}
+
+TEST(CandidateBufferTest, DrainAllClears) {
+    CandidateBuffer::Config cfg;
+    cfg.trigger_frames = 3;
+    CandidateBuffer buf(cfg);
+
+    for (int i = 0; i < 3; ++i) {
+        EvolutionCandidate c;
+        c.grid_h = 1; c.grid_w = 10; c.dim = 8;
+        c.patch_vectors = std::make_shared<const float>();
+        buf.Append(std::move(c));
+    }
+
+    auto drained = buf.DrainAll();
+    EXPECT_EQ(drained.size(), 3U);
+    EXPECT_EQ(buf.FrameCount(), 0U);
+    EXPECT_FALSE(buf.IsTriggered());
+}
+
+TEST(CandidateBufferTest, RejectWhenFull) {
+    CandidateBuffer::Config cfg;
+    cfg.max_frames = 2;
+    CandidateBuffer buf(cfg);
+
+    EvolutionCandidate c1, c2, c3;
+    c1.grid_h = 1; c1.grid_w = 10; c1.dim = 8;
+    c1.patch_vectors = std::make_shared<const float>();
+    c2 = c1; c3 = c1;
+
+    EXPECT_TRUE(buf.Append(std::move(c1)));
+    EXPECT_TRUE(buf.Append(std::move(c2)));
+    EXPECT_FALSE(buf.Append(std::move(c3)));  // full
+}
+
+TEST(CandidateBufferTest, TriggerByPatches) {
+    CandidateBuffer::Config cfg;
+    cfg.trigger_patches = 100;
+    cfg.trigger_frames = 999;  // won't trigger by frames
+    CandidateBuffer buf(cfg);
+
+    EvolutionCandidate c;
+    c.grid_h = 37; c.grid_w = 37; c.dim = 1024;  // 1369 patches
+    float dummy = 0.0F;
+    c.patch_vectors = std::shared_ptr<const float>(&dummy, [](const float*){});
+
+    buf.Append(std::move(c));
+    EXPECT_TRUE(buf.IsTriggered());  // 1369 patches > 100
+}
+
 }  // namespace

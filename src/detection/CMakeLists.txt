@@ -35,6 +35,8 @@ set(SAI_DETECTION_SOURCES
     pca_detector.cpp
     normality_profile.cpp
     normality_scorer.cpp
+    novelty_filter.cpp
+    candidate_buffer.cpp
 )
 
 # CUDA 门控：仅在 CUDAToolkit 可用时编译 GPU FeatureBank
