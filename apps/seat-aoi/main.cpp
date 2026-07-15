@@ -917,35 +917,30 @@ auto main(int argc, char* argv[]) -> int {
     }
 
     // =========================================================================
-    // 11. Headless batch mode — process images from directory
+    // 11. Headless batch mode — process images from dataset or directory
     // =========================================================================
-    if (!cli.image_dir.empty()) {
-        io::BasicImporter importer;
-        std::vector<std::filesystem::path> image_files;
-
-        for (auto& entry : std::filesystem::directory_iterator(cli.image_dir)) {
-            if (!entry.is_regular_file()) continue;
-            auto ext = entry.path().extension().string();
-            if (ext == ".ppm" || ext == ".png" || ext == ".bmp"
-                || ext == ".jpg" || ext == ".jpeg") {
-                image_files.push_back(entry.path());
-            }
-        }
-        std::sort(image_files.begin(), image_files.end());
-
-        std::cout << "Processing " << image_files.size() << " images from "
-                  << cli.image_dir << "\n"
-                  << "Output: " << cli.output_dir << "\n\n";
-
+    auto run_headless = [&](auto& entries, io::BasicImporter& importer) {
         int ok = 0, ng = 0, warn = 0, uncertain = 0, failed = 0;
         int frame_id = 0;
-        for (size_t i = 0; i < image_files.size(); ++i) {
-            auto& path = image_files[i];
-            auto img_result = importer.ImportImage(path);
+
+        // Per-surface aggregation: track worst verdict for each product
+        std::map<std::string, std::string> surface_verdict;
+        std::map<std::string, int> surface_frame_count;
+
+        for (size_t i = 0; i < entries.size(); ++i) {
+            auto& entry = entries[i];
+            auto img_result = importer.ImportImage(entry.path);
             if (!img_result) {
-                std::cerr << "FAIL import: " << path.filename() << "\n";
+                std::cerr << "FAIL import: " << entry.path.filename() << "\n";
                 ++failed;
                 continue;
+            }
+
+            // Stamp metadata from dataset entry
+            if constexpr (requires { entry.surface_id; }) {
+                (*img_result)->Meta().surface_id = entry.surface_id;
+                (*img_result)->Meta().position_id = entry.position_id;
+                (*img_result)->Meta().light_id = entry.light_id;
             }
 
             auto* raw = dynamic_cast<image::RawImage*>(img_result->get());
@@ -969,7 +964,6 @@ auto main(int argc, char* argv[]) -> int {
                 / "default" / "unknown" / "result.json";
             std::string verdict = "?";
             if (std::filesystem::exists(result_path)) {
-                // Quick parse: check verdict field
                 std::ifstream ifs(result_path);
                 std::string line;
                 while (std::getline(ifs, line)) {
@@ -994,24 +988,96 @@ auto main(int argc, char* argv[]) -> int {
             else if (verdict == "UNCERTAIN") ++uncertain;
             else ++failed;
 
-            std::cout << "[" << (i + 1) << "/" << image_files.size() << "] "
+            // Per-surface tracking: worst verdict wins
+            if constexpr (requires { entry.surface_id; }) {
+                auto& sv = surface_verdict[entry.surface_id];
+                if (verdict == "NG" || (sv != "NG" && verdict == "WARN")
+                    || (sv != "NG" && sv != "WARN" && verdict == "UNCERTAIN")
+                    || (sv.empty() && verdict == "OK"))
+                    sv = verdict;
+                surface_frame_count[entry.surface_id]++;
+            }
+
+            std::cout << "[" << (i + 1) << "/" << entries.size() << "] "
                       << entry.path.filename().string() << " → " << verdict << "\n";
         }
 
-        std::cout << "\n===== Summary =====\n"
-                  << "Total:   " << image_files.size() << "\n"
+        std::cout << "\n===== Frame Summary =====\n"
+                  << "Total:   " << entries.size() << "\n"
                   << "OK:      " << ok << "\n"
                   << "NG:      " << ng << "\n"
                   << "WARN:    " << warn << "\n"
                   << "UNCERTAIN: " << uncertain << "\n"
-                  << "Failed:  " << failed << "\n"
-                  << "Results: " << cli.output_dir << "\n";
+                  << "Failed:  " << failed << "\n";
+
+        if (!surface_verdict.empty()) {
+            int s_ok = 0, s_ng = 0, s_warn = 0, s_uncertain = 0;
+            for (auto& [sid, v] : surface_verdict) {
+                if (v == "OK") ++s_ok;
+                else if (v == "NG") ++s_ng;
+                else if (v == "WARN") ++s_warn;
+                else if (v == "UNCERTAIN") ++s_uncertain;
+                std::cout << "  [" << sid << "] " << v
+                          << " (" << surface_frame_count[sid] << " frames)\n";
+            }
+            std::cout << "\n===== Product Summary =====\n"
+                      << "Products: " << surface_verdict.size() << "\n"
+                      << "OK:       " << s_ok << "\n"
+                      << "NG:       " << s_ng << "\n"
+                      << "WARN:     " << s_warn << "\n"
+                      << "UNCERTAIN:" << s_uncertain << "\n";
+        }
+
+        std::cout << "Results: " << cli.output_dir << "\n";
 
         if (evolution) evolution->Stop();
         if (tuning_scheduler) tuning_scheduler->Join();
         (void)pipeline->Stop();
         (void)ctx->Stop();
         return (ng > 0 || failed > 0) ? 1 : 0;
+    };
+
+    if (!cli.dataset_path.empty()) {
+        io::BasicImporter importer;
+        auto entries_result = io::BasicImporter::ImportDataset(cli.dataset_path);
+        if (!entries_result) {
+            std::cerr << "Dataset import failed: "
+                      << entries_result.error().message << "\n";
+            return 1;
+        }
+        auto& entries = *entries_result;
+        std::cout << "Processing " << entries.size() << " images from "
+                  << cli.dataset_path << "\n"
+                  << "Output: " << cli.output_dir << "\n\n";
+        return run_headless(entries, importer);
+    }
+
+    if (!cli.image_dir.empty()) {
+        io::BasicImporter importer;
+        std::vector<std::filesystem::path> image_files;
+        for (auto& entry : std::filesystem::directory_iterator(cli.image_dir)) {
+            if (!entry.is_regular_file()) continue;
+            auto ext = entry.path().extension().string();
+            if (ext == ".ppm" || ext == ".png" || ext == ".bmp"
+                || ext == ".jpg" || ext == ".jpeg") {
+                image_files.push_back(entry.path());
+            }
+        }
+        std::sort(image_files.begin(), image_files.end());
+
+        // Wrap paths in lightweight entries for the generic lambda
+        struct DirEntry {
+            std::filesystem::path path;
+        };
+        std::vector<DirEntry> dir_entries;
+        dir_entries.reserve(image_files.size());
+        for (auto& p : image_files)
+            dir_entries.push_back({std::move(p)});
+
+        std::cout << "Processing " << dir_entries.size() << " images from "
+                  << cli.image_dir << "\n"
+                  << "Output: " << cli.output_dir << "\n\n";
+        return run_headless(dir_entries, importer);
     }
 
     // =========================================================================
