@@ -8,6 +8,10 @@
 # To check highest thresholds first, nest branches via default chaining.
 # Leaf severity is computed as sigmoid(weighted_sum - threshold).
 
+verdict_mapping:
+  ng_threshold: 0.7
+  warn_threshold: 0.3
+
 type: branch
 field: detection.anomaly_map.max_score
 branches:

@@ -49,12 +49,15 @@ auto DefaultReasoner::Reason(
     if (walk_result.label == "NG" || walk_result.label == "WARN" ||
         walk_result.label == "OK" || walk_result.label == "UNCERTAIN") {
         verdict = walk_result.label;
-    } else if (walk_result.score > 0.7) {
-        verdict = "NG";
-    } else if (walk_result.score > 0.3) {
-        verdict = "WARN";
     } else {
-        verdict = "OK";
+        auto& vm = tree_->VerdictMapping();
+        if (walk_result.score > vm.ng_threshold) {
+            verdict = "NG";
+        } else if (walk_result.score > vm.warn_threshold) {
+            verdict = "WARN";
+        } else {
+            verdict = "OK";
+        }
     }
 
     // --- 4. Assemble full result ---

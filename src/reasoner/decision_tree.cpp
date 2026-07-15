@@ -178,6 +178,10 @@ DecisionTree::DecisionTree(std::unique_ptr<IDecisionNode> root)
 
 auto DecisionTree::Root() const -> const IDecisionNode& { return *root_; }
 
+auto DecisionTree::VerdictMapping() const -> const reasoner::VerdictMapping& {
+    return verdict_mapping_;
+}
+
 auto DecisionTree::LoadFromYAML(std::filesystem::path path)
     -> Result<std::unique_ptr<DecisionTree>> {
     YAML::Node root;
@@ -196,8 +200,18 @@ auto DecisionTree::LoadFromYAML(std::filesystem::path path)
         return tl::make_unexpected(node.error());
     }
 
-    return std::unique_ptr<DecisionTree>(
+    auto tree = std::unique_ptr<DecisionTree>(
         new DecisionTree(std::move(*node)));
+
+    // Parse optional verdict_mapping section (added post-M7 for auto-tuning)
+    if (auto vm = root["verdict_mapping"]; vm.IsDefined()) {
+        tree->verdict_mapping_.ng_threshold =
+            vm["ng_threshold"].as<double>(0.7);
+        tree->verdict_mapping_.warn_threshold =
+            vm["warn_threshold"].as<double>(0.3);
+    }
+
+    return tree;
 }
 
 }  // namespace sai::reasoner

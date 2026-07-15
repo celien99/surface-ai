@@ -91,6 +91,13 @@ enum class ErrorCode : std::uint32_t {
     Detection_CoresetEvolution_Degraded,
     Detection_CoresetEvolution_FullRebuildFailed,
     Detection_CoresetEvolution_ProfileLoadFailed,
+
+    // Tuning (Bayesian auto-tuning of decision parameters)
+    Tuning_SpaceEmpty,
+    Tuning_ConstraintViolated,
+    Tuning_ObjectiveEvalFailed,
+    Tuning_RollbackTriggered,
+    Tuning_ParameterApplyFailed,
 };
 
 struct ErrorInfo {

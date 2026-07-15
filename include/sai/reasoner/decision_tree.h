@@ -24,6 +24,15 @@ struct ScoreFormula {
 };
 
 // -----------------------------------------------------------------------
+// VerdictMapping — score → verdict boundary (hot-reloadable via YAML)
+// -----------------------------------------------------------------------
+struct VerdictMapping {
+    double ng_threshold{0.7};    // score > this → "NG"
+    double warn_threshold{0.3};  // ng_threshold ≥ score > this → "WARN"
+    // score ≤ warn_threshold → "OK"
+};
+
+// -----------------------------------------------------------------------
 // IDecisionNode — polymorphic tree node (Branch or Leaf)
 // -----------------------------------------------------------------------
 class IDecisionNode : public sai::Object {
@@ -80,12 +89,14 @@ class DecisionTree {
 public:
     static auto LoadFromYAML(std::filesystem::path) -> Result<std::unique_ptr<DecisionTree>>;
     auto Root() const -> const IDecisionNode&;
+    auto VerdictMapping() const -> const reasoner::VerdictMapping&;
 
     explicit DecisionTree(std::unique_ptr<IDecisionNode> root);
 
 private:
     static auto ParseNode(const YAML::Node& yaml) -> Result<std::unique_ptr<IDecisionNode>>;
     std::unique_ptr<IDecisionNode> root_;
+    struct VerdictMapping verdict_mapping_;
 };
 
 }  // namespace sai::reasoner
