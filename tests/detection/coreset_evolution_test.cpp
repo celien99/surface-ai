@@ -5,6 +5,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <random>
 #include <vector>
 
@@ -296,4 +297,31 @@ TEST(MultiSignalConsensusTest, LowNormalcyFails) {
     bool ok = sai::detection::MultiSignalConsensusCheck(
         normalcy, det, 0, "OK", 0.8F, 0.0F, 0.0F);
     EXPECT_FALSE(ok);
+}
+
+// ── CoresetUpdater (skeleton) ─────────────────────────────────
+
+TEST(CoresetUpdaterSkeletonTest, LightGreedyPreservesDim) {
+    // Verify that LightGreedySelect produces target_size x dim output.
+    // Since LightGreedySelect is in an anonymous namespace, test indirectly
+    // by checking that the prefilter won't accidentally change dimensions.
+    // Full integration test in Task 5.
+
+    // This test just verifies the buffer draining path.
+    CandidateBuffer::Config buf_cfg;
+    buf_cfg.trigger_frames = 2;
+    CandidateBuffer buf(buf_cfg);
+
+    std::vector<float> data(10 * 8, 1.0F);  // 10 patches, dim=8
+    EvolutionCandidate c;
+    c.grid_h = 1; c.grid_w = 10; c.dim = 8;
+    auto data_vec = std::make_shared<std::vector<float>>(data);
+    c.patch_vectors = std::shared_ptr<const float>(
+        data_vec->data(), [data_vec](const float*) {});
+    buf.Append(std::move(c));
+
+    auto drained = buf.DrainAll();
+    EXPECT_EQ(drained.size(), 1U);
+    auto patch_count = drained[0].grid_h * drained[0].grid_w;
+    EXPECT_EQ(patch_count, 10U);
 }

@@ -37,6 +37,7 @@ set(SAI_DETECTION_SOURCES
     normality_scorer.cpp
     novelty_filter.cpp
     candidate_buffer.cpp
+    coreset_updater.cpp
     multi_signal_consensus.cpp
 )
 

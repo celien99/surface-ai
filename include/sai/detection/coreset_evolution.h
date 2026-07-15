@@ -119,4 +119,48 @@ private:
     float pca_self_query_p95)    // PCA self-query threshold (0.0F if not enabled)
     noexcept -> bool;
 
+// ── 自进化配置 ──
+
+struct EvolutionConfig {
+    bool enabled = false;
+
+    // Normality
+    std::size_t normality_k = 5;
+    float tail_ratio_max = 0.10F;
+
+    // Novelty
+    float coverage_threshold = 0.60F;
+
+    // Buffer
+    std::size_t trigger_frames = 20;
+    std::size_t trigger_patches = 20000;
+    std::size_t max_frames = 50;
+    std::size_t max_patches = 50000;
+
+    // Update
+    std::size_t target_size = 10000;
+    std::chrono::seconds min_update_interval{5};
+    std::size_t greedy_prefilter = 5000;
+
+    // Persistence
+    bool save_on_stop = true;
+    bool backup_old_bank = true;
+    std::size_t max_backups = 3;
+};
+
+// ── 更新统计 ──
+
+struct EvolutionStats {
+    std::size_t frames_added = 0;
+    std::size_t patches_added = 0;
+    std::size_t patches_removed = 0;
+    std::size_t size_before = 0;
+    std::size_t size_after = 0;
+    float mean_displacement = 0.0F;
+    float coverage_gain = 0.0F;
+    std::chrono::milliseconds update_duration{0};
+    std::string last_error;
+    std::size_t update_count = 0;
+};
+
 }  // namespace sai::detection
