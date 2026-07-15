@@ -68,6 +68,16 @@ public:
     // 元数据引用（生命周期与 Embedding 绑定）。
     [[nodiscard]] auto Meta() const noexcept -> const EmbeddingMeta& { return meta_; }
 
+    // Global features (CLIP image-level embedding, optional).
+    // Set by InferenceStage when a GlobalEmbedder is configured.
+    // Consumers (RuleEvalStage) use this for cross-modal vector retrieval.
+    [[nodiscard]] auto GlobalFeatures() const noexcept -> const std::vector<float>&
+    { return global_features_; }
+    [[nodiscard]] auto HasGlobalFeatures() const noexcept -> bool
+    { return !global_features_.empty(); }
+    auto SetGlobalFeatures(std::vector<float> features) noexcept -> void
+    { global_features_ = std::move(features); }
+
     // 总字节大小 = meta_.count * meta_.dim * sizeof(float)。
     [[nodiscard]] auto SizeBytes() const noexcept -> std::size_t;
 
@@ -96,6 +106,7 @@ private:
     std::vector<float> cpu_data_{};
     EmbeddingMeta meta_{};
     bool on_gpu_ = false;
+    std::vector<float> global_features_{};
 };
 
 }  // namespace sai::embedding
