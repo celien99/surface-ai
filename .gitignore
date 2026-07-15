@@ -2,3 +2,5 @@ build/
 Testing/
 .claude/
 CLAUDE.md
+__pycache__/
+.vscode/
