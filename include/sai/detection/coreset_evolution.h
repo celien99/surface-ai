@@ -6,11 +6,15 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <stop_token>
 #include <string>
 #include <vector>
 
 #include <sai/core/error.h>
 #include <sai/core/object.h>
+
+// Forward declarations in sai namespace (outside sai::detection)
+namespace sai::knowledge { class KnowledgeStore; }
 
 namespace sai::detection {
 
@@ -161,6 +165,56 @@ struct EvolutionStats {
     std::chrono::milliseconds update_duration{0};
     std::string last_error;
     std::size_t update_count = 0;
+};
+
+// ── CoresetEvolution 核心门面 ──
+
+class CoresetEvolution final : public Object {
+public:
+    CoresetEvolution(EvolutionConfig cfg,
+                     PatchCore& detector,
+                     NormalityProfile profile) noexcept;
+
+    // 每帧调用（检测线程，~微秒，零阻塞）
+    // embedding_data: 原始 patch 向量（grid_h * grid_w * dim 个 float），
+    //   用于通过 NoveltyFilter 后创建 EvolutionCandidate。
+    //   调用方（seat_aoi）从 Embedding::Data() 获取。
+    auto AssessAndOffer(const float* distances,
+                        std::size_t query_count,
+                        std::size_t k,
+                        const float* embedding_data,
+                        std::size_t grid_h,
+                        std::size_t grid_w,
+                        std::size_t dim,
+                        const DetectionResult& det_result,
+                        std::size_t matched_rules_count,
+                        const std::string& reasoner_verdict,
+                        float effective_threshold,
+                        float pca_image_score,
+                        float pca_self_query_p95) noexcept -> void;
+
+    // 启动/停止后台更新线程
+    auto Start(std::stop_token token) noexcept -> void;
+    auto Stop() noexcept -> void;  // 阻塞直到线程退出 + FullRebuild
+
+    [[nodiscard]] auto IsRunning() const noexcept -> bool;
+    [[nodiscard]] auto LatestStats() const noexcept -> EvolutionStats;
+    [[nodiscard]] auto Profile() const noexcept -> const NormalityProfile&;
+
+    auto BindKnowledgeStore(std::shared_ptr<knowledge::KnowledgeStore> ks) noexcept -> void;
+
+    // 显式全量重建 + 持久化（Pipeline Stop 时调用）
+    [[nodiscard]] auto FullRebuild(const std::filesystem::path& save_path) noexcept
+        -> Result<void>;
+
+    // Object constraints
+    CoresetEvolution(CoresetEvolution&&) noexcept = delete;
+    CoresetEvolution(const CoresetEvolution&) = delete;
+    ~CoresetEvolution() override;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 }  // namespace sai::detection

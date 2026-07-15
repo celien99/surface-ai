@@ -325,3 +325,62 @@ TEST(CoresetUpdaterSkeletonTest, LightGreedyPreservesDim) {
     auto patch_count = drained[0].grid_h * drained[0].grid_w;
     EXPECT_EQ(patch_count, 10U);
 }
+
+// ── CoresetEvolution (integration tests — require PatchCore) ──
+
+#include <sai/detection/patch_core.h>
+
+TEST(CoresetEvolutionTest, FullRebuildSavesFiles) {
+    // Build a small bank, create CoresetEvolution, call FullRebuild.
+    // Verify .bin + .profile.yaml exist and are valid.
+    auto bank = BuildSmallBank(8, 50);
+    auto profile = NormalityProfile::Compute(bank, 5);
+
+    PatchCore::Config pc_cfg;
+    pc_cfg.embed_dim = 8;
+    pc_cfg.feature_bank_path = "";
+    PatchCore detector(pc_cfg);
+    detector.SetFeatureBank(std::make_unique<FeatureBank>(std::move(bank)));
+
+    EvolutionConfig evo_cfg;
+    evo_cfg.enabled = true;
+    evo_cfg.target_size = 50;
+    CoresetEvolution evo(evo_cfg, detector, std::move(profile));
+
+    auto tmp = fs::temp_directory_path() / "test_evo_coreset.bin";
+    auto result = evo.FullRebuild(tmp);
+    ASSERT_TRUE(result.has_value()) << result.error().message;
+
+    EXPECT_TRUE(fs::exists(tmp));
+    EXPECT_TRUE(fs::exists(fs::path(tmp.string() + ".profile.yaml")));
+
+    fs::remove(tmp);
+    fs::remove(tmp.string() + ".profile.yaml");
+}
+
+TEST(CoresetEvolutionTest, FixedSizeAfterFullRebuild) {
+    auto bank = BuildSmallBank(8, 100);
+    auto profile = NormalityProfile::Compute(bank, 5);
+
+    PatchCore::Config pc_cfg;
+    pc_cfg.embed_dim = 8;
+    PatchCore detector(pc_cfg);
+    detector.SetFeatureBank(std::make_unique<FeatureBank>(std::move(bank)));
+
+    EvolutionConfig evo_cfg;
+    evo_cfg.enabled = true;
+    evo_cfg.target_size = 30;  // smaller than original
+    CoresetEvolution evo(evo_cfg, detector, std::move(profile));
+
+    auto tmp = fs::temp_directory_path() / "test_evo_fixed.bin";
+    auto result = evo.FullRebuild(tmp);
+    ASSERT_TRUE(result.has_value()) << result.error().message;
+
+    // Verify output bank has target_size vectors
+    auto loaded = FeatureBank::LoadFromFile(tmp, 8);
+    ASSERT_TRUE(loaded.has_value());
+    EXPECT_EQ(loaded->NumSamples(), 30U);
+
+    fs::remove(tmp);
+    fs::remove(tmp.string() + ".profile.yaml");
+}
