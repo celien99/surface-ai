@@ -4,6 +4,7 @@
 // Each class is defined in its own *_stage.cpp file.
 // stage_factory.cpp includes this to construct stages by type.
 
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -100,12 +101,34 @@ public:
     auto OnStart(Context&) -> Result<void> override;
     auto OnStop(Context&) -> Result<void> override;
     auto Process(StageInput) -> Result<StageOutput> override;
-    auto SetDetector(std::shared_ptr<sai::detection::IDetector> det) -> void {
-        detector_ = std::move(det); stub_ = false;
+
+    // Register a detector for a specific (surface_id, position_id) pair.
+    auto AddDetector(std::string surface_id, std::uint16_t position_id,
+                     std::shared_ptr<sai::detection::IDetector> det) -> void {
+        detectors_[{std::move(surface_id), position_id}] = std::move(det);
+        stub_ = false;
     }
+
+    // Backward compat: single-detector convenience (position=0, any surface).
+    auto SetDetector(std::shared_ptr<sai::detection::IDetector> det) -> void {
+        default_detector_ = std::move(det);
+        stub_ = false;
+    }
+
+    // Access for evolution wiring.
+    [[nodiscard]] auto GetDetector(std::string_view surface_id,
+                                    std::uint16_t position_id) const
+        -> std::shared_ptr<sai::detection::IDetector> {
+        auto it = detectors_.find({std::string(surface_id), position_id});
+        if (it != detectors_.end()) return it->second;
+        return default_detector_;
+    }
+
 private:
     std::string id_;
-    std::shared_ptr<sai::detection::IDetector> detector_;
+    using BankKey = std::pair<std::string, std::uint16_t>;
+    std::map<BankKey, std::shared_ptr<sai::detection::IDetector>> detectors_;
+    std::shared_ptr<sai::detection::IDetector> default_detector_;
     bool stub_ = true;
 };
 
