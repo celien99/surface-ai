@@ -16,6 +16,7 @@ if(CUDAToolkit_FOUND)
         tensorrt_engine.cpp
         dino_v3_adapter.cpp
         sam2_adapter.cpp
+        sam2_segmenter.cpp
         clip_adapter.cpp
     )
 endif()
