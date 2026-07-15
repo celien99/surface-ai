@@ -153,11 +153,17 @@ auto BayesianOptimizer::EnsureCache() const -> void {
         jitter *= 10.0;
     }
     // If all attempts fail, jitter is already large — one last try
+    jitter *= 10.0;
     auto K = BuildKernelMatrix();
     for (std::size_t i = 0; i < n; ++i) {
         K[i][i] += jitter;
     }
-    CholeskyDecompose(K, cached_L_);
+    if (!CholeskyDecompose(K, cached_L_)) {
+        // Matrix still non-PD despite maximal jitter — leave cache invalid;
+        // Predict will return safe defaults when cache_valid_ is false.
+        cache_valid_ = false;
+        return;
+    }
     std::vector<double> y(n);
     for (std::size_t i = 0; i < n; ++i) {
         y[i] = observations_[i].cost;
@@ -170,7 +176,7 @@ auto BayesianOptimizer::Predict(const std::vector<double>& point) const -> Predi
     EnsureCache();
 
     std::size_t n = observations_.size();
-    if (n == 0) return {0.0, sigma2_};
+    if (n == 0 || !cache_valid_) return {0.0, sigma2_};
 
     // Compute k* vector
     std::vector<double> kstar(n);
@@ -299,7 +305,6 @@ auto BayesianOptimizer::FitHyperparameters() -> void {
     double a = std::log(sigma2_);
     double b = std::log(length_);
 
-    double lr = 0.05;
     std::size_t max_iters_local = 50;
     double tol = 1e-4;
 
@@ -339,9 +344,6 @@ auto BayesianOptimizer::FitHyperparameters() -> void {
         double cur_lml = ComputeLogMarginalLikelihood(a, b);
         if (std::abs(cur_lml - prev_lml) < tol) break;
         prev_lml = cur_lml;
-
-        // Reduce learning rate if not improving
-        if (step < 0.01) lr *= 0.5;
     }
 
     sigma2_ = std::exp(a);
@@ -355,7 +357,6 @@ auto BayesianOptimizer::LBFGSBMaximize() -> std::vector<double> {
     std::size_t dim = space_.Dimension();
     if (dim == 0) return {};
 
-    static thread_local std::mt19937 rng(std::random_device{}());
     std::size_t m = 5;  // history size
 
     std::vector<double> best_x;
