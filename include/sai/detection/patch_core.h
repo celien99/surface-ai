@@ -73,6 +73,16 @@ public:
         feature_bank_ = std::move(fb);
     }
 
+    // 原子替换 FeatureBank，返回旧 bank。
+    // 用于 CoresetEvolution 的 double-buffer swap——旧 bank 由调用方回收作为 standby。
+    // 可在运行时调用（检测线程正在读取旧 bank → 旧 bank 由返回的 unique_ptr 保持存活）。
+    [[nodiscard]] auto SwapFeatureBank(std::unique_ptr<FeatureBank> new_bank) noexcept
+        -> std::unique_ptr<FeatureBank> {
+        auto old = std::move(feature_bank_);
+        feature_bank_ = std::move(new_bank);
+        return old;
+    }
+
     // Object（基类）禁止移动/拷贝，故 PatchCore 继承此约束
     PatchCore(PatchCore&&) noexcept = delete;
     PatchCore(const PatchCore&) = delete;

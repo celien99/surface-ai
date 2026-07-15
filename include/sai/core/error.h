@@ -85,6 +85,12 @@ enum class ErrorCode : std::uint32_t {
     Visualization_FrameBufferFull,
     Visualization_ConfigReloadFailed,
     Visualization_PipelineRestartFailed,
+
+    // CoresetEvolution (online self-evolution)
+    Detection_CoresetEvolution_UpdateFailed,
+    Detection_CoresetEvolution_Degraded,
+    Detection_CoresetEvolution_FullRebuildFailed,
+    Detection_CoresetEvolution_ProfileLoadFailed,
 };
 
 struct ErrorInfo {
