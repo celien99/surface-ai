@@ -1,69 +1,75 @@
 # Seat Leather Inspection Decision Tree
-# Evaluated by DefaultReasoner to produce final verdict + severity + recommendation
+# Evaluated by DefaultReasoner (TreeWalker + ScoreCalculator) to produce
+# final verdict, severity, and recommendation.
+#
+# Format: type=leaf or type=branch with field + branches map + default child.
+# Branch keys support numeric ranges: ">N", ">=N", "<N", "<=N".
+# IMPORTANT: std::map sorts keys alphabetically, so ">0.6" < ">0.8".
+# To check highest thresholds first, nest branches via default chaining.
+# Leaf severity is computed as sigmoid(weighted_sum - threshold).
 
-tree:
-  name: "seat_leather_inspection"
-  version: "1.0"
-  root:
-    type: "branch"
-    description: "Check if any critical defect is triggered"
-    condition:
-      field: "rules.critical_count"
-      op: "GT"
-      value: 0
-    true_branch:
-      type: "leaf"
-      verdict: "NG"
-      severity_formula: "min(1.0, rules.max_severity * 1.2)"
-      recommendation: "Reject — critical defect detected. Isolate and quarantine."
-      score_weight: 1.0
-    false_branch:
-      type: "branch"
-      description: "Check if major defects exceed tolerance"
-      condition:
-        field: "rules.major_count"
-        op: "GT"
-        value: 2
-      true_branch:
-        type: "leaf"
-        verdict: "NG"
-        severity_formula: "rules.max_severity * 0.9"
-        recommendation: "Reject — multiple major defects exceed tolerance."
-        score_weight: 0.9
-      false_branch:
-        type: "branch"
-        description: "Check for minor defects with batch history"
-        condition:
-          type: "AND"
-          children:
-            - field: "rules.minor_count"
-              op: "GT"
-              value: 0
-            - field: "knowledge.batch_reject_rate_pct"
-              op: "GT"
-              value: 3.0
-        true_branch:
-          type: "leaf"
-          verdict: "WARN"
-          severity_formula: "0.3 + rules.max_severity * 0.3"
-          recommendation: "Warning — minor defects present in high-reject batch. Flag for review."
-          score_weight: 0.5
-        false_branch:
-          type: "branch"
-          description: "Minor defects only, normal batch"
-          condition:
-            field: "rules.minor_count"
-            op: "GT"
-            value: 0
-          true_branch:
-            type: "leaf"
-            verdict: "WARN"
-            severity_formula: "rules.max_severity * 0.3"
-            recommendation: "Minor defect found. Continue monitoring."
-            score_weight: 0.3
-          false_branch:
-            type: "leaf"
-            verdict: "OK"
-            severity_formula: "0.0"
-            recommendation: "Pass — no defects detected."
-            score_weight: 0.1
+type: branch
+field: detection.anomaly_map.max_score
+branches:
+  ">0.8":
+    type: leaf
+    label: NG
+    recommendation: "Critical anomaly — reject immediately and quarantine part"
+    formulas:
+      - weights: [0.5, 0.5]
+        features: [detection.anomaly_map.max_score, detection.image_level_score]
+        threshold: 0.3
+default:
+  type: branch
+  field: detection.anomaly_map.max_score
+  branches:
+    ">0.6":
+      type: branch
+      field: detection.region_count
+      branches:
+        ">3":
+          type: leaf
+          label: NG
+          recommendation: "Multiple anomalous regions (>3) with elevated score — reject"
+          formulas:
+            - weights: [0.3, 0.3, 0.4]
+              features:
+                [detection.anomaly_map.max_score, detection.image_level_score,
+                 detection.region_count]
+              threshold: 0.35
+        ">0":
+          type: leaf
+          label: WARN
+          recommendation: "Elevated anomaly score with few regions — flag for manual inspection"
+          formulas:
+            - weights: [0.5, 0.5]
+              features: [detection.anomaly_map.max_score, detection.image_level_score]
+              threshold: 0.4
+      default:
+        type: leaf
+        label: UNCERTAIN
+        recommendation: "Anomaly score elevated but no regions detected — inspect manually"
+        formulas:
+          - weights: [1.0]
+            features: [detection.image_level_score]
+            threshold: 0.5
+  default:
+    type: branch
+    field: detection.anomaly_map.max_score
+    branches:
+      ">0.4":
+        type: leaf
+        label: WARN
+        recommendation: "Mild anomaly score — continue monitoring and track in history"
+        formulas:
+          - weights: [0.6, 0.4]
+            features: [detection.image_level_score, detection.anomaly_map.max_score]
+            threshold: 0.45
+    default:
+      type: leaf
+      label: OK
+      recommendation: "No significant anomaly detected — pass"
+      formulas:
+        - weights: [1.0]
+          features: [detection.image_level_score]
+          threshold: 0.5

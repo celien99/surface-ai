@@ -1,90 +1,71 @@
 # Seat Leather Defect Rules
-# Each rule defines a defect detection condition evaluated by the RuleEngine
+# Each rule defines a defect detection condition evaluated by the RuleEngine.
+# Condition expressions use the string DSL parsed by Lexer+Parser.
+# FactBase keys are populated by FactBuilder::MapDetection from DetectionResult.
+#
+# NOTE: Dotted field paths cannot contain numeric segments (e.g. region.0.area).
+# The parser only accepts Identifier tokens after '.', not Number tokens.
+# Use facts without indexed segments: anomaly_map.max_score, region_count, etc.
 
 rule_sets:
-  surface_defects:
-    - name: "scratch_detection"
-      description: "Detect scratches on leather surface"
-      condition:
-        type: "AND"
-        children:
-          - type: "COMPARE"
-            field: "detection.anomaly_score"
-            op: "GT"
-            value: 0.7
-          - type: "COMPARE"
-            field: "detection.region_area_mm2"
-            op: "GT"
-            value: 5.0
+  seat_leather_inspection:
+    - name: "crack_detection"
+      priority: 120
+      condition: 'detection.anomaly_map.max_score > 0.8 AND detection.region_count > 0'
       action:
-        severity: "major"
-        label: "scratch"
-      priority: 10
+        label: "NG"
+        base_severity: 0.95
+        recommendation: "Critical crack or tear detected — isolate and quarantine immediately"
+      overrides: ["scratch_major", "scratch_minor", "dent_detection", "stain_detection"]
+      overridden_by: []
+
+    - name: "scratch_major"
+      priority: 100
+      condition: 'detection.anomaly_map.max_score > 0.7 AND detection.region_count > 0'
+      action:
+        label: "NG"
+        base_severity: 0.80
+        recommendation: "Major scratch defect — reject for rework"
+      overrides: ["scratch_minor", "dent_detection", "stain_detection"]
+      overridden_by: ["crack_detection"]
 
     - name: "dent_detection"
-      description: "Detect dents/indentations on leather surface"
-      condition:
-        type: "AND"
-        children:
-          - type: "COMPARE"
-            field: "detection.depth_deviation_mm"
-            op: "GT"
-            value: 0.3
-          - type: "COMPARE"
-            field: "detection.anomaly_score"
-            op: "GT"
-            value: 0.5
+      priority: 80
+      condition: 'detection.anomaly_map.max_score > 0.5 AND detection.image_level_score > 0.4'
       action:
-        severity: "minor"
-        label: "dent"
-      priority: 8
+        label: "WARN"
+        base_severity: 0.35
+        recommendation: "Possible surface dent or indentation — flag for manual review"
+      overrides: []
+      overridden_by: ["crack_detection", "scratch_major"]
 
     - name: "stain_detection"
-      description: "Detect stains or discoloration"
-      condition:
-        type: "AND"
-        children:
-          - type: "COMPARE"
-            field: "detection.color_delta_e"
-            op: "GT"
-            value: 3.0
-          - type: "COMPARE"
-            field: "detection.anomaly_score"
-            op: "GT"
-            value: 0.6
+      priority: 60
+      condition: 'detection.anomaly_map.max_score > 0.6 AND detection.image_level_score > 0.5'
       action:
-        severity: "minor"
-        label: "stain"
-      priority: 6
+        label: "WARN"
+        base_severity: 0.25
+        recommendation: "Possible stain or discoloration — track and continue monitoring"
+      overrides: []
+      overridden_by: ["scratch_major"]
 
-    - name: "crack_detection"
-      description: "Detect cracks or tears in leather"
-      condition:
-        type: "AND"
-        children:
-          - type: "COMPARE"
-            field: "detection.aspect_ratio"
-            op: "GT"
-            value: 5.0
-          - type: "COMPARE"
-            field: "detection.anomaly_score"
-            op: "GT"
-            value: 0.8
+    - name: "scratch_minor"
+      priority: 50
+      condition: 'detection.anomaly_map.max_score > 0.45 AND detection.image_level_score > 0.35'
       action:
-        severity: "critical"
-        label: "crack"
-      priority: 12
-      overrides: ["scratch_detection"]
+        label: "WARN"
+        base_severity: 0.20
+        recommendation: "Minor surface imperfection — continue monitoring"
+      overrides: []
+      overridden_by: ["crack_detection", "scratch_major"]
 
   material_rules:
     - name: "batch_reject_check"
-      description: "Flag if batch historical reject rate exceeds threshold"
-      condition:
-        type: "COMPARE"
-        field: "knowledge.batch_reject_rate_pct"
-        op: "GT"
-        value: 5.0
+      priority: 150
+      condition: 'detection.image_level_score > 0.7 AND detection.region_count > 2'
       action:
-        severity: "major"
-        label: "batch_quality_alert"
-      priority: 15
+        label: "NG"
+        base_severity: 0.90
+        recommendation: "Multiple high-confidence anomalies — production quality alert triggered"
+      overrides: []
+      overridden_by: []
