@@ -19,6 +19,8 @@
 #include <thread>
 #include <vector>
 
+#include <yaml-cpp/yaml.h>
+
 namespace sai::detection {
 namespace {
 
@@ -87,6 +89,57 @@ auto PrefilterCandidates(const std::vector<float>& vectors, std::size_t dim,
 }
 
 }  // namespace
+
+// ── EvolutionConfig::FromYaml ─────────────────────────────────────
+
+auto EvolutionConfig::FromYaml(const YAML::Node& node) -> Result<EvolutionConfig> {
+    EvolutionConfig cfg;
+    try {
+        auto se = node["self_evolution"];
+        if (!se.IsDefined()) {
+            cfg.enabled = false;
+            return cfg;
+        }
+
+        cfg.enabled = se["enabled"].as<bool>(false);
+
+        if (auto n = se["normality"]; n.IsDefined()) {
+            cfg.normality_k = n["k_self_query"].as<std::size_t>(5);
+            cfg.tail_ratio_max = n["tail_ratio_max"].as<float>(0.10F);
+        }
+
+        if (auto n = se["novelty"]; n.IsDefined()) {
+            cfg.coverage_threshold = n["coverage_threshold"].as<float>(0.60F);
+        }
+
+        if (auto b = se["buffer"]; b.IsDefined()) {
+            cfg.max_frames = b["max_frames"].as<std::size_t>(50);
+            cfg.max_patches = b["max_patches"].as<std::size_t>(50000);
+            cfg.trigger_frames = b["trigger_frames"].as<std::size_t>(20);
+            cfg.trigger_patches = b["trigger_patches"].as<std::size_t>(20000);
+        }
+
+        if (auto u = se["update"]; u.IsDefined()) {
+            cfg.target_size = u["target_size"].as<std::size_t>(10000);
+            cfg.min_update_interval = std::chrono::seconds{
+                u["min_interval_sec"].as<int>(5)};
+            cfg.greedy_prefilter = u["greedy_prefilter"].as<std::size_t>(5000);
+        }
+
+        if (auto p = se["persistence"]; p.IsDefined()) {
+            cfg.save_on_stop = p["save_on_stop"].as<bool>(true);
+            cfg.backup_old_bank = p["backup_old_bank"].as<bool>(true);
+            cfg.max_backups = p["max_backups"].as<std::size_t>(3);
+        }
+    } catch (const YAML::Exception& e) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Pipeline_InvalidConfig,
+            "self_evolution config parse error: " + std::string(e.what()),
+            std::source_location::current(),
+        });
+    }
+    return cfg;
+}
 
 struct CoresetEvolution::Impl {
     EvolutionConfig cfg;

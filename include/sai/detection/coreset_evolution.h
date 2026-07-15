@@ -13,6 +13,9 @@
 #include <sai/core/error.h>
 #include <sai/core/object.h>
 
+// Forward declarations
+namespace YAML { class Node; }
+
 // Forward declarations in sai namespace (outside sai::detection)
 namespace sai::knowledge { class KnowledgeStore; }
 
@@ -127,6 +130,9 @@ private:
 
 struct EvolutionConfig {
     bool enabled = false;
+
+    // 从 YAML 节点解析配置（self_evolution 子节点）
+    [[nodiscard]] static auto FromYaml(const YAML::Node& node) -> Result<EvolutionConfig>;
 
     // Normality
     std::size_t normality_k = 5;

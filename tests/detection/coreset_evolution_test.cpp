@@ -11,6 +11,8 @@
 
 #include <gtest/gtest.h>
 
+#include <yaml-cpp/yaml.h>
+
 #include <sai/detection/coreset_evolution.h>
 #include <sai/detection/feature_bank.h>
 #include <sai/embedding/embedding.h>
@@ -247,6 +249,39 @@ TEST(CandidateBufferTest, TriggerByPatches) {
 }
 
 }  // namespace
+
+// ── EvolutionConfig YAML parsing ──────────────────────────────
+
+TEST(EvolutionConfigTest, ParseFromYaml) {
+    YAML::Node yaml = YAML::Load(R"(
+self_evolution:
+  enabled: true
+  normality:
+    k_self_query: 3
+    tail_ratio_max: 0.15
+  buffer:
+    trigger_frames: 30
+)");
+
+    auto cfg_result = EvolutionConfig::FromYaml(yaml);
+    ASSERT_TRUE(cfg_result.has_value()) << cfg_result.error().message;
+    auto cfg = std::move(*cfg_result);
+
+    EXPECT_TRUE(cfg.enabled);
+    EXPECT_EQ(cfg.normality_k, 3U);
+    EXPECT_FLOAT_EQ(cfg.tail_ratio_max, 0.15F);
+    EXPECT_EQ(cfg.trigger_frames, 30U);
+    // defaults
+    EXPECT_EQ(cfg.coverage_threshold, 0.60F);
+    EXPECT_EQ(cfg.target_size, 10000U);
+}
+
+TEST(EvolutionConfigTest, DisabledWhenMissing) {
+    YAML::Node yaml = YAML::Load(R"(detector: PatchCore)");
+    auto cfg_result = EvolutionConfig::FromYaml(yaml);
+    ASSERT_TRUE(cfg_result.has_value());
+    EXPECT_FALSE(cfg_result->enabled);
+}
 
 // ── MultiSignalConsensus ──────────────────────────────────────
 

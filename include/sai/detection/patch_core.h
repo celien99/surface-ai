@@ -2,9 +2,11 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string_view>
+#include <vector>
 
 #include <sai/detection/detector.h>
 #include <sai/detection/feature_bank.h>
@@ -83,6 +85,25 @@ public:
         return old;
     }
 
+    // ── 最近一帧检测上下文（供 CoresetEvolution 访问） ──
+    // 每次 Detect() 调用后更新。调用方在 ResultCallback 中使用。
+    struct DetectionContext {
+        std::vector<float> knn_distances;      // query_count × k_nearest
+        std::size_t k_nearest = 0;
+        std::vector<float> embedding_data;     // query_count × dim
+        std::size_t grid_h = 0;
+        std::size_t grid_w = 0;
+        std::size_t dim = 0;
+        DetectionResult detection_result;      // 最近一帧检测结果
+        float effective_threshold = 0.0F;
+        float pca_image_score = 0.0F;          // 0.0 = PCA 未启用
+        float pca_self_query_p95 = 0.0F;       // 0.0 = PCA 未启用
+    };
+
+    [[nodiscard]] auto LastContext() const noexcept -> const DetectionContext& {
+        return last_ctx_;
+    }
+
     // Object（基类）禁止移动/拷贝，故 PatchCore 继承此约束
     PatchCore(PatchCore&&) noexcept = delete;
     PatchCore(const PatchCore&) = delete;
@@ -90,6 +111,9 @@ public:
 private:
     Config cfg_;
     std::unique_ptr<FeatureBank> feature_bank_;
+
+    // 最近一帧检测上下文（每次 Detect 后更新）
+    DetectionContext last_ctx_;
 
     // E1+E2: 白化参数
     std::optional<sai::embedding::DimensionReducer::WhiteningParams> whitening_params_;

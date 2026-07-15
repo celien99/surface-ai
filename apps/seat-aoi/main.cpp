@@ -8,9 +8,12 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include <yaml-cpp/yaml.h>
 
 #include <sqlite3.h>
 
@@ -33,6 +36,7 @@
 #include <sai/embedding/simple_patch_embedder.h>
 #include <sai/detection/patch_core.h>
 #include <sai/detection/feature_bank.h>
+#include <sai/detection/coreset_evolution.h>
 #include <sai/knowledge/knowledge_graph.h>
 #include <sai/retrieval/vector_path.h>
 #include <sai/rule/rule_engine.h>
@@ -426,6 +430,32 @@ auto main(int argc, char* argv[]) -> int {
     }
 
     // =========================================================================
+    // 4b. Coreset Self-Evolution — YAML config-driven
+    // =========================================================================
+    std::unique_ptr<detection::CoresetEvolution> evolution;
+    if (feature_bank) {
+        auto pipeline_yaml = YAML::LoadFile("resources/pipeline.yaml");
+        if (auto se_node = pipeline_yaml["pipeline"]["stages"][3]["config"]["self_evolution"];
+            se_node.IsDefined()) {
+            auto evo_cfg = detection::EvolutionConfig::FromYaml(se_node);
+            if (evo_cfg.has_value() && evo_cfg->enabled) {
+                auto profile_path = std::filesystem::path(cli.coreset_path)
+                    .replace_extension(".profile.yaml");
+                auto profile = std::filesystem::exists(profile_path)
+                    ? detection::NormalityProfile::LoadFromYaml(profile_path)
+                    : detection::NormalityProfile::Compute(*feature_bank);
+
+                if (profile.has_value()) {
+                    evolution = std::make_unique<detection::CoresetEvolution>(
+                        std::move(*evo_cfg), *patch_core, std::move(*profile));
+                    std::cout << "CoresetEvolution: enabled (target_size="
+                              << evo_cfg->target_size << ")\n";
+                }
+            }
+        }
+    }
+
+    // =========================================================================
     // 5. KnowledgeGraph — in-memory SQLite with sample seat leather data
     // =========================================================================
     sqlite3* sqlite_db = nullptr;
@@ -484,6 +514,35 @@ auto main(int argc, char* argv[]) -> int {
         static_cast<pipeline::ExportStage*>(s)->SetExporter(exporter);
 
     // =========================================================================
+    // 9b. Result callback for self-evolution (shared by headless and GUI modes)
+    // =========================================================================
+    if (evolution) {
+        pipeline->SetResultCallback(
+            [&](int fid, const sai::reasoner::ReasoningResult& result) {
+                (void)fid;
+                if (evolution && evolution->IsRunning()) {
+                    const auto& ctx = patch_core->LastContext();
+                    if (!ctx.knn_distances.empty()) {
+                        evolution->AssessAndOffer(
+                            ctx.knn_distances.data(),
+                            ctx.knn_distances.size() / ctx.k_nearest,
+                            ctx.k_nearest,
+                            ctx.embedding_data.data(),
+                            ctx.grid_h,
+                            ctx.grid_w,
+                            ctx.dim,
+                            ctx.detection_result,
+                            result.triggered_rules.size(),  // matched_rules_count
+                            result.verdict,                 // reasoner_verdict
+                            ctx.effective_threshold,
+                            ctx.pca_image_score,
+                            ctx.pca_self_query_p95);
+                    }
+                }
+            });
+    }
+
+    // =========================================================================
     // 10. Start Pipeline
     // =========================================================================
     auto start_result = pipeline->Start();
@@ -491,6 +550,15 @@ auto main(int argc, char* argv[]) -> int {
         std::cerr << "Pipeline start failed: "
                   << start_result.error().message << "\n";
         return 1;
+    }
+
+    // =========================================================================
+    // 10b. Start self-evolution background thread
+    // =========================================================================
+    if (evolution) {
+        std::stop_source evo_ss;
+        evolution->Start(evo_ss.get_token());
+        std::cout << "CoresetEvolution: started\n";
     }
 
     // =========================================================================
@@ -584,6 +652,7 @@ auto main(int argc, char* argv[]) -> int {
                   << "Failed:  " << failed << "\n"
                   << "Results: " << cli.output_dir << "\n";
 
+        if (evolution) evolution->Stop();
         (void)pipeline->Stop();
         (void)ctx->Stop();
         return (ng > 0 || failed > 0) ? 1 : 0;
@@ -602,16 +671,50 @@ auto main(int argc, char* argv[]) -> int {
     auto* dashboard_vm = new visualization::DashboardViewModel(&app);
     auto* frame_provider = new visualization::FrameProvider();
 
-    pipeline->SetResultCallback(
-        [=](int fid, const reasoner::ReasoningResult& result) {
-            inspection_vm->UpdateResult(fid, result);
-            visualization::FrameSummary summary;
-            summary.frame_id = fid;
-            summary.verdict = result.verdict;
-            summary.severity = std::to_string(result.severity);
-            summary.timestamp = std::chrono::system_clock::now();
-            dashboard_vm->AppendFrameSummary(std::move(summary));
-        });
+    if (!evolution) {
+        // No evolution — keep simple callback (no self-evolution capture needed)
+        pipeline->SetResultCallback(
+            [=](int fid, const reasoner::ReasoningResult& result) {
+                inspection_vm->UpdateResult(fid, result);
+                visualization::FrameSummary summary;
+                summary.frame_id = fid;
+                summary.verdict = result.verdict;
+                summary.severity = std::to_string(result.severity);
+                summary.timestamp = std::chrono::system_clock::now();
+                dashboard_vm->AppendFrameSummary(std::move(summary));
+            });
+    } else {
+        pipeline->SetResultCallback(
+            [&](int fid, const reasoner::ReasoningResult& result) {
+                inspection_vm->UpdateResult(fid, result);
+                visualization::FrameSummary summary;
+                summary.frame_id = fid;
+                summary.verdict = result.verdict;
+                summary.severity = std::to_string(result.severity);
+                summary.timestamp = std::chrono::system_clock::now();
+                dashboard_vm->AppendFrameSummary(std::move(summary));
+
+                if (evolution && evolution->IsRunning()) {
+                    const auto& ctx = patch_core->LastContext();
+                    if (!ctx.knn_distances.empty()) {
+                        evolution->AssessAndOffer(
+                            ctx.knn_distances.data(),
+                            ctx.knn_distances.size() / ctx.k_nearest,
+                            ctx.k_nearest,
+                            ctx.embedding_data.data(),
+                            ctx.grid_h,
+                            ctx.grid_w,
+                            ctx.dim,
+                            ctx.detection_result,
+                            result.triggered_rules.size(),
+                            result.verdict,
+                            ctx.effective_threshold,
+                            ctx.pca_image_score,
+                            ctx.pca_self_query_p95);
+                    }
+                }
+            });
+    }
 
     device::FakeCamera::Config cam_cfg{
         .width = 1024, .height = 1024, .fps = 10.0};
@@ -638,6 +741,7 @@ auto main(int argc, char* argv[]) -> int {
         (void)camera->StopAcquisition();
         (void)camera->Disconnect();
         (void)pipeline->Drain();
+        if (evolution) evolution->Stop();
         (void)pipeline->Stop();
         (void)ctx->Stop();
     });

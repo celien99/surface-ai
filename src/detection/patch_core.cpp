@@ -229,11 +229,26 @@ auto PatchCore::Detect(const sai::embedding::Embedding& embedding) noexcept
     // 7. 构建 DetectionResult（标准后处理管线）
     auto end = std::chrono::steady_clock::now();
     auto latency = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
-    return BuildDetectionResult(std::move(patch_scores), grid_h, grid_w,
-                                cfg_.image_height, cfg_.image_width,
-                                cfg_.gaussian_sigma,
-                                effective_threshold_,
-                                latency);
+    auto result = BuildDetectionResult(std::move(patch_scores), grid_h, grid_w,
+                                        cfg_.image_height, cfg_.image_width,
+                                        cfg_.gaussian_sigma,
+                                        effective_threshold_,
+                                        latency);
+
+    // 8. 保存检测上下文（供 CoresetEvolution 访问）
+    last_ctx_.knn_distances = distances;
+    last_ctx_.k_nearest = cfg_.k_nearest;
+    last_ctx_.embedding_data.assign(original_query,
+                                     original_query + query_count * cfg_.embed_dim);
+    last_ctx_.grid_h = grid_h;
+    last_ctx_.grid_w = grid_w;
+    last_ctx_.dim = cfg_.embed_dim;
+    last_ctx_.detection_result = result;
+    last_ctx_.effective_threshold = effective_threshold_;
+    last_ctx_.pca_image_score = 0.0F;
+    last_ctx_.pca_self_query_p95 = 0.0F;
+
+    return result;
 }
 
 // ── PatchCore::DetectBatch ──────────────────────────────────────────

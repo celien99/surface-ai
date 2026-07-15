@@ -34,6 +34,26 @@ pipeline:
       config:
         detector: PatchCore
         k_nearest: 5
+        self_evolution:
+          enabled: true
+          normality:
+            k_self_query: 5
+            tail_ratio_max: 0.10
+          novelty:
+            coverage_threshold: 0.60
+          buffer:
+            max_frames: 50
+            max_patches: 50000
+            trigger_frames: 20
+            trigger_patches: 20000
+          update:
+            target_size: 10000
+            min_interval_sec: 5
+            greedy_prefilter: 5000
+          persistence:
+            save_on_stop: true
+            backup_old_bank: true
+            max_backups: 3
 
     - id: rule_eval
       type: RuleEval
