@@ -1,5 +1,6 @@
 #pragma once
 
+#include <map>
 #include <memory>
 #include <optional>
 #include <stop_token>
@@ -48,6 +49,15 @@ struct AssembledApp {
     std::optional<sai::tuning::TuningScheduler> tuning_scheduler;
     std::stop_source tuning_stop_source;    // keeps tuning thread alive
     std::stop_source evolution_stop_source;  // keeps evolution thread alive
+
+    // ── Multi-position detectors ──
+    using BankKey = std::pair<std::string, std::uint16_t>;
+    // Ownership: PatchCore owns FeatureBank.
+    // Declared BEFORE evolutions so destruction order is evolutions → patch_cores
+    std::map<BankKey, std::shared_ptr<sai::detection::PatchCore>> patch_cores;
+    // Each evolution holds a PatchCore& (non-owning). Declared AFTER patch_cores.
+    std::map<BankKey, sai::detection::CoresetEvolution> evolutions;
+    std::map<BankKey, std::stop_source> evolution_stop_sources;
 };
 
 auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp>;

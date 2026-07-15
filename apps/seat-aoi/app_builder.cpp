@@ -3,6 +3,7 @@
 #include <chrono>
 #include <filesystem>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <stop_token>
 #include <string>
@@ -35,6 +36,7 @@
 #include <sai/rule/rule_engine.h>
 #include <sai/reasoner/reasoner.h>
 #include <sai/reasoner/decision_tree.h>
+#include <sai/io/coreset_manifest.h>
 #include <sai/io/exporter.h>
 #include <sai/pipeline/pipeline.h>
 #include <sai/pipeline/pipeline_config.h>
@@ -170,25 +172,91 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     }
 
     // =========================================================================
-    // 4b. Coreset Self-Evolution — YAML config-driven
+    // 4b. Multi-position coreset loading (--coreset-manifest)
+    // =========================================================================
+    std::map<BankKey, std::shared_ptr<detection::PatchCore>> patch_cores;
+    std::map<BankKey, detection::CoresetEvolution> evolutions_map;
+    std::map<BankKey, std::stop_source> evo_stop_sources_map;
+
+    if (!cli.coreset_manifest_path.empty()) {
+        auto manifest_result = io::LoadCoresetManifest(cli.coreset_manifest_path);
+        if (!manifest_result) {
+            std::cerr << "Warning: failed to load coreset manifest: "
+                      << manifest_result.error().message << "\n";
+        } else {
+            auto& manifest = *manifest_result;
+            std::cout << "Loading coreset manifest: " << manifest.surface_id
+                      << " (" << manifest.banks.size() << " positions)\n";
+
+            for (auto& bank : manifest.banks) {
+                BankKey key{manifest.surface_id, bank.position_id};
+
+                auto fb_result = detection::FeatureBank::LoadFromFile(bank.path, kEmbedDim);
+                if (!fb_result) {
+                    std::cerr << "Warning: failed to load coreset for position "
+                              << bank.position_id << ": " << fb_result.error().message << "\n";
+                    continue;
+                }
+
+                auto pos_pc_cfg = pc_cfg;
+                pos_pc_cfg.feature_bank_path = bank.path;
+                auto pos_patch_core = std::make_shared<detection::PatchCore>(pos_pc_cfg);
+                pos_patch_core->SetFeatureBank(
+                    std::make_unique<detection::FeatureBank>(std::move(*fb_result)));
+                patch_cores[key] = pos_patch_core;
+
+                std::cout << "  Position " << bank.position_id << ": "
+                          << pos_patch_core->LastContext().k_nearest << " k-NN ready\n";
+            }
+        }
+    }
+
+    // =========================================================================
+    // 4c. Coreset Self-Evolution — YAML config-driven
     // =========================================================================
     std::optional<detection::CoresetEvolution> evolution;
-    if (feature_bank) {
-        if (auto se_node = pipeline_yaml["pipeline"]["stages"][3]["config"]["self_evolution"];
-            se_node.IsDefined()) {
-            auto evo_cfg = detection::EvolutionConfig::FromYaml(se_node);
-            if (evo_cfg.has_value() && evo_cfg->enabled) {
-                auto profile_path = std::filesystem::path(cli.coreset_path)
-                    .replace_extension(".profile.yaml");
-                auto profile = std::filesystem::exists(profile_path)
-                    ? detection::NormalityProfile::LoadFromYaml(profile_path)
-                    : detection::NormalityProfile::Compute(*feature_bank);
+    {
+        auto se_node = pipeline_yaml["pipeline"]["stages"][3]["config"]["self_evolution"];
+        if (se_node.IsDefined()) {
+            auto evo_cfg_result = detection::EvolutionConfig::FromYaml(se_node);
+            if (evo_cfg_result.has_value() && evo_cfg_result->enabled) {
+                auto evo_cfg = std::move(*evo_cfg_result);
 
-                if (profile.has_value()) {
-                    evolution.emplace(
-                        std::move(*evo_cfg), *patch_core, std::move(*profile));
-                    std::cout << "CoresetEvolution: enabled (target_size="
-                              << evo_cfg->target_size << ")\n";
+                if (!patch_cores.empty()) {
+                    // Per-position evolutions: try loading profile alongside each bank
+                    for (auto& [key, pc] : patch_cores) {
+                        // Load profile from .profile.yaml alongside the bank file
+                        auto profile_path = std::filesystem::path(
+                            pc_cfg.feature_bank_path).replace_extension(".profile.yaml");
+                        auto profile = std::filesystem::exists(profile_path)
+                            ? detection::NormalityProfile::LoadFromYaml(profile_path)
+                            : std::optional<detection::NormalityProfile>{};
+
+                        if (profile.has_value()) {
+                            auto evo = detection::CoresetEvolution(
+                                evo_cfg, *pc, std::move(*profile));
+                            evolutions_map.emplace(key, std::move(evo));
+                            std::cout << "CoresetEvolution: pos " << key.second
+                                      << " enabled (target_size=" << evo_cfg.target_size << ")\n";
+                        } else {
+                            std::cout << "CoresetEvolution: pos " << key.second
+                                      << " skipped (no profile)\n";
+                        }
+                    }
+                } else if (feature_bank) {
+                    // Single-position evolution
+                    auto profile_path = std::filesystem::path(cli.coreset_path)
+                        .replace_extension(".profile.yaml");
+                    auto profile = std::filesystem::exists(profile_path)
+                        ? detection::NormalityProfile::LoadFromYaml(profile_path)
+                        : detection::NormalityProfile::Compute(*feature_bank);
+
+                    if (profile.has_value()) {
+                        evolution.emplace(
+                            std::move(evo_cfg), *patch_core, std::move(*profile));
+                        std::cout << "CoresetEvolution: enabled (target_size="
+                                  << evo_cfg.target_size << ")\n";
+                    }
                 }
             }
         }
@@ -285,8 +353,16 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
             static_cast<pipeline::InferenceStage*>(s)->SetGlobalEmbedder(
                 global_embedder);
     }
-    if (auto* s = pipeline->GetStage("detect"))
-        static_cast<pipeline::DetectStage*>(s)->SetDetector(patch_core);
+    if (auto* s = pipeline->GetStage("detect")) {
+        auto* ds = static_cast<pipeline::DetectStage*>(s);
+        if (!patch_cores.empty()) {
+            for (auto& [key, pc] : patch_cores) {
+                ds->AddDetector(key.first, key.second, pc);
+            }
+        } else {
+            ds->SetDetector(patch_core);
+        }
+    }
     if (auto* s = pipeline->GetStage("rule_eval")) {
         auto* rs = static_cast<pipeline::RuleEvalStage*>(s);
         rs->SetRuleEngine(rule_engine);
@@ -326,15 +402,16 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     //    Note: The callback set here is the evolution-aware variant.
     //    GuiRunner will override it if evolution is disabled.
     // =========================================================================
-    if (evolution.has_value()) {
+    if (evolution.has_value() || !evolutions_map.empty()) {
         pipeline->SetResultCallback(
-            [patch_core, &evo = *evolution]
+            [patch_core, &evo = evolution, &evos = evolutions_map, &pcs = patch_cores]
             (int fid, const reasoner::ReasoningResult& result) {
                 (void)fid;
-                if (evo.IsRunning()) {
+                // Single-position evolution
+                if (evo.has_value() && evo->IsRunning()) {
                     const auto& ctx = patch_core->LastContext();
                     if (!ctx.knn_distances.empty()) {
-                        evo.AssessAndOffer(
+                        evo->AssessAndOffer(
                             ctx.knn_distances.data(),
                             ctx.knn_distances.size() / ctx.k_nearest,
                             ctx.k_nearest,
@@ -343,11 +420,38 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
                             ctx.grid_w,
                             ctx.dim,
                             ctx.detection_result,
-                            result.triggered_rules.size(),  // matched_rules_count
-                            result.verdict,                 // reasoner_verdict
+                            result.triggered_rules.size(),
+                            result.verdict,
                             ctx.effective_threshold,
                             ctx.pca_image_score,
                             ctx.pca_self_query_p95);
+                    }
+                }
+                // Multi-position evolution
+                if (!evos.empty()) {
+                    BankKey key{result.surface_id, result.position_id};
+                    auto eit = evos.find(key);
+                    if (eit != evos.end() && eit->second.IsRunning()) {
+                        auto pit = pcs.find(key);
+                        if (pit != pcs.end()) {
+                            const auto& ctx = pit->second->LastContext();
+                            if (!ctx.knn_distances.empty()) {
+                                eit->second.AssessAndOffer(
+                                    ctx.knn_distances.data(),
+                                    ctx.knn_distances.size() / ctx.k_nearest,
+                                    ctx.k_nearest,
+                                    ctx.embedding_data.data(),
+                                    ctx.grid_h,
+                                    ctx.grid_w,
+                                    ctx.dim,
+                                    ctx.detection_result,
+                                    result.triggered_rules.size(),
+                                    result.verdict,
+                                    ctx.effective_threshold,
+                                    ctx.pca_image_score,
+                                    ctx.pca_self_query_p95);
+                            }
+                        }
                     }
                 }
             });
@@ -364,12 +468,18 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     }
 
     // =========================================================================
-    // 10b. Start self-evolution background thread
+    // 10b. Start self-evolution background threads
     // =========================================================================
     std::stop_source evo_ss;
     if (evolution.has_value()) {
         evolution->Start(evo_ss.get_token());
         std::cout << "CoresetEvolution: started\n";
+    }
+    // Start per-position evolutions
+    for (auto& [key, evo] : evolutions_map) {
+        evo_stop_sources_map[key] = std::stop_source{};
+        evo.Start(evo_stop_sources_map[key].get_token());
+        std::cout << "CoresetEvolution: pos " << key.second << " started\n";
     }
 
     // =========================================================================
@@ -394,6 +504,9 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     app.tuning_scheduler = std::move(tuning_scheduler);
     app.tuning_stop_source = std::move(tuning_stop_source);
     app.evolution_stop_source = std::move(evo_ss);
+    app.patch_cores = std::move(patch_cores);
+    app.evolutions = std::move(evolutions_map);
+    app.evolution_stop_sources = std::move(evo_stop_sources_map);
 
     return app;
 }
