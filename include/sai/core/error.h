@@ -47,6 +47,7 @@ enum class ErrorCode : std::uint32_t {
     Inference_ModelConfigMismatch,
     Embedding_NotGpuImage,
     Embedding_DimensionMismatch,
+    Embedding_InvalidPatchParameters,
     Detection_FeatureBankLoadFailed,
     Detection_InvalidPatchGrid,
     // Knowledge (M4)

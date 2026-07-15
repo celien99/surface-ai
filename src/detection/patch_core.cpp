@@ -70,12 +70,20 @@ auto ComputeAdaptiveThreshold(const FeatureBank& bank,
 // ── PatchCore::Initialize ───────────────────────────────────────────
 
 auto PatchCore::Initialize(sai::Context& /*ctx*/) noexcept -> Result<void> {
-    return FeatureBank::LoadFromFile(cfg_.feature_bank_path, cfg_.embed_dim)
-        .and_then([this](FeatureBank&& bank) -> Result<void> {
-            feature_bank_ = std::make_unique<FeatureBank>(std::move(bank));
-            return {};
-        })
+    // If FeatureBank was injected via SetFeatureBank(), skip LoadFromFile.
+    if (feature_bank_) {
+        // Already loaded — proceed to optional whitening/threshold/PCA.
+    } else if (!cfg_.feature_bank_path.empty()) {
+        auto load_result = FeatureBank::LoadFromFile(cfg_.feature_bank_path, cfg_.embed_dim);
+        if (!load_result) return tl::make_unexpected(load_result.error());
+        feature_bank_ = std::make_unique<FeatureBank>(std::move(*load_result));
+    }
+    // If neither injected nor configured, feature_bank_ stays null →
+    // Detect() will return Detection_FeatureBankLoadFailed.
+
+    return Result<void>{}
         .and_then([this]() -> Result<void> {
+            if (!feature_bank_) return Result<void>{};  // nothing to whiten
             if (!cfg_.enable_whitening) return {};
 
             auto all_vecs = feature_bank_->ExtractAllVectors();

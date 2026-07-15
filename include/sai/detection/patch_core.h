@@ -67,6 +67,12 @@ public:
     [[nodiscard]] auto ModelName() const noexcept -> std::string_view override
     { return "PatchCore"; }
 
+    // 注入已加载的 FeatureBank（替代从 feature_bank_path 加载）。
+    // 调用方负责确保 dim 与 embed_dim 匹配。在 Initialize() 之前调用。
+    auto SetFeatureBank(std::unique_ptr<FeatureBank> fb) noexcept -> void {
+        feature_bank_ = std::move(fb);
+    }
+
     // Object（基类）禁止移动/拷贝，故 PatchCore 继承此约束
     PatchCore(PatchCore&&) noexcept = delete;
     PatchCore(const PatchCore&) = delete;

@@ -184,11 +184,18 @@ TEST(Preprocess, DebayerBayerRG8ToRgb8) {
     EXPECT_EQ(img.Data()[2], 40u);
 }
 
-TEST(Preprocess, DebayerRejectsNonBayerFormat) {
+TEST(Preprocess, DebayerPassesThroughNonBayerFormat) {
     auto fn = MakeDebayer();
-    auto out = fn(MakeMono8(4, 4));
-    ASSERT_FALSE(out.has_value());
-    EXPECT_EQ(out.error().code, ErrorCode::Image_UnsupportedPixelFormat);
+    auto in = MakeMono8(4, 4);
+    auto meta_before = in->Meta();
+    auto out = fn(std::move(in));
+    // Non-Bayer images (e.g. Mono8, RGB8 from PNG/JPEG import) pass through
+    // unchanged — no debayering needed.
+    ASSERT_TRUE(out.has_value());
+    const Image& img = **out;
+    EXPECT_EQ(img.Meta().pixel_format, meta_before.pixel_format);
+    EXPECT_EQ(img.Meta().width, meta_before.width);
+    EXPECT_EQ(img.Meta().height, meta_before.height);
 }
 
 // ---- MakeWhiteBalance ----

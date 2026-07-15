@@ -18,6 +18,8 @@
 #include "pipeline/stage_nodes.h"
 #include "sai/device/fake_camera.h"
 #include "sai/image/raw_image.h"
+#include "sai/image/surface_image.h"
+#include "sai/image/preprocess.h"
 #include "sai/io/importer.h"
 #include "sai/io/exporter.h"
 
@@ -28,6 +30,7 @@
 #include <sai/inference/mock_engine.h>
 #endif
 
+#include <sai/embedding/simple_patch_embedder.h>
 #include <sai/detection/patch_core.h>
 #include <sai/detection/feature_bank.h>
 #include <sai/knowledge/knowledge_graph.h>
@@ -47,7 +50,13 @@ namespace {
 struct CliArgs {
     std::string image_dir;
     std::string output_dir = "/tmp/surface-ai/results/";
+    std::string coreset_path;           // --coreset: load pre-built coreset for detection
+    std::string build_coreset_dir;      // --build-coreset: dir of normal images for coreset building
+    std::string coreset_output_path;     // --coreset-output: where to save the built coreset
+    std::string coreset_algo = "greedy"; // --coreset-algo: greedy | uniform
+    std::size_t coreset_max_samples = 10000; // --coreset-max-samples N
     bool headless = false;
+    bool cpu_mode = false;              // --cpu: force CPU embedder (no GPU)
 };
 
 auto ParseArgs(int argc, char* argv[]) -> CliArgs {
@@ -61,7 +70,22 @@ auto ParseArgs(int argc, char* argv[]) -> CliArgs {
             args.output_dir = argv[++i];
         } else if (arg == "--headless") {
             args.headless = true;
+        } else if (arg == "--coreset" && i + 1 < argc) {
+            args.coreset_path = argv[++i];
+        } else if (arg == "--build-coreset" && i + 1 < argc) {
+            args.build_coreset_dir = argv[++i];
+        } else if (arg == "--coreset-output" && i + 1 < argc) {
+            args.coreset_output_path = argv[++i];
+        } else if (arg == "--coreset-algo" && i + 1 < argc) {
+            args.coreset_algo = argv[++i];
+        } else if (arg == "--coreset-max-samples" && i + 1 < argc) {
+            args.coreset_max_samples = static_cast<std::size_t>(std::stoull(argv[++i]));
+        } else if (arg == "--cpu") {
+            args.cpu_mode = true;
         }
+    }
+    if (!args.build_coreset_dir.empty() && args.coreset_output_path.empty()) {
+        args.coreset_output_path = "resources/coreset.bin";
     }
     return args;
 }
@@ -127,12 +151,168 @@ auto SeedKnowledgeGraph(sai::knowledge::KnowledgeGraph& kg) -> void {
         make_record({{"production_line", std::string("L5")}}));
 }
 
+// Build coreset from normal (defect-free) sample images.
+// Uses SimplePatchEmbedder for portable CPU feature extraction.
+auto BuildCoreset(const CliArgs& cli) -> int {
+    using namespace sai;
+
+    std::cout << "Building coreset from normal samples in: "
+              << cli.build_coreset_dir << "\n";
+
+    io::BasicImporter importer;
+    embedding::SimplePatchEmbedderConfig sp_cfg;
+    sp_cfg.image_width = 1024;
+    sp_cfg.image_height = 1024;
+    sp_cfg.patch_size = 14;
+    sp_cfg.feature_dim = 128;
+
+    auto emb_result = embedding::SimplePatchEmbedder::Create(sp_cfg);
+    if (!emb_result) {
+        std::cerr << "Failed to create SimplePatchEmbedder: "
+                  << emb_result.error().message << "\n";
+        return 1;
+    }
+    auto embedder = std::make_unique<embedding::SimplePatchEmbedder>(
+        std::move(*emb_result));
+
+    // Scan directory for image files
+    std::vector<std::filesystem::path> image_files;
+    for (auto& entry : std::filesystem::directory_iterator(cli.build_coreset_dir)) {
+        if (!entry.is_regular_file()) continue;
+        auto ext = entry.path().extension().string();
+        if (ext == ".ppm" || ext == ".png" || ext == ".bmp"
+            || ext == ".jpg" || ext == ".jpeg") {
+            image_files.push_back(entry.path());
+        }
+    }
+    std::sort(image_files.begin(), image_files.end());
+
+    if (image_files.empty()) {
+        std::cerr << "No image files found in " << cli.build_coreset_dir << "\n";
+        return 1;
+    }
+
+    std::cout << "Found " << image_files.size() << " normal sample images\n";
+
+    // Preprocess chain: resize to embedder's expected size
+    auto preprocess_chain = image::Compose({
+        image::MakeResize(sp_cfg.image_width, sp_cfg.image_height)
+    });
+
+    // Extract embeddings from each normal image
+    std::vector<embedding::Embedding> all_embeddings;
+    int processed = 0;
+    for (auto& path : image_files) {
+        auto img_result = importer.ImportImage(path);
+        if (!img_result) {
+            std::cerr << "Failed to import " << path.filename().string()
+                      << ": " << img_result.error().message << "\n";
+            continue;
+        }
+
+        // Run through preprocess (resize) to get SurfaceImage
+        auto preprocess_result = preprocess_chain(std::move(*img_result));
+        if (!preprocess_result) {
+            std::cerr << "Preprocess failed for " << path.filename().string()
+                      << ": " << preprocess_result.error().message << "\n";
+            continue;
+        }
+
+        auto* surf_img = dynamic_cast<image::SurfaceImage*>(preprocess_result->get());
+        if (surf_img == nullptr) {
+            // Wrap as SurfaceImage
+            auto meta = (*preprocess_result)->Meta();
+            const auto* data = (*preprocess_result)->Data();
+            auto size = (*preprocess_result)->SizeBytes();
+            std::vector<std::uint8_t> buffer(data, data + size);
+            auto surface = image::SurfaceImage::FromOwnedBuffer(std::move(buffer), meta);
+            auto emb = embedder->Extract(surface);
+            if (!emb) {
+                std::cerr << "Embedding extraction failed for "
+                          << path.filename().string() << "\n";
+                continue;
+            }
+            all_embeddings.push_back(std::move(*emb));
+        } else {
+            auto emb = embedder->Extract(*surf_img);
+            if (!emb) {
+                std::cerr << "Embedding extraction failed for "
+                          << path.filename().string() << "\n";
+                continue;
+            }
+            all_embeddings.push_back(std::move(*emb));
+        }
+
+        ++processed;
+        std::cout << "[" << processed << "/" << image_files.size() << "] "
+                  << path.filename().string() << " → "
+                  << all_embeddings.back().Meta().count << " patches\n";
+    }
+
+    if (all_embeddings.empty()) {
+        std::cerr << "No embeddings extracted — coreset build failed\n";
+        return 1;
+    }
+
+    // Build FeatureBank from all embeddings
+    std::vector<const embedding::Embedding*> emb_ptrs;
+    emb_ptrs.reserve(all_embeddings.size());
+    for (auto& e : all_embeddings) emb_ptrs.push_back(&e);
+
+    Result<detection::FeatureBank> bank_result = tl::make_unexpected(ErrorInfo{
+        ErrorCode::Detection_FeatureBankLoadFailed,
+        "No algorithm selected"});
+
+    bool use_greedy = (cli.coreset_algo == "greedy");
+    std::cout << "Coreset algorithm: " << (use_greedy ? "greedy (furthest-point sampling)" : "uniform")
+              << "\nMax samples: " << cli.coreset_max_samples << "\n";
+
+    if (use_greedy) {
+        bank_result = detection::FeatureBank::BuildWithGreedyCoreset(
+            emb_ptrs, sp_cfg.feature_dim, cli.coreset_max_samples);
+    } else {
+        bank_result = detection::FeatureBank::BuildFromEmbeddings(
+            emb_ptrs, sp_cfg.feature_dim, cli.coreset_max_samples);
+    }
+
+    if (!bank_result) {
+        std::cerr << "FeatureBank build failed: "
+                  << bank_result.error().message << "\n";
+        return 1;
+    }
+
+    // Save to file
+    auto save_result = bank_result->SaveToFile(cli.coreset_output_path);
+    if (!save_result) {
+        std::cerr << "Failed to save coreset: "
+                  << save_result.error().message << "\n";
+        return 1;
+    }
+
+    // Output coverage statistics for greedy mode
+    std::cout << "\nCoreset built successfully:\n"
+              << "  Algorithm:    " << cli.coreset_algo << "\n"
+              << "  Images:       " << processed << "\n"
+              << "  Total patches:" << all_embeddings.size() * sp_cfg.feature_dim << "\n"
+              << "  Coreset size: " << bank_result->NumSamples() << "\n"
+              << "  Feature dim:  " << bank_result->Dim() << "\n"
+              << "  Output:       " << cli.coreset_output_path << "\n";
+    return 0;
+}
+
 }  // anonymous namespace
 
 auto main(int argc, char* argv[]) -> int {
     auto cli = ParseArgs(argc, argv);
 
     using namespace sai;
+
+    // =========================================================================
+    // --build-coreset mode: build FeatureBank from normal samples
+    // =========================================================================
+    if (!cli.build_coreset_dir.empty()) {
+        return BuildCoreset(cli);
+    }
 
     // =========================================================================
     // 1. DI container
@@ -142,21 +322,69 @@ auto main(int argc, char* argv[]) -> int {
     (void)ctx->Start();
 
     // =========================================================================
-    // 2. Inference Engine — TensorRT on Linux+CUDA, MockEngine on macOS
+    // 2. Platform-dependent embed_dim and inference/embedding setup.
+    //    CPU path (macOS): SimplePatchEmbedder with feature_dim=128
+    //    GPU path (Linux): TensorRT + DINOv3 → PatchEmbedder with embed_dim=1024
     // =========================================================================
 #if defined(__linux__)
-    auto infer_engine = std::make_shared<inference::TensorRtEngine>(/*device_ordinal=*/0);
-    std::cout << "Inference: TensorRtEngine (GPU)\n";
+    constexpr std::size_t kEmbedDim = 1024;
 #else
-    auto infer_engine = std::make_shared<inference::MockEngine>();
-    std::cout << "Inference: MockEngine (no GPU on this host)\n";
+    constexpr std::size_t kEmbedDim = 128;
 #endif
 
+    std::shared_ptr<embedding::IEmbedder> embedder;
+
+#if defined(__linux__)
+    // GPU path: TensorRT + DINOv3 adapter → PatchEmbedder
+    {
+        auto infer_engine = std::make_shared<inference::TensorRtEngine>(/*device_ordinal=*/0);
+        std::cout << "Inference: TensorRtEngine (GPU)\n";
+
+        inference::DinoV3Config dino_cfg;
+        dino_cfg.engine_path = "resources/models/dino_v3_vit_base.engine";
+        dino_cfg.image_size = 1024;
+        dino_cfg.patch_size = 14;
+        dino_cfg.embed_dim = kEmbedDim;
+
+        auto dino_adapter = inference::DinoV3Adapter::Create(*infer_engine, dino_cfg);
+        if (!dino_adapter) {
+            std::cerr << "DinoV3Adapter creation failed: "
+                      << dino_adapter.error().message << "\n";
+            std::cerr << "Falling back to SimplePatchEmbedder (CPU)\n";
+            // Fall through to CPU path below
+        } else {
+            auto patch_emb = embedding::PatchEmbedder::Create(std::move(*dino_adapter));
+            if (patch_emb) {
+                embedder = std::make_shared<embedding::PatchEmbedder>(std::move(*patch_emb));
+                std::cout << "Embedder: PatchEmbedder (DINOv3)\n";
+            }
+        }
+    }
+#endif
+
+    // CPU fallback (or primary path on macOS)
+    if (!embedder) {
+        embedding::SimplePatchEmbedderConfig sp_cfg;
+        sp_cfg.image_width = 1024;
+        sp_cfg.image_height = 1024;
+        sp_cfg.patch_size = 14;
+        sp_cfg.feature_dim = kEmbedDim;
+
+        auto sp_result = embedding::SimplePatchEmbedder::Create(sp_cfg);
+        if (!sp_result) {
+            std::cerr << "SimplePatchEmbedder creation failed: "
+                      << sp_result.error().message << "\n";
+            return 1;
+        }
+        embedder = std::make_shared<embedding::SimplePatchEmbedder>(std::move(*sp_result));
+        std::cout << "Embedder: SimplePatchEmbedder (CPU, dim=" << kEmbedDim << ")\n";
+    }
+
     // =========================================================================
-    // 3. Detection — PatchCore with DINOv3-compatible config
+    // 3. Detection — PatchCore with matched embed_dim
     // =========================================================================
     detection::PatchCore::Config pc_cfg;
-    pc_cfg.embed_dim = 1024;            // DINOv3 ViT-B/14 output dim
+    pc_cfg.embed_dim = kEmbedDim;
     pc_cfg.image_width = 1024;
     pc_cfg.image_height = 1024;
     pc_cfg.patch_size = 14;
@@ -164,19 +392,38 @@ auto main(int argc, char* argv[]) -> int {
     pc_cfg.anomaly_threshold = 0.8F;
     pc_cfg.enable_adaptive_threshold = true;
     pc_cfg.target_fpr = 0.01F;
-    auto patch_core = std::make_shared<detection::PatchCore>(std::move(pc_cfg));
-    (void)patch_core->Initialize(*ctx);
+
+    auto patch_core = std::make_shared<detection::PatchCore>(pc_cfg);
 
     // =========================================================================
-    // 4. FeatureBank + VectorPath — FAISS vector search
-    //    FeatureBank::LoadFromFile(coreset_path, dim) loads pre-computed
-    //    coreset embeddings. VectorPath wraps it for FAISS TopK/Range search.
-    //    On first run without a coreset file, VectorPath is unavailable;
-    //    RuleEvalStage falls back to bare detection facts (no retrieval).
-    //    To enable: provide --coreset /path/to/coreset.bin after training.
+    // 4. FeatureBank + VectorPath — load coreset if provided
     // =========================================================================
     std::shared_ptr<detection::FeatureBank> feature_bank;
     std::shared_ptr<retrieval::VectorPath> vp;
+
+    if (!cli.coreset_path.empty()) {
+        // Set the config path so PatchCore::Initialize can load it internally.
+        pc_cfg.feature_bank_path = cli.coreset_path;
+
+        // Also load separately for VectorPath use.
+        auto fb_result = detection::FeatureBank::LoadFromFile(cli.coreset_path, kEmbedDim);
+        if (fb_result) {
+            feature_bank = std::make_shared<detection::FeatureBank>(std::move(*fb_result));
+            std::cout << "FeatureBank loaded: " << feature_bank->NumSamples()
+                      << " samples, dim=" << feature_bank->Dim() << "\n";
+
+            vp = std::make_shared<retrieval::VectorPath>(*feature_bank);
+            std::cout << "VectorPath: ready\n";
+        } else {
+            std::cerr << "Warning: failed to load coreset from "
+                      << cli.coreset_path << ": "
+                      << fb_result.error().message << "\n";
+        }
+    }
+
+    if (!feature_bank) {
+        std::cout << "FeatureBank: not loaded (detection will use PCA-only mode)\n";
+    }
 
     // =========================================================================
     // 5. KnowledgeGraph — in-memory SQLite with sample seat leather data
@@ -222,7 +469,7 @@ auto main(int argc, char* argv[]) -> int {
     // 9. Wire all business objects into Pipeline stages
     // =========================================================================
     if (auto* s = pipeline->GetStage("inference"))
-        static_cast<pipeline::InferenceStage*>(s)->SetEngine(infer_engine);
+        static_cast<pipeline::InferenceStage*>(s)->SetEmbedder(embedder);
     if (auto* s = pipeline->GetStage("detect"))
         static_cast<pipeline::DetectStage*>(s)->SetDetector(patch_core);
     if (auto* s = pipeline->GetStage("rule_eval")) {

@@ -14,6 +14,7 @@
 #include <sai/device/camera.h>
 #include <sai/image/preprocess.h>
 #include <sai/inference/inference_engine.h>
+#include <sai/embedding/embedder.h>
 #include <sai/detection/detector.h>
 #include <sai/rule/rule_engine.h>
 #include <sai/rule/fact_builder.h>
@@ -74,9 +75,13 @@ public:
     auto SetEngine(std::shared_ptr<sai::inference::IInferenceEngine> eng) -> void {
         engine_ = std::move(eng); stub_ = false;
     }
+    auto SetEmbedder(std::shared_ptr<sai::embedding::IEmbedder> emb) -> void {
+        embedder_ = std::move(emb); stub_ = false;
+    }
 private:
     std::string id_;
     std::shared_ptr<sai::inference::IInferenceEngine> engine_;
+    std::shared_ptr<sai::embedding::IEmbedder> embedder_;
     std::string model_name_;
     bool stub_ = true;
 };

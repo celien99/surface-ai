@@ -4,9 +4,11 @@
 #include <cstddef>
 #include <filesystem>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include <sai/core/error.h>
+#include <sai/embedding/embedding.h>
 
 namespace sai::retrieval { class VectorPath; }
 
@@ -48,6 +50,34 @@ public:
     // 用新向量集重建 FAISS 索引
     auto Rebuild(const float* vectors, std::size_t count, std::size_t dim) noexcept -> void;
 
+    // 将 coreset 保存为原始 float32 二进制文件（LoadFromFile 的逆操作）。
+    // path: N×dim float32 值（little-endian，行主序）
+    [[nodiscard]] auto SaveToFile(const std::filesystem::path& path) const noexcept -> Result<void>;
+
+    // 从多个 Embedding（正常样本）构建 coreset FeatureBank。
+    // 提取所有 patch 向量，均匀采样至 max_samples 个，构建 FAISS 索引。
+    // dim 必须与 Embedding 的 dim 一致。
+    [[nodiscard]] static auto BuildFromEmbeddings(
+        std::span<const sai::embedding::Embedding* const> embeddings,
+        std::size_t dim,
+        std::size_t max_samples = 10000) noexcept -> Result<FeatureBank>;
+
+    // Greedy coreset selection via furthest-point sampling.
+    // Extracts all patch vectors from embeddings, then iteratively selects
+    // patches that maximize coverage of the normal manifold (minimize max
+    // distance to nearest coreset point). Produces a more representative
+    // coreset than uniform subsampling, at O(M·N·D) cost.
+    [[nodiscard]] static auto BuildWithGreedyCoreset(
+        std::span<const sai::embedding::Embedding* const> embeddings,
+        std::size_t dim,
+        std::size_t max_samples = 10000) noexcept -> Result<FeatureBank>;
+
+    // GPU acceleration (only available when SAI_CUDA_ENABLED is defined).
+#if defined(SAI_CUDA_ENABLED)
+    [[nodiscard]] auto ToGpu(int device = 0) noexcept -> Result<void>;
+    [[nodiscard]] auto IsOnGpu() const noexcept -> bool;
+#endif
+
     // move-only
     FeatureBank(FeatureBank&&) noexcept;
     auto operator=(FeatureBank&&) noexcept -> FeatureBank&;
@@ -64,6 +94,12 @@ private:
     std::unique_ptr<faiss::Index> index_;
     std::size_t dim_ = 0;
     std::size_t num_samples_ = 0;
+
+#if defined(SAI_CUDA_ENABLED)
+    std::unique_ptr<faiss::gpu::StandardGpuResources> gpu_resources_;
+    std::unique_ptr<faiss::Index> gpu_index_;
+    bool on_gpu_ = false;
+#endif
 };
 
 }  // namespace sai::detection

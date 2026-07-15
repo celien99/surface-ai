@@ -28,6 +28,7 @@ target_link_libraries(sai_pipeline PUBLIC
     sai::image
     sai::io
     sai::inference
+    sai::embedding
     sai::detection
     sai::rule
     sai::reasoner

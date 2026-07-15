@@ -24,15 +24,20 @@ auto InferenceStage::OnStop(Context&) -> Result<void> { return {}; }
 
 auto InferenceStage::Process(StageInput input) -> Result<StageOutput> {
     if (auto* img = std::get_if<sai::image::SurfaceImage>(&input)) {
+        // Prefer IEmbedder path (CPU SimplePatchEmbedder or GPU PatchEmbedder).
+        if (!stub_ && embedder_) {
+            auto result = embedder_->Extract(*img);
+            if (!result) return tl::make_unexpected(result.error());
+            return StageOutput(std::move(*result));
+        }
+        // Fallback: raw IInferenceEngine path (GPU TensorRtEngine without adapter).
         if (!stub_ && engine_) {
             auto result = engine_->Infer();
             if (!result) return tl::make_unexpected(result.error());
         }
         // Output Embedding for downstream DetectStage.
-        // Real adapter (CLIP/DINOv3/SAM2) populates this with features
-        // extracted from the SurfaceImage; MockEngine leaves it default.
-        // Output Embedding for downstream DetectStage.
-        // Real adapter populates features from inference output.
+        // Real adapter (CLIP/DINOv3/SAM2) or SimplePatchEmbedder populates this
+        // with features extracted from the SurfaceImage.
         return StageOutput(sai::embedding::Embedding::FromCpu(
             std::vector<float>{}, sai::embedding::EmbeddingMeta{}));
     }

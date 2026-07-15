@@ -1,4 +1,8 @@
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+
 #include <sai/io/importer.h>
+#include <sai/image/raw_image.h>
 #include <sai/image/surface_image.h>
 
 #include <cerrno>
@@ -47,8 +51,8 @@ auto BasicImporter::ImportImage(std::filesystem::path path) noexcept
         });
     }
 
-    // 2. Open file for binary read
-    std::ifstream file(path, std::ios::binary);
+    // 2. Read entire file into memory for stb_image
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file) {
         return tl::make_unexpected(ErrorInfo{
             .code = ErrorCode::Io_ImportFileNotFound,
@@ -56,50 +60,67 @@ auto BasicImporter::ImportImage(std::filesystem::path path) noexcept
         });
     }
 
-    // 3. Parse PPM header (P6 only)
-    std::string magic;
-    int width = 0, height = 0, maxval = 0;
-    file >> magic;
-    if (magic != "P6") {
+    auto file_size = static_cast<std::size_t>(file.tellg());
+    if (file_size == 0) {
         return tl::make_unexpected(ErrorInfo{
             .code = ErrorCode::Io_ImportParseFailed,
-            .message = "Unsupported PPM format (only P6 supported): " + path.string(),
+            .message = "Empty image file: " + path.string(),
         });
     }
 
-    file >> width >> height >> maxval;
-    if (!file || width <= 0 || height <= 0 || maxval != 255) {
+    std::vector<unsigned char> file_buffer(file_size);
+    file.seekg(0, std::ios::beg);
+    file.read(reinterpret_cast<char*>(file_buffer.data()),
+              static_cast<std::streamsize>(file_size));
+    if (!file) {
         return tl::make_unexpected(ErrorInfo{
             .code = ErrorCode::Io_ImportParseFailed,
-            .message = "Invalid or unsupported PPM header in file: " + path.string(),
+            .message = "Failed to read image file: " + path.string(),
         });
     }
 
-    // 4. Skip the single whitespace byte following maxval
-    file.get();
+    // 3. Decode via stb_image — force 3-channel RGB8 output.
+    //    stb_image handles PPM (P6), PNG, BMP, JPEG, TGA, GIF, HDR, PIC, PNM.
+    int width = 0, height = 0, channels_in_file = 0;
+    auto* pixels = stbi_load_from_memory(
+        file_buffer.data(),
+        static_cast<int>(file_buffer.size()),
+        &width, &height, &channels_in_file,
+        3);  // STBI_rgb: force 3 channels
 
-    // 5. Read pixel data
-    auto expected_bytes =
-        static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 3;
-    std::vector<std::uint8_t> bytes(expected_bytes);
-    file.read(reinterpret_cast<char*>(bytes.data()),
-              static_cast<std::streamsize>(expected_bytes));
-    if (!file || static_cast<std::size_t>(file.gcount()) != expected_bytes) {
+    if (pixels == nullptr) {
         return tl::make_unexpected(ErrorInfo{
             .code = ErrorCode::Io_ImportParseFailed,
-            .message = "Failed to read complete pixel data from PPM file: " + path.string(),
+            .message = std::string("Image decode failed: ") + stbi_failure_reason()
+                       + " [" + path.string() + "]",
         });
     }
 
-    // 6. Construct SurfaceImage via FromOwnedBuffer
+    if (width <= 0 || height <= 0) {
+        stbi_image_free(pixels);
+        return tl::make_unexpected(ErrorInfo{
+            .code = ErrorCode::Io_ImportParseFailed,
+            .message = "Decoded image has invalid dimensions: " + path.string(),
+        });
+    }
+
+    // 4. Copy decoded pixels into a vector owned by RawImage, then free stb buffer.
+    auto total_bytes = static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 3;
+    std::vector<std::uint8_t> bytes(pixels, pixels + total_bytes);
+    stbi_image_free(pixels);
+
+    // 5. Construct RawImage from owned buffer.
+    //    Use RawImage (not SurfaceImage) so the pipeline preprocess chain
+    //    (debayer→white_balance→resize) receives the expected variant type.
+    //    Debayer is a no-op passthrough for already-RGB8 images.
     sai::image::ImageMeta meta;
     meta.width = static_cast<std::size_t>(width);
     meta.height = static_cast<std::size_t>(height);
     meta.channels = 3;
     meta.pixel_format = sai::image::PixelFormat::RGB8;
 
-    auto surface = sai::image::SurfaceImage::FromOwnedBuffer(std::move(bytes), meta);
-    return std::make_unique<sai::image::SurfaceImage>(std::move(surface));
+    auto raw = sai::image::RawImage::FromOwnedBuffer(std::move(bytes), meta);
+    return std::make_unique<sai::image::RawImage>(std::move(raw));
 }
 
 }  // namespace sai::io

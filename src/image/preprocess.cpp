@@ -81,11 +81,9 @@ auto MakeDebayer() -> PreprocessFn {
     return [](std::unique_ptr<Image> img) -> Result<std::unique_ptr<Image>> {
         const ImageMeta& meta = img->Meta();
         if (meta.pixel_format != PixelFormat::BayerRG8) {
-            return tl::make_unexpected(ErrorInfo{
-                ErrorCode::Image_UnsupportedPixelFormat,
-                "Debayer requires a Bayer pixel format (BayerRG8)",
-                std::source_location::current(),
-            });
+            // Non-Bayer input (e.g. already-RGB8 from PNG/JPEG import):
+            // passthrough unchanged — no debayer needed.
+            return img;
         }
 
         const std::size_t w = meta.width;
