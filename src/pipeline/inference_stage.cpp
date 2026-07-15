@@ -54,6 +54,10 @@ auto InferenceStage::Process(StageInput input) -> Result<StageOutput> {
         if (!img_meta.surface_id.empty()) {
             embedding.SetSurfaceId(img_meta.surface_id);
         }
+        // Carry position identity from image metadata through the pipeline.
+        if (img_meta.position_id != 0) {
+            embedding.SetPositionId(img_meta.position_id);
+        }
 
         return StageOutput(std::move(embedding));
     }
