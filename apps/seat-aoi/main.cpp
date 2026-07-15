@@ -10,6 +10,7 @@
 #include <memory>
 #include <stop_token>
 #include <string>
+#include <sstream>
 #include <string_view>
 #include <vector>
 
@@ -310,6 +311,84 @@ auto BuildCoreset(const CliArgs& cli) -> int {
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// Bayesian Auto-Tuning: YAML helpers for ParameterApplier
+// ---------------------------------------------------------------------------
+
+// Collect all leaf nodes from the decision tree YAML in pre-order.
+// A leaf node is any YAML mapping with "type: leaf".
+static auto CollectLeafNodes(const YAML::Node& node) -> std::vector<YAML::Node> {
+    std::vector<YAML::Node> leaves;
+    if (!node.IsMap()) return leaves;
+
+    if (auto type = node["type"];
+        type.IsDefined() && type.as<std::string>() == "leaf") {
+        leaves.push_back(node);
+        return leaves;
+    }
+
+    if (auto branches = node["branches"];
+        branches.IsDefined() && branches.IsMap()) {
+        for (auto it = branches.begin(); it != branches.end(); ++it) {
+            auto child = CollectLeafNodes(it->second);
+            leaves.insert(leaves.end(),
+                          std::make_move_iterator(child.begin()),
+                          std::make_move_iterator(child.end()));
+        }
+    }
+
+    if (auto def = node["default"]; def.IsDefined()) {
+        auto child = CollectLeafNodes(def);
+        leaves.insert(leaves.end(),
+                      std::make_move_iterator(child.begin()),
+                      std::make_move_iterator(child.end()));
+    }
+
+    return leaves;
+}
+
+// Apply a single parameter value to the YAML tree.
+// param_name formats:
+//   "verdict_mapping.X"        -> root["verdict_mapping"][X] = value
+//   "leaf_N.formula_M.weight_K" -> leaf_nodes[N]["formulas"][M]["weights"][K] = value
+//   "leaf_N.formula_M.threshold" -> leaf_nodes[N]["formulas"][M]["threshold"] = value
+static auto ApplyParamToYaml(YAML::Node& root,
+                              std::vector<YAML::Node>& leaf_nodes,
+                              const std::string& param_name,
+                              double value) -> void {
+    std::vector<std::string> segs;
+    {
+        std::istringstream iss(param_name);
+        std::string seg;
+        while (std::getline(iss, seg, '.')) segs.push_back(seg);
+    }
+    if (segs.empty()) return;
+
+    if (segs[0] == "verdict_mapping") {
+        if (segs.size() == 2) {
+            root["verdict_mapping"][segs[1]] = value;
+        }
+    } else if (segs.size() >= 3 && segs[0].rfind("leaf_", 0) == 0) {
+        try {
+            size_t li = std::stoul(segs[0].substr(5));
+            if (li >= leaf_nodes.size()) return;
+            auto& leaf = leaf_nodes[li];
+
+            if (segs[1].rfind("formula_", 0) == 0) {
+                size_t fi = std::stoul(segs[1].substr(8));
+                if (segs[2] == "threshold") {
+                    leaf["formulas"][fi]["threshold"] = value;
+                } else if (segs.size() == 4 && segs[2].rfind("weight_", 0) == 0) {
+                    size_t wi = std::stoul(segs[2].substr(7));
+                    leaf["formulas"][fi]["weights"][wi] = value;
+                }
+            }
+        } catch (...) {
+            // Invalid segment — silently ignore
+        }
+    }
+}
+
 }  // anonymous namespace
 
 auto main(int argc, char* argv[]) -> int {
@@ -557,6 +636,12 @@ auto main(int argc, char* argv[]) -> int {
                 auto space = std::move(*space_result);
                 auto space_dim = space.Dimension();
 
+                // Capture parameter names before space is moved into BayesianOptimizer
+                std::vector<std::string> param_names;
+                for (const auto& p : space.Parameters()) {
+                    param_names.push_back(p.name);
+                }
+
                 // 2. Parse SchedulerConfig from tuning YAML
                 sai::tuning::SchedulerConfig sched_cfg;
                 if (auto sn = ty["scheduler"]; sn.IsDefined()) {
@@ -601,11 +686,38 @@ auto main(int argc, char* argv[]) -> int {
                     kg_evolution);
 
                 // 5. Inject callbacks
+                auto tree_path = resource_dir / "trees" / "seat_leather_inspection.yaml";
                 tuning_scheduler->SetParameterApplier(
-                    [&reasoner, tree_path = resource_dir / "trees" /
-                        "seat_leather_inspection.yaml"]
+                    [&reasoner, tree_path, param_names = std::move(param_names)]
                     (const std::vector<double>& params) -> Result<void> {
-                        (void)params;
+                        // 1. Read current YAML
+                        YAML::Node root;
+                        try {
+                            root = YAML::LoadFile(tree_path.string());
+                        } catch (const YAML::Exception& e) {
+                            return tl::make_unexpected(ErrorInfo{
+                                ErrorCode::Pipeline_InvalidConfig,
+                                "Tuning: failed to load decision tree YAML for parameter update: " +
+                                    std::string(e.what())});
+                        }
+
+                        // 2. Collect leaf nodes in pre-order
+                        auto leaf_nodes = CollectLeafNodes(root);
+
+                        // 3. Apply each parameter value to its YAML path
+                        for (size_t i = 0; i < params.size() && i < param_names.size(); ++i) {
+                            ApplyParamToYaml(root, leaf_nodes, param_names[i], params[i]);
+                        }
+
+                        // 4. Write to temp file, then atomically rename
+                        auto tmp = tree_path.string() + ".tmp";
+                        {
+                            std::ofstream out(tmp);
+                            out << root;
+                        }
+                        std::filesystem::rename(tmp, tree_path);
+
+                        // 5. Reload tree with updated parameters
                         return reasoner->ReloadTree(tree_path);
                     });
 
@@ -614,9 +726,22 @@ auto main(int argc, char* argv[]) -> int {
                         sai::tuning::MetricsSnapshot snapshot;
                         auto metrics = pipeline->Metrics();
                         for (const auto& sm : metrics) {
-                            snapshot.sample_count += sm.frames_processed.load();
+                            // Use the Reason stage's metrics to compute NG rate.
+                            // frames_failed on the Reason stage captures processing
+                            // failures from the decision tree evaluation.
+                            if (sm.type == sai::pipeline::StageType::Reason) {
+                                auto processed = sm.frames_processed.load();
+                                auto failed = sm.frames_failed.load();
+                                snapshot.sample_count += processed;
+                                if (processed > 0) {
+                                    snapshot.ng_rate +=
+                                        static_cast<double>(failed) / processed * processed;
+                                }
+                            }
                         }
-                        snapshot.ng_rate = 0.02;
+                        if (snapshot.sample_count > 0) {
+                            snapshot.ng_rate /= snapshot.sample_count;
+                        }
                         return snapshot;
                     });
 
