@@ -27,22 +27,14 @@
 #include "sai/io/importer.h"
 #include "sai/io/exporter.h"
 
-// Inference: TensorRT on Linux+CUDA, MockEngine elsewhere
-#if defined(__linux__)
+// Inference: TensorRT
 #include <sai/inference/tensorrt_engine.h>
-#else
-#include <sai/inference/mock_engine.h>
-#endif
-
-#include <sai/embedding/simple_patch_embedder.h>
-#if defined(__linux__)
 #include <sai/inference/clip_adapter.h>
 #include <sai/inference/sam2_segmenter.h>
 #include <sai/memory/gpu_pool.h>
 #include <sai/memory/arena_allocator.h>
 #include <sai/image/gpu_image.h>
 #include <cuda_runtime.h>
-#endif
 #include <sai/detection/patch_core.h>
 #include <sai/detection/feature_bank.h>
 #include <sai/detection/coreset_evolution.h>
@@ -171,74 +163,45 @@ auto SeedKnowledgeGraph(sai::knowledge::KnowledgeGraph& kg) -> void {
 }
 
 // Build coreset from normal (defect-free) sample images.
-// Uses the same embedder as the inference pipeline:
-//   Linux + GPU: DINOv3 → PatchEmbedder (1024-dim)
-//   macOS (dev):  SimplePatchEmbedder (128-dim) as fallback
+// Uses DINOv3 → PatchEmbedder (1024-dim) with TensorRT GPU inference.
 auto BuildCoreset(const CliArgs& cli) -> int {
     using namespace sai;
 
     std::cout << "Building coreset from normal samples in: "
               << cli.build_coreset_dir << "\n";
 
-#if defined(__linux__)
     constexpr std::size_t kEmbedDim = 1024;
     constexpr std::size_t kImageSize = 1024;
     constexpr std::size_t kPatchSize = 14;
-#else
-    constexpr std::size_t kEmbedDim = 128;
-    constexpr std::size_t kImageSize = 1024;
-    constexpr std::size_t kPatchSize = 14;
-#endif
 
     io::BasicImporter importer;
 
-    // ── Create embedder (GPU path on Linux, CPU fallback on macOS) ──
-    std::unique_ptr<embedding::IEmbedder> embedder;
-#if defined(__linux__)
-    {
-        auto infer_engine = std::make_shared<inference::TensorRtEngine>(
-            /*device_ordinal=*/0);
-        inference::DinoV3Config dino_cfg;
-        dino_cfg.engine_path = "resources/models/dino_v3_vit_base.engine";
-        dino_cfg.image_size = kImageSize;
-        dino_cfg.patch_size = kPatchSize;
-        dino_cfg.embed_dim = kEmbedDim;
+    // ── Create DINOv3 embedder ──
+    auto infer_engine = std::make_shared<inference::TensorRtEngine>(
+        /*device_ordinal=*/0);
+    inference::DinoV3Config dino_cfg;
+    dino_cfg.engine_path = "resources/models/dino_v3_vit_base.engine";
+    dino_cfg.image_size = kImageSize;
+    dino_cfg.patch_size = kPatchSize;
+    dino_cfg.embed_dim = kEmbedDim;
 
-        auto dino_adapter = inference::DinoV3Adapter::Create(
-            *infer_engine, dino_cfg);
-        if (dino_adapter) {
-            auto patch_emb = embedding::PatchEmbedder::Create(
-                std::move(*dino_adapter));
-            if (patch_emb) {
-                embedder = std::make_unique<embedding::PatchEmbedder>(
-                    std::move(*patch_emb));
-                std::cout << "Embedder: PatchEmbedder (DINOv3, dim="
-                          << kEmbedDim << ")\n";
-            }
-        }
-        if (!embedder) {
-            std::cerr << "DINOv3 embedder unavailable, falling back to CPU\n";
-        }
+    auto dino_adapter = inference::DinoV3Adapter::Create(
+        *infer_engine, dino_cfg);
+    if (!dino_adapter) {
+        std::cerr << "DinoV3Adapter creation failed: "
+                  << dino_adapter.error().message << "\n";
+        return 1;
     }
-#endif
-    if (!embedder) {
-        embedding::SimplePatchEmbedderConfig sp_cfg;
-        sp_cfg.image_width = kImageSize;
-        sp_cfg.image_height = kImageSize;
-        sp_cfg.patch_size = kPatchSize;
-        sp_cfg.feature_dim = kEmbedDim;
-
-        auto sp_result = embedding::SimplePatchEmbedder::Create(sp_cfg);
-        if (!sp_result) {
-            std::cerr << "Failed to create embedder: "
-                      << sp_result.error().message << "\n";
-            return 1;
-        }
-        embedder = std::make_unique<embedding::SimplePatchEmbedder>(
-            std::move(*sp_result));
-        std::cout << "Embedder: SimplePatchEmbedder (CPU, dim="
-                  << kEmbedDim << ")\n";
+    auto patch_emb = embedding::PatchEmbedder::Create(
+        std::move(*dino_adapter));
+    if (!patch_emb) {
+        std::cerr << "PatchEmbedder creation failed\n";
+        return 1;
     }
+    auto embedder = std::make_unique<embedding::PatchEmbedder>(
+        std::move(*patch_emb));
+    std::cout << "Embedder: PatchEmbedder (DINOv3, dim="
+              << kEmbedDim << ")\n";
 
     // Scan directory for image files
     std::vector<std::filesystem::path> image_files;
@@ -268,10 +231,7 @@ auto BuildCoreset(const CliArgs& cli) -> int {
     std::vector<embedding::Embedding> all_embeddings;
     int processed = 0;
 
-    // GPU upload path: SurfaceImage → GpuImage for DINOv3/PatchEmbedder.
-    // Only available on Linux+CUDA; on macOS SimplePatchEmbedder accepts
-    // SurfaceImage directly.
-#if defined(__linux__)
+    // GPU upload: SurfaceImage → GpuImage → DINOv3 → DtoH
     sai::memory::ArenaAllocator arena(64 * 1024 * 1024);  // 64 MiB metadata
     auto gpu_pool_result = sai::memory::GpuPool::Create(
         sai::memory::MemoryPoolConfig{
@@ -285,7 +245,6 @@ auto BuildCoreset(const CliArgs& cli) -> int {
         return 1;
     }
     auto& gpu_pool = **gpu_pool_result;
-#endif
 
     for (auto& path : image_files) {
         auto img_result = importer.ImportImage(path);
@@ -320,11 +279,9 @@ auto BuildCoreset(const CliArgs& cli) -> int {
                 std::move(buffer), meta);
         }();
 
-        // Extract embedding. On Linux+DINOv3: HtoD → infer → DtoH.
-        // On macOS+SimplePatchEmbedder: CPU SurfaceImage → Extract directly.
+        // Extract embedding: HtoD → DINOv3 infer → DtoH
         sai::Result<embedding::Embedding> emb = tl::make_unexpected(
             ErrorInfo{ErrorCode::Inference_EngineExecutionFailed, "no path"});
-#if defined(__linux__)
         {
             // HtoD: upload SurfaceImage to GPU
             auto gpu_img_result = image::GpuImage::FromPool(
@@ -362,9 +319,6 @@ auto BuildCoreset(const CliArgs& cli) -> int {
                     std::move(cpu_data), emb->Meta());
             }
         }
-#else
-        emb = embedder->Extract(surface);
-#endif
 
         if (!emb) {
             std::cerr << "Embedding extraction failed for "
@@ -531,68 +485,37 @@ auto main(int argc, char* argv[]) -> int {
     (void)ctx->Start();
 
     // =========================================================================
-    // 2. Platform-dependent embed_dim and inference/embedding setup.
-    //    CPU path (macOS): SimplePatchEmbedder with feature_dim=128
-    //    GPU path (Linux): TensorRT + DINOv3 → PatchEmbedder with embed_dim=1024
+    // 2. Inference / embedding setup — TensorRT + DINOv3 (1024-dim)
     // =========================================================================
-#if defined(__linux__)
     constexpr std::size_t kEmbedDim = 1024;
-#else
-    constexpr std::size_t kEmbedDim = 128;
-#endif
 
-    std::shared_ptr<embedding::IEmbedder> embedder;
+    // Primary: DINOv3 PatchEmbedder
+    auto infer_engine = std::make_shared<inference::TensorRtEngine>(/*device_ordinal=*/0);
+    std::cout << "Inference: TensorRtEngine (GPU)\n";
 
-#if defined(__linux__)
-    // GPU path: TensorRT + DINOv3 adapter → PatchEmbedder
-    {
-        auto infer_engine = std::make_shared<inference::TensorRtEngine>(/*device_ordinal=*/0);
-        std::cout << "Inference: TensorRtEngine (GPU)\n";
+    inference::DinoV3Config dino_cfg;
+    dino_cfg.engine_path = "resources/models/dino_v3_vit_base.engine";
+    dino_cfg.image_size = 1024;
+    dino_cfg.patch_size = 14;
+    dino_cfg.embed_dim = kEmbedDim;
 
-        inference::DinoV3Config dino_cfg;
-        dino_cfg.engine_path = "resources/models/dino_v3_vit_base.engine";
-        dino_cfg.image_size = 1024;
-        dino_cfg.patch_size = 14;
-        dino_cfg.embed_dim = kEmbedDim;
-
-        auto dino_adapter = inference::DinoV3Adapter::Create(*infer_engine, dino_cfg);
-        if (!dino_adapter) {
-            std::cerr << "DinoV3Adapter creation failed: "
-                      << dino_adapter.error().message << "\n";
-            std::cerr << "Falling back to SimplePatchEmbedder (CPU)\n";
-            // Fall through to CPU path below
-        } else {
-            auto patch_emb = embedding::PatchEmbedder::Create(std::move(*dino_adapter));
-            if (patch_emb) {
-                embedder = std::make_shared<embedding::PatchEmbedder>(std::move(*patch_emb));
-                std::cout << "Embedder: PatchEmbedder (DINOv3)\n";
-            }
-        }
+    auto dino_adapter = inference::DinoV3Adapter::Create(*infer_engine, dino_cfg);
+    if (!dino_adapter) {
+        std::cerr << "DinoV3Adapter creation failed: "
+                  << dino_adapter.error().message << "\n";
+        return 1;
     }
-#endif
-
-    // CPU fallback (or primary path on macOS)
-    if (!embedder) {
-        embedding::SimplePatchEmbedderConfig sp_cfg;
-        sp_cfg.image_width = 1024;
-        sp_cfg.image_height = 1024;
-        sp_cfg.patch_size = 14;
-        sp_cfg.feature_dim = kEmbedDim;
-
-        auto sp_result = embedding::SimplePatchEmbedder::Create(sp_cfg);
-        if (!sp_result) {
-            std::cerr << "SimplePatchEmbedder creation failed: "
-                      << sp_result.error().message << "\n";
-            return 1;
-        }
-        embedder = std::make_shared<embedding::SimplePatchEmbedder>(std::move(*sp_result));
-        std::cout << "Embedder: SimplePatchEmbedder (CPU, dim=" << kEmbedDim << ")\n";
+    auto patch_emb = embedding::PatchEmbedder::Create(std::move(*dino_adapter));
+    if (!patch_emb) {
+        std::cerr << "PatchEmbedder creation failed\n";
+        return 1;
     }
+    auto embedder = std::make_shared<embedding::PatchEmbedder>(std::move(*patch_emb));
+    std::cout << "Embedder: PatchEmbedder (DINOv3)\n";
 
     // Global embedder (CLIP) for cross-modal vector retrieval.
-    // Conditionally created when CLIP engine file and GPU are available.
+    // Enabled via pipeline.yaml → stages[2].config.global_model.enabled
     std::shared_ptr<embedding::IEmbedder> global_embedder;
-#if defined(__linux__)
     {
         auto pipeline_yaml = YAML::LoadFile("resources/pipeline.yaml");
         auto global_cfg = pipeline_yaml["pipeline"]["stages"][2]["config"]["global_model"];
@@ -623,7 +546,6 @@ auto main(int argc, char* argv[]) -> int {
             }
         }
     }
-#endif
 
     // =========================================================================
     // 3. Detection — PatchCore with matched embed_dim
@@ -719,7 +641,6 @@ auto main(int argc, char* argv[]) -> int {
     // 5b. SAM2 segmenter (M5 placeholder — wired but not yet activated).
     // =========================================================================
     std::shared_ptr<inference::Sam2Segmenter> sam2_segmenter;
-#if defined(__linux__)
     {
         auto pipeline_yaml = YAML::LoadFile("resources/pipeline.yaml");
         auto sam2_cfg = pipeline_yaml["pipeline"]["stages"][5]["config"]["sam2"];
@@ -747,7 +668,6 @@ auto main(int argc, char* argv[]) -> int {
             }
         }
     }
-#endif
 
     // =========================================================================
     // 6. Rule Engine + Reasoner — loaded from YAML

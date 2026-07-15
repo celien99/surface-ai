@@ -14,13 +14,10 @@
 // cpp-httplib client mode is also available (same lib as http_server).
 
 // Minimal HTTP POST using POSIX sockets (no external dependency beyond libc).
-// Falls back gracefully if network is unavailable.
-#ifdef __linux__
 #include <sys/socket.h>
 #include <netdb.h>
 #include <unistd.h>
 #include <cstring>
-#endif
 
 namespace sai::io {
 
@@ -58,7 +55,6 @@ auto WebhookAlertSender::SendAlert(const AlertInfo& info) noexcept -> Result<voi
 
     std::string body = payload.dump();
 
-#ifdef __linux__
     // Parse URL to get host and path
     std::string url = webhook_url_;
     // Strip https:// or http://
@@ -126,7 +122,6 @@ auto WebhookAlertSender::SendAlert(const AlertInfo& info) noexcept -> Result<voi
     char buf[1024];
     ::recv(sock, buf, sizeof(buf) - 1, 0);
     close(sock);
-#endif
 
     return {};
 }
