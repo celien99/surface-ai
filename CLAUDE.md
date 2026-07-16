@@ -23,7 +23,7 @@ Check `.superpowers/sdd/` for per-task briefs and reports before assuming what s
 
 ## Build & test commands
 
-Two CMake presets are available:
+CMake presets (configure, build, test — all named `linux`):
 
 ```bash
 # ── Linux (WSL / Ubuntu 22.04 x64 + NVIDIA GPU) ──
@@ -42,10 +42,18 @@ cd build/linux && ./tests/detection/sai_detection_test --gtest_filter="PatchCore
 
 # Build and run the Seat AOI reference app (Linux + GPU required)
 cmake --build --preset linux --target seat_aoi
-./build/linux/apps/seat-aoi/seat_aoi                                       # GUI mode (FakeCamera + QML)
-./build/linux/apps/seat-aoi/seat_aoi --image-dir ./samples --output-dir ./results  # Headless batch mode
-./build/linux/apps/seat-aoi/seat_aoi --dataset-path ./samples/normal                     # Coreset build mode (no --coreset-output)
-./build/linux/apps/seat-aoi/seat_aoi --dataset-path ./samples/normal --coreset-output ./coreset.bin  # Coreset build + save
+
+# Seat AOI supports three subcommand modes:
+./build/linux/apps/seat-aoi/seat_aoi                                       # GUI mode (FakeCamera + QML, default)
+./build/linux/apps/seat-aoi/seat_aoi train --image-dir ./samples/normal --coreset-output ./coreset.bin  # Build coreset
+./build/linux/apps/seat-aoi/seat_aoi detect --image-dir ./samples --coreset ./coreset.bin --output-dir ./results  # Batch detect
+./build/linux/apps/seat-aoi/seat_aoi daemon --coreset ./coreset.bin --opcua-server opc.tcp://192.168.1.100:4840  # Online daemon
+
+# Docker workflow (alternative to native build)
+docker compose build                                           # Build Docker image (nvidia runtime)
+docker compose --profile train run seat_aoi_train              # Train coreset
+docker compose --profile detect up seat_aoi_detect             # Batch detect
+docker compose --profile daemon up -d seat_aoi_daemon          # Production daemon (auto-restart)
 ```
 
 The `linux` CMake preset targets Ubuntu 22.04 x64 (g++-12, system OpenMP, CUDA-gated code enabled). CUDA-gated code is compiled only when the CUDA Toolkit is found. Each module's CMakeLists.txt gates compilation at the target level (no `#ifdef` shims).
@@ -68,6 +76,8 @@ docs/surface-ai/glossary-and-contracts.md          # LIVE cross-batch contract d
 include/sai/                                       # public headers, mirrored from src/ (sai::core, sai::runtime, etc.)
 src/                                               # implementation (.cpp) + per-module CMakeLists.txt (19 modules)
 tests/                                             # GoogleTest suites, one dir per module + tests/integration/ (end-to-end pipelines)
+vcpkg-overlays/                                    # custom vcpkg ports (faiss with GPU support)
+apps/seat-aoi/                                     # reference AOI application
 ```
 
 ### Source modules (under `src/` and `include/sai/`)
