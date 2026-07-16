@@ -1,13 +1,16 @@
 // patch_embedder_cuda.cpp — PatchEmbedder GPU 推理路径（CUDA 门控）
 // 仅在 CUDAToolkit_FOUND 时由 CMake 编译。
 //
-// 实现 PatchEmbedder::Extract 的 GPU 推理路径：
+// 实现 PatchEmbedder::ExtractGpu：
 //   1. 校验输入为 GpuImage
 //   2. 调用 DinoV3Adapter::Infer() 获取 PatchFeatures（GPU 指针）
-//   3. 构造 Embedding::FromGpu() 包装 GPU 特征数据
+//   3. 若已注入 GpuPool：从池中分配 slab → cudaMemcpy D2D（TRT→pool）
+//      → Embedding::FromGpu (零 CPU 中转)
+//   4. 否则回退：cudaMemcpy D2H → Embedding::FromCpu（兼容路径）
 //
-// 数据保留在 GPU 上（零拷贝），下游 FeatureBank::Search 可通过
-// feature_bank_cuda.cpp 的 GPU 后端直接在 GPU 上搜索。
+// 当 GpuPool 可用时，特征数据全程驻留在 GPU 显存上：
+//   - 下游 FeatureBank::Search 可通过 feature_bank_cuda.cpp 的 GPU 后端
+//     直接在 GPU 上搜索，无需二次搬移。
 
 #include <sai/embedding/embedder.h>
 
@@ -15,15 +18,15 @@
 #include <memory>
 #include <source_location>
 
+#include <cuda_runtime.h>
+
 #include <sai/image/gpu_image.h>
 #include <sai/inference/dino_v3_adapter.h>
+#include <sai/memory/memory_pool.h>
+#include <sai/memory/pooled_ptr.h>
 
 namespace sai::embedding {
 
-// ExtractGpu: GPU-accelerated patch embedding extraction.
-// Called by PatchEmbedder::Extract() when the input is a GpuImage and
-// SAI_CUDA_ENABLED is defined. On non-CUDA builds, this symbol is
-// unresolved (patch_embedder.cpp returns a stub error instead).
 auto PatchEmbedder::ExtractGpu(const sai::image::Image& image) noexcept
     -> Result<Embedding> {
     if (!has_adapter_) {
@@ -52,7 +55,8 @@ auto PatchEmbedder::ExtractGpu(const sai::image::Image& image) noexcept
     }
 
     auto end = std::chrono::steady_clock::now();
-    auto latency = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
+    auto latency =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
 
     // Build metadata.
     EmbeddingMeta meta;
@@ -63,54 +67,33 @@ auto PatchEmbedder::ExtractGpu(const sai::image::Image& image) noexcept
     meta.grid = {patch_result->grid_h, patch_result->grid_w};
     meta.inference_latency = latency;
 
-    // Wrap GPU feature pointer in Embedding.
-    // The device memory is owned by the TensorRT engine's output buffer —
-    // the embedding holds a non-owning view. Caller must ensure the engine
-    // outlives the embedding.
-    //
-    // We construct via a raw Gpu pool pointer path: allocate a GpuPool slab,
-    // copy the feature data (if needed), and return FromGpu.
-    // For zero-copy, a future optimization could hold the TRT output binding
-    // reference directly.
-    auto feature_bytes = meta.count * meta.dim * sizeof(float);
+    const std::size_t feature_bytes = meta.count * meta.dim * sizeof(float);
 
-    // Use a temporary GpuPool allocation to hold the feature copy.
-    // In production, the TRT output buffer should be managed by a memory pool.
-    // For now, we copy the GPU features to a newly allocated GpuPool slab.
-    // (This copy is necessary because TRT output buffers are transient between
-    //  Infer() calls — the next Infer() overwrites them.)
+    // ── GpuPool path: zero-copy D2D (production) ──────────────────────
+    if (gpu_pool_ != nullptr) {
+        auto slab_result = gpu_pool_->Acquire(feature_bytes);
+        if (!slab_result) {
+            // Pool exhausted — fall through to CPU path rather than failing
+        } else {
+            auto slab = std::move(*slab_result);
+            cudaError_t err = cudaMemcpy(
+                slab.Get(), patch_result->device_ptr, feature_bytes,
+                cudaMemcpyDeviceToDevice);
+            if (err != cudaSuccess) {
+                // D2D copy failed — slab auto-released, fall through
+            } else {
+                // Success: feature data lives in pool-backed GPU memory.
+                // Downstream FeatureBank::Search (GPU path) can consume
+                // this directly without a host round-trip.
+                return Embedding::FromGpu(std::move(slab), std::move(meta));
+            }
+        }
+    }
 
-    // Note: GpuPool::Acquire requires the GpuPool to be available via Context.
-    // For direct GPU embedding construction without pool, we construct the
-    // Embedding with device_ptr metadata but data ownership is external.
-    //
-    // The current approach passes the raw device pointer — it is the caller's
-    // responsibility to ensure the TRT engine output buffer is not overwritten
-    // before the embedding is consumed.
-
-    // For a robust solution, we copy the features to a stable GpuPool buffer.
-    // However, GpuPool is not available at this layer (it's in sai::memory).
-    // The production path should:
-    //   1. Pre-allocate a ring of GpuPool output buffers
-    //   2. cudaMemcpy from TRT output → pool buffer after each Infer()
-    //   3. Pass the pool buffer to Embedding::FromGpu()
-    //
-    // For now, return the embedding with the device pointer directly.
-    // The Detect stage consumes the embedding synchronously before the next
-    // frame's Infer() call, so this is safe for the single-frame pipeline.
-
-    // Construct a temporary vector to hold a raw GPU pointer reference.
-    // Embedding::FromGpu requires a PooledPtr — but we only have a raw pointer.
-    // The workaround: construct an Embedding that stores data on CPU,
-    // but mark it as GPU for the pipeline. This is a known limitation
-    // tracked for the production GpuPool integration.
-
-    // FIXME(production): Allocate from GpuPool ring buffer, cudaMemcpy TRT
-    // output → pool buffer, pass PooledPtr to Embedding::FromGpu().
-    // For now, we download to CPU (pragmatic but not zero-copy).
-
-    std::vector<float> cpu_features(patch_result->grid_h * patch_result->grid_w
-                                     * patch_result->dim);
+    // ── CPU fallback: D2H copy (compatible, not zero-copy) ────────────
+    std::vector<float> cpu_features(patch_result->grid_h *
+                                     patch_result->grid_w *
+                                     patch_result->dim);
     cudaMemcpy(cpu_features.data(), patch_result->device_ptr,
                cpu_features.size() * sizeof(float), cudaMemcpyDeviceToHost);
 

@@ -52,9 +52,18 @@ public:
     [[nodiscard]] auto ExtractGpu(const sai::image::Image& image) noexcept
         -> Result<Embedding>;
 
+    // Inject a GpuPool for zero-copy GPU feature extraction.
+    // When set, ExtractGpu copies TRT output → pool buffer (D2D) and
+    // returns Embedding::FromGpu (zero host round-trip).
+    // When nullptr (default), falls back to D2H copy → Embedding::FromCpu.
+    auto SetGpuPool(sai::memory::IMemoryPool* pool) noexcept -> void {
+        gpu_pool_ = pool;
+    }
+
 private:
     explicit PatchEmbedder(sai::inference::DinoV3Adapter adapter) noexcept;
     sai::inference::DinoV3Adapter adapter_;
+    sai::memory::IMemoryPool* gpu_pool_ = nullptr;
     bool has_adapter_ = true;
 };
 

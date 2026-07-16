@@ -27,6 +27,8 @@
 #include <sai/embedding/patch_embedder.h>
 #include <sai/embedding/global_embedder.h>
 #include <sai/embedding/embedder.h>
+#include <sai/memory/arena_allocator.h>
+#include <sai/memory/gpu_pool.h>
 #include <sai/detection/patch_core.h>
 #include <sai/detection/feature_bank.h>
 #include <sai/detection/coreset_evolution.h>
@@ -101,6 +103,34 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     }
     auto embedder = std::make_shared<embedding::PatchEmbedder>(std::move(*patch_emb));
     std::cout << "Embedder: PatchEmbedder (DINOv3)\n";
+
+    // Wire GpuPool for zero-copy GPU feature extraction (D2D instead of D2H).
+    // When available, TRT output is copied directly to pool-backed GPU memory
+    // via cudaMemcpy DeviceToDevice, avoiding the CPU round-trip.
+    // Falls back gracefully when GpuPool is not set.
+    std::shared_ptr<sai::memory::GpuPool> gpu_pool_owner;
+    {
+        // Arena for GpuPool metadata (host-side free-list nodes).
+        // 4 KiB holds metadata for all 4 slab nodes + internal bookkeeping.
+        static sai::memory::ArenaAllocator gpu_pool_arena(4096);
+        sai::memory::MemoryPoolConfig pool_cfg;
+        // DINOv3: (1024/14)×(1024/14)×1024×sizeof(float) ≈ 21.8 MB per slab
+        pool_cfg.slab_size = kEmbedDim * (kImageSize / kPatchSize) *
+                              (kImageSize / kPatchSize) * sizeof(float);
+        pool_cfg.slab_count = 4;  // ring buffer: 4 concurrent frames
+        auto gpu_pool = sai::memory::GpuPool::Create(pool_cfg, gpu_pool_arena);
+        if (gpu_pool) {
+            embedder->SetGpuPool(gpu_pool->get());
+            gpu_pool_owner = std::shared_ptr<sai::memory::GpuPool>(
+                std::move(*gpu_pool));
+            std::cout << "GpuPool: " << pool_cfg.slab_count << " slabs × "
+                      << (pool_cfg.slab_size >> 20) << " MiB"
+                      << " (zero-copy embedding)\n";
+        } else {
+            std::cerr << "Warning: GpuPool creation failed — "
+                      << "embedding will use CPU fallback\n";
+        }
+    }
 
     // Global embedder (CLIP) for cross-modal vector retrieval.
     // Enabled via pipeline.yaml → stages[2].config.global_model.enabled
@@ -477,6 +507,7 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     app.ctx = std::move(ctx);
     app.pipeline = std::move(pipeline);
     app.embedder = embedder;
+    app.gpu_pool = std::move(gpu_pool_owner);
     app.patch_core = patch_core;
     app.rule_engine = rule_engine;
     app.exporter = exporter;

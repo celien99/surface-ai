@@ -20,6 +20,7 @@ namespace knowledge { class KnowledgeGraph; class KnowledgeEvolution; class Know
 namespace inference { class Sam2Segmenter; }
 namespace retrieval { class VectorPath; }
 namespace tuning { class TuningScheduler; }
+namespace memory { class GpuPool; }
 }
 
 struct CliArgs;
@@ -53,6 +54,10 @@ struct AssembledApp {
 
     std::optional<sai::detection::CoresetEvolution> evolution;
     std::optional<sai::tuning::TuningScheduler> tuning_scheduler;
+    // shared_ptr type-erases the deleter, so destruction works even when
+    // GpuPool is only forward-declared (app_builder.cpp creates it where
+    // the type is complete).
+    std::shared_ptr<sai::memory::GpuPool> gpu_pool;
     std::stop_source tuning_stop_source;    // keeps tuning thread alive
     std::stop_source evolution_stop_source;  // keeps evolution thread alive
 
