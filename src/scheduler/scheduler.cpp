@@ -1,4 +1,4 @@
-#include "scheduler.h"
+#include <sai/scheduler/scheduler.h>
 
 #include <memory>
 #include <set>
@@ -9,7 +9,11 @@
 #include <sai/core/registry.h>
 #include <sai/runtime/worker_pool.h>
 
-namespace sai::pipeline {
+namespace sai::scheduler {
+
+using sai::pipeline::BackpressureConfig;
+using sai::pipeline::StageConfig;
+using sai::pipeline::StageType;
 
 namespace {
 
@@ -19,7 +23,7 @@ TypeId StageTypeToPoolId(StageType t) {
 
 }  // anonymous namespace
 
-// ── StageType → pool key mapping (single source of truth) ─────────────
+// -- StageType -> pool key mapping (single source of truth) -------------
 
 auto Scheduler::StageTypeToPoolKey(StageType t) -> std::string_view {
     switch (t) {
@@ -44,7 +48,7 @@ auto Scheduler::PoolConfigForKey(std::string_view key) -> PoolConfig {
     return {1, 8};
 }
 
-// ── Scheduler ──────────────────────────────────────────────────────────
+// -- Scheduler ----------------------------------------------------------
 
 Scheduler::Scheduler()
     : pools_(std::make_unique<Registry<runtime::WorkerPool>>()) {}
@@ -73,7 +77,7 @@ auto Scheduler::Allocate(const std::vector<StageConfig>& stages,
         }
     }
 
-    // Build stage_type → pool_id map for PoolFor lookups
+    // Build stage_type -> pool_id map for PoolFor lookups
     for (auto& s : stages) {
         stage_pool_map_[s.type] = StageTypeToPoolId(s.type);
     }
@@ -91,7 +95,7 @@ auto Scheduler::PoolFor(StageType type) const
     if (it == stage_pool_map_.end()) {
         return tl::make_unexpected(ErrorInfo{
             ErrorCode::Scheduler_PoolNotFound,
-            "StageType not allocated — call Allocate() first"});
+            "StageType not allocated -- call Allocate() first"});
     }
     auto resolved = pools_->Resolve(it->second);
     if (!resolved.has_value()) {
@@ -102,4 +106,4 @@ auto Scheduler::PoolFor(StageType type) const
     return resolved->get();
 }
 
-}  // namespace sai::pipeline
+}  // namespace sai::scheduler

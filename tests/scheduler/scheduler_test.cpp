@@ -2,12 +2,15 @@
 
 #include <sai/core/registry.h>
 #include <sai/runtime/worker_pool.h>
-#include <sai/pipeline/pipeline_config.h>
+#include <sai/scheduler/scheduler.h>
 
-#include "src/scheduler/scheduler.h"
-
-namespace sai::pipeline {
+namespace sai::scheduler {
 namespace {
+
+using sai::pipeline::BackpressureConfig;
+using sai::pipeline::BackpressurePolicy;
+using sai::pipeline::StageConfig;
+using sai::pipeline::StageType;
 
 TEST(SchedulerTest, AllocateAndResolve) {
     Scheduler scheduler;
@@ -114,4 +117,4 @@ TEST(SchedulerTest, PoolConfigForKeyDefaults) {
 }
 
 }  // namespace
-}  // namespace sai::pipeline
+}  // namespace sai::scheduler
