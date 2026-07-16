@@ -116,10 +116,10 @@ public:
     }
 
     // Access for evolution wiring.
-    [[nodiscard]] auto GetDetector(std::string_view surface_id,
+    [[nodiscard]] auto GetDetector(const std::string& surface_id,
                                     std::uint16_t position_id) const
         -> std::shared_ptr<sai::detection::IDetector> {
-        auto it = detectors_.find({std::string(surface_id), position_id});
+        auto it = detectors_.find({surface_id, position_id});
         if (it != detectors_.end()) return it->second;
         return default_detector_;
     }

@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <memory>
 #include <mutex>
+#include <stop_token>
 
 #include <sai/core/error.h>
 #include <sai/pipeline/pipeline_config.h>
@@ -157,6 +158,20 @@ public:
         std::unique_lock lock(mutex_);
         cv_.wait(lock, [this] { return !ring_.IsEmpty(); });
         auto item = ring_.TryPop();  // guaranteed to succeed
+        cv_.notify_one();  // wake push side
+        return item;
+    }
+
+    // Like PopBlocking but respect a stop_token: returns nullptr when stop is
+    // requested, even if the queue is still empty. Uses cv_.wait with a
+    // compound predicate to avoid busy-polling.
+    auto PopBlockingWithStop(std::stop_token st) -> std::unique_ptr<T> {
+        std::unique_lock lock(mutex_);
+        cv_.wait(lock, [this, &st] {
+            return !ring_.IsEmpty() || st.stop_requested();
+        });
+        if (st.stop_requested() || ring_.IsEmpty()) return nullptr;
+        auto item = ring_.TryPop();  // guaranteed to succeed (ring not empty)
         cv_.notify_one();  // wake push side
         return item;
     }

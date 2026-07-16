@@ -15,9 +15,14 @@
 
 #include "pipeline_builder.h"
 #include "stage_factory.h"
-#include "scheduler/scheduler.h"
+#include <sai/scheduler/scheduler.h>
 
 using namespace std::chrono_literals;
+
+namespace {
+constexpr std::size_t kDefaultQueueCapacity = 8;
+constexpr auto kDrainTimeout = std::chrono::seconds(30);
+}  // namespace
 
 namespace sai::pipeline {
 
@@ -45,6 +50,9 @@ public:
     }
     auto PopBlocking() -> std::unique_ptr<StageOutput> override {
         return queue_->PopBlocking();
+    }
+    auto PopBlockingWithStop(std::stop_token st) -> std::unique_ptr<StageOutput> override {
+        return queue_->PopBlockingWithStop(st);
     }
 
 private:
@@ -78,7 +86,7 @@ auto Pipeline::LoadFromYAML(std::filesystem::path yaml_path, Context& ctx)
     // Step 1: Create pools via Scheduler (single source of truth for
     // StageType → pool mapping, replacing the duplicated logic previously
     // in the anonymous namespace above).
-    pipeline->stage_scheduler_ = std::make_unique<Scheduler>();
+    pipeline->stage_scheduler_ = std::make_unique<sai::scheduler::Scheduler>();
     BackpressureConfig bp_cfg;
     auto alloc_result = pipeline->stage_scheduler_->Allocate(
         config->stages, bp_cfg);
@@ -113,7 +121,7 @@ auto Pipeline::LoadFromYAML(std::filesystem::path yaml_path, Context& ctx)
 
     for (auto& stage_cfg : config->stages) {
         auto stage_id = sai::detail::Fnv1aHash(
-            std::string(Scheduler::StageTypeToPoolKey(stage_cfg.type)));
+            std::string(sai::scheduler::Scheduler::StageTypeToPoolKey(stage_cfg.type)));
 
         runtime::TaskId task_id = sai::detail::Fnv1aHash(stage_cfg.id);
 
@@ -267,15 +275,9 @@ auto Pipeline::DequeueInput(const std::string& stage_id,
     auto it = input_queues_.find(stage_id);
     if (it == input_queues_.end()) return nullptr;
 
-    // Poll with short sleep, checking stop_token each iteration.
-    while (!st.stop_requested()) {
-        auto item = it->second->TryPop();
-        if (item) return item;
-        std::this_thread::sleep_for(std::chrono::microseconds(500));
-    }
-
-    // Stop requested: one last non-blocking try to drain remaining items.
-    return it->second->TryPop();
+    // Block on the queue's condition_variable, waking on data OR stop.
+    // No busy-polling — the CV handles both signals efficiently.
+    return it->second->PopBlockingWithStop(st);
 }
 
 // =========================================================================
@@ -310,7 +312,7 @@ auto Pipeline::EnqueueOutputs(const std::string& stage_id,
 auto Pipeline::BuildQueueWiring(const PipelineConfig& config) -> Result<void> {
     // Create an input queue for each stage
     for (auto& stage : config.stages) {
-        size_t q_capacity = stage.queue_capacity.value_or(8);
+        size_t q_capacity = stage.queue_capacity.value_or(kDefaultQueueCapacity);
         auto sq_result = StageQueue<StageOutput>::Create(
             q_capacity, stage.backpressure);
         if (!sq_result.has_value()) return tl::make_unexpected(std::move(sq_result).error());
@@ -346,7 +348,7 @@ auto Pipeline::Drain() -> Result<void> {
     draining_.store(true);
 
     // Poll all input queues until all are zero, with a 30 s timeout.
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    auto deadline = std::chrono::steady_clock::now() + kDrainTimeout;
 
     while (std::chrono::steady_clock::now() < deadline) {
         bool all_empty = true;
@@ -463,7 +465,8 @@ auto Pipeline::TakeFrameImage() -> std::optional<FrameImageSnapshot> {
 }
 
 auto Pipeline::GetStage(std::string_view id) const -> IStageNode* {
-    auto it = nodes_.find(std::string(id));
+    // Heterogeneous lookup via TransparentStringHash — no temporary std::string.
+    auto it = nodes_.find(id);
     if (it == nodes_.end()) return nullptr;
     return it->second.get();
 }

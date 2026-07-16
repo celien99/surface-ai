@@ -3,14 +3,13 @@
 #include <atomic>
 #include <filesystem>
 #include <functional>
-#include <map>
 #include <memory>
+#include <optional>
 #include <stop_token>
 #include <string>
+#include <string_view>
 #include <thread>
-#include <vector>
-
-#include <optional>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -38,10 +37,11 @@ namespace sai::detection {
 struct DetectionResult;
 }  // namespace sai::detection
 
-namespace sai::pipeline {
-
-// Forward-declared for private member; defined in src/scheduler/scheduler.h
+namespace sai::scheduler {
 class Scheduler;
+}  // namespace sai::scheduler
+
+namespace sai::pipeline {
 
 // M7: result callback type — invoked in Export worker thread per completed frame
 using ResultCallback = std::function<void(int frame_id, const sai::reasoner::ReasoningResult&)>;
@@ -102,6 +102,19 @@ private:
 };
 
 namespace detail {
+
+// Transparent hash for heterogeneous lookup: find(std::string_view) on
+// unordered_map<std::string, T> without constructing a temporary std::string.
+struct TransparentStringHash {
+    using is_transparent = void;
+    [[nodiscard]] auto operator()(std::string_view sv) const noexcept -> std::size_t {
+        return std::hash<std::string_view>{}(sv);
+    }
+};
+
+template <typename T>
+using StringMap = std::unordered_map<std::string, T, TransparentStringHash, std::equal_to<>>;
+
 class ErasedStageQueue {
 public:
     virtual ~ErasedStageQueue() = default;
@@ -111,6 +124,7 @@ public:
     virtual auto TryPush(std::unique_ptr<StageOutput>) -> bool = 0;
     virtual auto TryPop() -> std::unique_ptr<StageOutput> = 0;
     virtual auto PopBlocking() -> std::unique_ptr<StageOutput> = 0;
+    virtual auto PopBlockingWithStop(std::stop_token st) -> std::unique_ptr<StageOutput> = 0;
 };
 }  // namespace detail
 
@@ -163,15 +177,15 @@ private:
     std::unique_ptr<runtime::TaskGraph> graph_;
     std::unique_ptr<runtime::PipelineExecutor> executor_;
     std::unique_ptr<runtime::TaskScheduler> task_scheduler_;
-    // Stage→pool mapper (M6 pipeline::Scheduler, owns the WorkerPool registry)
-    std::unique_ptr<Scheduler> stage_scheduler_;
-    std::map<std::string, std::unique_ptr<IStageNode>> nodes_;
+    // Stage->pool mapper (sai::scheduler::Scheduler, owns the WorkerPool registry)
+    std::unique_ptr<sai::scheduler::Scheduler> stage_scheduler_;
+    detail::StringMap<std::unique_ptr<IStageNode>> nodes_;
     // One input queue per stage (keyed by stage id). Entry stages receive
     // frames from Submit(); downstream stages receive from upstream EnqueueOutputs.
-    std::map<std::string, std::unique_ptr<detail::ErasedStageQueue>> input_queues_;
+    detail::StringMap<std::unique_ptr<detail::ErasedStageQueue>> input_queues_;
     // Adjacency: for each stage, the list of downstream stage ids
-    std::map<std::string, std::vector<std::string>> downstreams_;
-    std::map<std::string, StageMetrics> metrics_;
+    detail::StringMap<std::vector<std::string>> downstreams_;
+    detail::StringMap<StageMetrics> metrics_;
     std::stop_source stop_source_;
     std::atomic<bool> running_{false};
     std::atomic<bool> draining_{false};
