@@ -69,8 +69,8 @@ private:
     static_assert(std::atomic<TaggedHead>::is_always_lock_free,
                   "TaggedHead must be lock-free per 1.5-memory.md §12 — no silent fallback to a mutex");
 
-    static auto PopFreeList(std::atomic<TaggedHead>& head) noexcept -> Node*;
-    static void PushFreeList(std::atomic<TaggedHead>& head, Node* node) noexcept;
+    // PopFreeList / PushFreeList are provided by <sai/memory/free_list.h>
+    // as inline template functions -- see 1.5-memory.md section 9.
 
     sai::memory::MemoryPoolConfig config_;
     std::vector<std::uint8_t> region_;  // std::malloc'd stand-in for cudaMalloc'd device memory.

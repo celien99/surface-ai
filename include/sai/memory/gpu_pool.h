@@ -82,11 +82,8 @@ private:
     static_assert(std::atomic<TaggedHead>::is_always_lock_free,
                   "TaggedHead must be lock-free per 1.5-memory.md §12 — no silent fallback to a mutex");
 
-    // Single CAS retry loop, no nested branching — reused verbatim from
-    // 1.5-memory.md §9's PopFreeList/PushFreeList shape (same algorithm
-    // tests/memory/host_test_pool.cpp already implements and tests).
-    static auto PopFreeList(std::atomic<TaggedHead>& head) noexcept -> Node*;
-    static void PushFreeList(std::atomic<TaggedHead>& head, Node* node) noexcept;
+    // PopFreeList / PushFreeList are provided by <sai/memory/free_list.h>
+    // as inline template functions — see 1.5-memory.md section 9.
 
     GpuPool() noexcept = default;
 

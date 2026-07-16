@@ -2,6 +2,8 @@
 
 #include <source_location>
 
+#include <sai/memory/free_list.h>
+
 namespace sai::test {
 
 using sai::memory::PooledPtr;
@@ -22,31 +24,6 @@ HostTestPool::HostTestPool(sai::memory::MemoryPoolConfig config) noexcept
 
 HostTestPool::~HostTestPool() noexcept = default;
 
-// Single CAS retry loop, no nested branching — reused verbatim from
-// 1.5-memory.md §9's PopFreeList shape (tagged head, closes the ABA window).
-auto HostTestPool::PopFreeList(std::atomic<TaggedHead>& head) noexcept -> Node* {
-    TaggedHead old_head = head.load(std::memory_order_acquire);
-    while (old_head.pointer != nullptr &&
-           !head.compare_exchange_weak(
-               old_head, TaggedHead{old_head.pointer->next, old_head.tag + 1},
-               std::memory_order_acq_rel, std::memory_order_acquire)) {
-        // old_head is refreshed to the latest observed {pointer, tag} by CAS; retry.
-    }
-    return old_head.pointer;
-}
-
-// Single CAS retry loop, no nested branching — reused verbatim from
-// 1.5-memory.md §9's PushFreeList shape (tagged head, closes the ABA window).
-void HostTestPool::PushFreeList(std::atomic<TaggedHead>& head, Node* node) noexcept {
-    TaggedHead old_head = head.load(std::memory_order_acquire);
-    TaggedHead new_head;
-    do {
-        node->next = old_head.pointer;
-        new_head = TaggedHead{node, old_head.tag + 1};
-    } while (!head.compare_exchange_weak(old_head, new_head, std::memory_order_acq_rel,
-                                          std::memory_order_acquire));
-}
-
 auto HostTestPool::Acquire(std::size_t bytes) noexcept -> sai::Result<PooledPtr<std::uint8_t>> {
     if (bytes > config_.slab_size) {
         return tl::make_unexpected(sai::ErrorInfo{
@@ -56,7 +33,7 @@ auto HostTestPool::Acquire(std::size_t bytes) noexcept -> sai::Result<PooledPtr<
         });
     }
 
-    Node* node = PopFreeList(free_list_head_);
+    Node* node = sai::memory::PopFreeList(free_list_head_);
     if (node == nullptr) {
         return tl::make_unexpected(sai::ErrorInfo{
             sai::ErrorCode::Memory_PoolExhausted,
@@ -79,7 +56,7 @@ void HostTestPool::Release(PooledPtr<std::uint8_t>& handle) noexcept {
     // The refcount slot lives inside the Node that owns this slab; recover
     // the Node from the slab pointer to push it back onto the free list.
     const std::size_t index = static_cast<std::size_t>(slab_ptr - region_.data()) / config_.slab_size;
-    PushFreeList(free_list_head_, &nodes_[index]);
+    sai::memory::PushFreeList(free_list_head_, &nodes_[index]);
     available_count_.fetch_add(1, std::memory_order_acq_rel);
 }
 

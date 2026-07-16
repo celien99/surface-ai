@@ -5,35 +5,9 @@
 #include <string>
 
 #include <cuda_runtime.h>
+#include <sai/memory/free_list.h>
 
 namespace sai::memory {
-
-// Single CAS retry loop, no nested branching — reused verbatim from
-// 1.5-memory.md §9's PopFreeList shape (tagged head, closes the ABA window),
-// the same algorithm tests/memory/host_test_pool.cpp already implements and
-// tests.
-auto PinnedPool::PopFreeList(std::atomic<TaggedHead>& head) noexcept -> Node* {
-    TaggedHead old_head = head.load(std::memory_order_acquire);
-    while (old_head.pointer != nullptr &&
-           !head.compare_exchange_weak(
-               old_head, TaggedHead{old_head.pointer->next, old_head.tag + 1},
-               std::memory_order_acq_rel, std::memory_order_acquire)) {
-        // old_head is refreshed to the latest observed {pointer, tag} by CAS; retry.
-    }
-    return old_head.pointer;
-}
-
-// Single CAS retry loop, no nested branching — reused verbatim from
-// 1.5-memory.md §9's PushFreeList shape.
-void PinnedPool::PushFreeList(std::atomic<TaggedHead>& head, Node* node) noexcept {
-    TaggedHead old_head = head.load(std::memory_order_acquire);
-    TaggedHead new_head;
-    do {
-        node->next = old_head.pointer;
-        new_head = TaggedHead{node, old_head.tag + 1};
-    } while (!head.compare_exchange_weak(old_head, new_head, std::memory_order_acq_rel,
-                                          std::memory_order_acquire));
-}
 
 auto PinnedPool::Create(MemoryPoolConfig config, ArenaAllocator& arena) noexcept
     -> Result<std::unique_ptr<PinnedPool>> {
