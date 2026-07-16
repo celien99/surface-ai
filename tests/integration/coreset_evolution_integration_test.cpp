@@ -108,11 +108,11 @@ TEST(CoresetEvolutionIntegration, DefectNeverIncluded) {
     DetectionResult det;
     det.image_level_score = 0.9F;
     std::vector<float> distances(64, 10.0F);  // high distances
-    std::vector<float> embedding_data(64, 0.5F);  // dummy embedding data
+    auto embedding_data = std::make_shared<const std::vector<float>>(64, 0.5F);
 
     evo.AssessAndOffer(
         distances.data(), 64, 5,
-        embedding_data.data(), 8, 8, 1,  // grid_h=8, grid_w=8, dim=1
+        embedding_data, 8, 8, 1,  // grid_h=8, grid_w=8, dim=1
         det,
         1,     // matched_rules_count > 0 → defect
         "NG",  // reasoner says NG

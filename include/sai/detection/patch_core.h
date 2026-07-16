@@ -90,7 +90,7 @@ public:
     struct DetectionContext {
         std::vector<float> knn_distances;      // query_count × k_nearest
         std::size_t k_nearest = 0;
-        std::vector<float> embedding_data;     // query_count × dim
+        std::shared_ptr<const std::vector<float>> embedding_data;  // shared, zero-copy to AssessAndOffer
         std::size_t grid_h = 0;
         std::size_t grid_w = 0;
         std::size_t dim = 0;

@@ -27,6 +27,9 @@ namespace {
 namespace fs = std::filesystem;
 using namespace std::chrono_literals;
 
+constexpr std::size_t kDriftHistoryWindowSize = 5;
+constexpr double kDriftSigmaMultiplier = 2.0;
+
 // ── Internal helper: compute normalcy score from distances ──
 auto ComputeNormalcy(const float* distances, std::size_t count,
                      const NormalityProfile& profile, float tail_ratio_max)
@@ -165,7 +168,7 @@ struct CoresetEvolution::Impl {
 
     auto CheckDrift(float new_displacement) -> void {
         displacement_history.push_back(new_displacement);
-        if (displacement_history.size() > 5) {
+        if (displacement_history.size() > kDriftHistoryWindowSize) {
             displacement_history.erase(displacement_history.begin());
         }
         if (displacement_history.size() < 3) return;
@@ -183,7 +186,7 @@ struct CoresetEvolution::Impl {
 
         // Check if last 3 are all > mean + 2*stddev
         if (stddev > 0.0) {
-            auto threshold = mean + 2.0 * stddev;
+            auto threshold = mean + kDriftSigmaMultiplier * stddev;
             auto n = displacement_history.size();
             if (displacement_history[n-1] > threshold
                 && displacement_history[n-2] > threshold
@@ -254,7 +257,7 @@ auto CoresetEvolution::AssessAndOffer(
     const float* distances,
     std::size_t query_count,
     std::size_t /*k*/,
-    const float* embedding_data,
+    std::shared_ptr<const std::vector<float>> embedding_data,
     std::size_t grid_h,
     std::size_t grid_w,
     std::size_t dim,
@@ -267,7 +270,8 @@ auto CoresetEvolution::AssessAndOffer(
 
     if (!impl_->cfg.enabled) return;
     if (query_count == 0) return;
-    if (embedding_data == nullptr) return;
+    if (!embedding_data) return;
+    if (embedding_data->empty()) return;
 
     try {
         // 1. Normalcy score
@@ -287,14 +291,10 @@ auto CoresetEvolution::AssessAndOffer(
 
         if (!novelty.is_novel) return;
 
-        // 4. Append to buffer
-        auto patch_count_value = grid_h * grid_w * dim;
-        auto shared_data = std::make_shared<std::vector<float>>(
-            embedding_data, embedding_data + patch_count_value);
-
+        // 4. Append to buffer — zero-copy: reuse the shared_ptr from Detect().
         EvolutionCandidate candidate;
         candidate.patch_vectors = std::shared_ptr<const float>(
-            shared_data, shared_data->data());
+            embedding_data, embedding_data->data());
         candidate.grid_h = grid_h;
         candidate.grid_w = grid_w;
         candidate.dim = dim;

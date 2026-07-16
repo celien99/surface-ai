@@ -183,12 +183,12 @@ public:
 
     // 每帧调用（检测线程，~微秒，零阻塞）
     // embedding_data: 原始 patch 向量（grid_h * grid_w * dim 个 float），
-    //   用于通过 NoveltyFilter 后创建 EvolutionCandidate。
-    //   调用方（seat_aoi）从 Embedding::Data() 获取。
+    //   通过 shared_ptr 共享，避免每帧 5+ MB 的额外拷贝。
+    //   调用方（seat_aoi）从 PatchCore::DetectionContext 获取。
     auto AssessAndOffer(const float* distances,
                         std::size_t query_count,
                         std::size_t k,
-                        const float* embedding_data,
+                        std::shared_ptr<const std::vector<float>> embedding_data,
                         std::size_t grid_h,
                         std::size_t grid_w,
                         std::size_t dim,

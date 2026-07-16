@@ -21,7 +21,7 @@ inline void OfferToEvolution(
         ctx.knn_distances.data(),
         ctx.knn_distances.size() / ctx.k_nearest,
         ctx.k_nearest,
-        ctx.embedding_data.data(),
+        ctx.embedding_data,         // shared_ptr — zero-copy
         ctx.grid_h,
         ctx.grid_w,
         ctx.dim,

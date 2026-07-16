@@ -235,11 +235,11 @@ auto PatchCore::Detect(const sai::embedding::Embedding& embedding) noexcept
                                         effective_threshold_,
                                         latency);
 
-    // 8. 保存检测上下文（供 CoresetEvolution 访问）
+    // 8. 保存检测上下文（供 CoresetEvolution 访问 — embedding 用 shared_ptr 零拷贝共享）
     last_ctx_.knn_distances = distances;
     last_ctx_.k_nearest = cfg_.k_nearest;
-    last_ctx_.embedding_data.assign(original_query,
-                                     original_query + query_count * cfg_.embed_dim);
+    last_ctx_.embedding_data = std::make_shared<const std::vector<float>>(
+        original_query, original_query + query_count * cfg_.embed_dim);
     last_ctx_.grid_h = grid_h;
     last_ctx_.grid_w = grid_w;
     last_ctx_.dim = cfg_.embed_dim;
