@@ -20,6 +20,7 @@ if(CUDAToolkit_FOUND)
     list(APPEND SAI_EMBEDDING_SOURCES
         patch_embedder_cuda.cpp
         global_embedder_cuda.cpp
+        embedding_cuda.cpp
     )
 endif()
 
