@@ -49,6 +49,22 @@ auto Scheduler::PoolConfigForKey(std::string_view key) -> PoolConfig {
     return {1, 8};
 }
 
+auto Scheduler::OverridePoolConfig(std::string_view key, std::size_t threads,
+                                    std::optional<std::size_t> queue_capacity) -> void {
+    auto cfg = PoolConfigForKey(key);  // start from defaults
+    cfg.threads = threads;
+    if (queue_capacity.has_value()) {
+        cfg.queue_capacity = *queue_capacity;
+    }
+    pool_overrides_[std::string(key)] = cfg;
+}
+
+auto Scheduler::GetEffectivePoolConfig(std::string_view key) const -> PoolConfig {
+    auto it = pool_overrides_.find(key);
+    if (it != pool_overrides_.end()) return it->second;
+    return PoolConfigForKey(key);
+}
+
 // -- Scheduler ----------------------------------------------------------
 
 Scheduler::Scheduler()
@@ -68,7 +84,14 @@ auto Scheduler::Allocate(const std::vector<StageConfig>& stages,
 
     // Create a WorkerPool for each unique key and register it
     for (auto& key : required_keys) {
-        auto cfg = PoolConfigForKey(key);
+        // Check for YAML override first, fall back to hardcoded defaults
+        PoolConfig cfg;
+        auto ov = pool_overrides_.find(key);
+        if (ov != pool_overrides_.end()) {
+            cfg = ov->second;
+        } else {
+            cfg = PoolConfigForKey(key);
+        }
         auto pool = std::make_shared<runtime::WorkerPool>(
             cfg.threads, cfg.queue_capacity);
         TypeId type_id = sai::detail::Fnv1aHash(key);

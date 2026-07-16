@@ -70,6 +70,14 @@ struct PipelineConfig {
     std::string version;
     BackpressureConfig backpressure;
     std::vector<StageConfig> stages;
+
+    // Per-pool thread / queue overrides from YAML pool_config section.
+    // Key: pool name (e.g. "Inference", "Capture"), Value: {threads, queue_capacity}
+    struct PoolOverride {
+        std::size_t threads;
+        std::optional<std::size_t> queue_capacity;
+    };
+    std::map<std::string, PoolOverride> pool_overrides;
 };
 
 }  // namespace sai::pipeline

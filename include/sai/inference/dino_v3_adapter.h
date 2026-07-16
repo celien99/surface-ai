@@ -36,6 +36,13 @@ public:
     // 声明于此，定义留在门控 Task 3 的 .cpp 文件中。
     [[nodiscard]] auto Infer(const sai::image::GpuImage& image) noexcept -> Result<PatchFeatures>;
 
+    // Async inference: enqueues work on the given CUDA stream and returns
+    // immediately WITHOUT synchronizing. The caller must call
+    // cudaStreamSynchronize(stream) before reading the output PatchFeatures
+    // device_ptr. Opt-in path for GPU-CPU overlap scenarios.
+    [[nodiscard]] auto InferAsync(const sai::image::GpuImage& image,
+                                   void* stream) noexcept -> Result<PatchFeatures>;
+
     [[nodiscard]] auto ModelName() const noexcept -> std::string_view { return "DINOv3"; }
 
     DinoV3Adapter(DinoV3Adapter&&) noexcept = default;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -63,6 +64,15 @@ public:
     };
     static auto PoolConfigForKey(std::string_view key) -> PoolConfig;
 
+    // Override a pool's thread count and/or queue capacity from external
+    // config (e.g. YAML pool_config). Must be called before Allocate().
+    auto OverridePoolConfig(std::string_view key, std::size_t threads,
+                             std::optional<std::size_t> queue_capacity = std::nullopt) -> void;
+
+    // Return the effective pool config (override if set, else default).
+    // Used by Pipeline::Start() to determine how many jthreads to launch.
+    auto GetEffectivePoolConfig(std::string_view key) const -> PoolConfig;
+
 private:
     // Fixed-size array indexed by StageType (8 values: Capture=0..Custom=7).
     // Unallocated entries hold std::nullopt — no heap allocation for lookups.
@@ -73,6 +83,8 @@ private:
     std::unique_ptr<Registry<runtime::WorkerPool>> pools_;
     std::array<std::optional<TypeId>, kStageTypeCount> stage_pool_map_;
     BackpressureConfig bp_config_{};
+    // Pool config overrides from YAML (key -> custom thread count / queue capacity)
+    std::map<std::string, PoolConfig, std::less<>> pool_overrides_;
 };
 
 }  // namespace sai::scheduler

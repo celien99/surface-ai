@@ -40,6 +40,18 @@ auto PipelineBuilder::ParseFromYAML(std::filesystem::path yaml_path)
             }
         }
 
+        // Parse pool_config (optional per-pool thread/queue overrides)
+        if (auto pc = pipe["pool_config"]; pc.IsDefined() && pc.IsMap()) {
+            for (auto it = pc.begin(); it != pc.end(); ++it) {
+                PipelineConfig::PoolOverride po;
+                po.threads = it->second["threads"].as<std::size_t>(1);
+                if (auto qc = it->second["queue_capacity"]; qc.IsDefined()) {
+                    po.queue_capacity = qc.as<std::size_t>();
+                }
+                config.pool_overrides[it->first.as<std::string>()] = std::move(po);
+            }
+        }
+
         // Parse stages
         auto stages_node = pipe["stages"];
         for (auto stage_node : stages_node) {
