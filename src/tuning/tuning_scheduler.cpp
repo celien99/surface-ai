@@ -25,6 +25,27 @@ auto SerializeParams(const std::vector<double>& params) -> std::string {
     return oss.str();
 }
 
+// Retry rollback with exponential backoff (3 attempts: 100ms, 200ms, 400ms).
+// Returns true if rollback succeeded, false if all attempts failed.
+auto RetryRollback(const sai::tuning::ParameterApplier& apply_params,
+                   const std::vector<double>& old_params) -> bool {
+    static constexpr int kMaxRetries = 3;
+    static constexpr auto kBaseBackoff = std::chrono::milliseconds(100);
+
+    for (int attempt = 0; attempt < kMaxRetries; ++attempt) {
+        auto result = apply_params(old_params);
+        if (result.has_value()) return true;
+        sai::infra::Logger::Get("tuning").Log(
+            sai::infra::LogLevel::Error,
+            "TuningScheduler rollback attempt {}/{} failed: {}",
+            attempt + 1, kMaxRetries, result.error().message);
+        if (attempt < kMaxRetries - 1) {
+            std::this_thread::sleep_for(kBaseBackoff * (1 << attempt));
+        }
+    }
+    return false;
+}
+
 }  // namespace
 
 TuningScheduler::TuningScheduler(SchedulerConfig config,
@@ -173,13 +194,14 @@ auto TuningScheduler::MainLoop(std::stop_token token) -> void {
                     sai::infra::LogLevel::Error,
                     "TuningScheduler parameter apply failed: {}",
                     apply_result.error().message);
-                // Rollback to old params
-                auto rollback_result = apply_params_(old_params);
-                if (!rollback_result.has_value()) {
-                    sai::infra::Logger::Get("tuning").Log(
-                        sai::infra::LogLevel::Error,
-                        "TuningScheduler rollback failed: {}",
-                        rollback_result.error().message);
+                // Rollback to old params with retry
+                if (apply_params_) {
+                    if (!RetryRollback(apply_params_, old_params)) {
+                        sai::infra::Logger::Get("tuning").Log(
+                            sai::infra::LogLevel::Critical,
+                            "TuningScheduler rollback FAILED after {} attempts",
+                            3);
+                    }
                 }
                 state_.store(TuningState::RolledBack, std::memory_order_release);
                 continue;
@@ -227,12 +249,11 @@ auto TuningScheduler::MainLoop(std::stop_token token) -> void {
                 "TuningScheduler NG rate out of bounds — rolling back");
 
             if (apply_params_) {
-                auto rollback_result = apply_params_(old_params);
-                if (!rollback_result.has_value()) {
+                if (!RetryRollback(apply_params_, old_params)) {
                     sai::infra::Logger::Get("tuning").Log(
-                        sai::infra::LogLevel::Error,
-                        "TuningScheduler monitoring rollback failed: {}",
-                        rollback_result.error().message);
+                        sai::infra::LogLevel::Critical,
+                        "TuningScheduler monitoring rollback FAILED after {} attempts",
+                        3);
                 }
             }
             current_params_ = old_params;

@@ -166,6 +166,20 @@ auto TryCreateTuningScheduler(
     auto objective = std::make_unique<tuning::KnowledgeGraphObjective>(
         kg, fp_cost, fn_cost);
 
+    // Map verdict_mapping threshold parameter indices for simulation-aware
+    // evaluation. When set, Evaluate() replays detection_score against candidate
+    // thresholds instead of relying on stored machine_verdict.
+    int ng_idx = -1, warn_idx = -1;
+    for (std::size_t i = 0; i < param_names.size(); ++i) {
+        if (param_names[i] == "verdict_mapping.ng_threshold")
+            ng_idx = static_cast<int>(i);
+        if (param_names[i] == "verdict_mapping.warn_threshold")
+            warn_idx = static_cast<int>(i);
+    }
+    if (ng_idx >= 0) {
+        objective->SetThresholdParamIndices(ng_idx, warn_idx);
+    }
+
     auto optimizer = std::make_unique<tuning::BayesianOptimizer>(
         std::move(space), opt_cfg);
 
