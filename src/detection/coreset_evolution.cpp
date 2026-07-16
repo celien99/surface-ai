@@ -8,6 +8,7 @@
 #include <sai/infra/logger.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -155,9 +156,9 @@ struct CoresetEvolution::Impl {
 
     // Background thread
     std::jthread update_thread;
-    std::mutex notify_mutex;
+    std::atomic<bool> notify_flag{false};
+    std::mutex cv_mutex;  // required by condition_variable_any (CV protocol)
     std::condition_variable_any notify_cv;
-    bool notify_flag = false;
     std::mutex stats_mutex;
 
     std::shared_ptr<knowledge::KnowledgeStore> knowledge_store;
@@ -302,11 +303,8 @@ auto CoresetEvolution::AssessAndOffer(
         candidate.captured_at = std::chrono::steady_clock::now();
 
         if (impl_->buffer.Append(std::move(candidate)) && impl_->buffer.IsTriggered()) {
-            // Wake up background thread
-            {
-                std::lock_guard lock(impl_->notify_mutex);
-                impl_->notify_flag = true;
-            }
+            // Wake up background thread (lock-free — atomic store + notify)
+            impl_->notify_flag.store(true, std::memory_order_release);
             impl_->notify_cv.notify_one();
         }
     } catch (...) {
@@ -322,13 +320,14 @@ auto CoresetEvolution::Start(std::stop_token token) noexcept -> void {
     impl_->update_thread = std::jthread([this](std::stop_token tok) {
         while (!tok.stop_requested()) {
             {
-                std::unique_lock lock(impl_->notify_mutex);
+                std::unique_lock lock(impl_->cv_mutex);
                 impl_->notify_cv.wait_for(lock, tok, 500ms, [this, &tok] {
-                    return impl_->notify_flag || tok.stop_requested();
+                    return impl_->notify_flag.load(std::memory_order_acquire)
+                           || tok.stop_requested();
                 });
             }
             if (tok.stop_requested()) break;
-            impl_->notify_flag = false;
+            impl_->notify_flag.store(false, std::memory_order_release);
 
             // Drain + prefilter + merge + greedy coreset + swap
             auto candidates = impl_->buffer.DrainAll();
@@ -445,10 +444,7 @@ auto CoresetEvolution::Start(std::stop_token token) noexcept -> void {
 auto CoresetEvolution::Stop() noexcept -> void {
     if (impl_->update_thread.joinable()) {
         impl_->update_thread.request_stop();
-        {
-            std::lock_guard lock(impl_->notify_mutex);
-            impl_->notify_flag = true;
-        }
+        impl_->notify_flag.store(true, std::memory_order_release);
         impl_->notify_cv.notify_one();
         impl_->update_thread.join();
     }
@@ -526,8 +522,12 @@ auto CoresetEvolution::FullRebuild(const std::filesystem::path& save_path) noexc
 
     auto new_bank = std::make_unique<FeatureBank>(std::move(*fb_result));
 
-    // Compute new profile from the rebuilt bank
-    auto new_profile = NormalityProfile::Compute(*new_bank, impl_->cfg.normality_k);
+    // Compute new profile from the rebuilt bank (fast: sqrt(N) sampling,
+    // avoids O(N²·D) exhaustive k-NN — typically < 1 s for 10k samples).
+    auto sample_count = static_cast<std::size_t>(std::sqrt(
+        static_cast<double>(new_bank->NumSamples())));
+    auto new_profile = NormalityProfile::ComputeFast(
+        *new_bank, impl_->cfg.normality_k, std::max(sample_count, std::size_t{1}));
 
     // Compute mean displacement for drift detection
     float mean_displacement = 0.0F;

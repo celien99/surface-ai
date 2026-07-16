@@ -10,6 +10,11 @@
 
 namespace sai::pipeline {
 
+// Multi-position detector key: (surface_id, position_id).
+// Owned by pipeline_config.h as a pipeline-level routing concept —
+// shared by stage_nodes.h (DetectStage) and app_builder.h (AssembledApp).
+using BankKey = std::pair<std::string, std::uint16_t>;
+
 enum class StageType {
     Capture,
     Preprocess,

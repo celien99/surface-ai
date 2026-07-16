@@ -1,5 +1,6 @@
 #include <sai/scheduler/scheduler.h>
 
+#include <cstddef>
 #include <memory>
 #include <set>
 #include <string>
@@ -77,27 +78,30 @@ auto Scheduler::Allocate(const std::vector<StageConfig>& stages,
         }
     }
 
-    // Build stage_type -> pool_id map for PoolFor lookups
+    // Build stage_type -> pool_id array for O(1) PoolFor lookups
     for (auto& s : stages) {
-        stage_pool_map_[s.type] = StageTypeToPoolId(s.type);
+        auto idx = static_cast<std::size_t>(s.type);
+        if (idx < kStageTypeCount) {
+            stage_pool_map_[idx] = StageTypeToPoolId(s.type);
+        }
     }
 
     return {};
 }
 
 auto Scheduler::Deallocate() -> void {
-    stage_pool_map_.clear();
+    stage_pool_map_.fill(std::nullopt);
 }
 
 auto Scheduler::PoolFor(StageType type) const
     -> Result<runtime::WorkerPool*> {
-    auto it = stage_pool_map_.find(type);
-    if (it == stage_pool_map_.end()) {
+    auto idx = static_cast<std::size_t>(type);
+    if (idx >= kStageTypeCount || !stage_pool_map_[idx].has_value()) {
         return tl::make_unexpected(ErrorInfo{
             ErrorCode::Scheduler_PoolNotFound,
             "StageType not allocated -- call Allocate() first"});
     }
-    auto resolved = pools_->Resolve(it->second);
+    auto resolved = pools_->Resolve(*stage_pool_map_[idx]);
     if (!resolved.has_value()) {
         return tl::make_unexpected(ErrorInfo{
             ErrorCode::Scheduler_PoolNotFound,

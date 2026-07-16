@@ -6,6 +6,7 @@
 #include <stop_token>
 
 #include <sai/core/error.h>
+#include <sai/pipeline/pipeline_config.h>  // BankKey
 
 // Forward declarations
 namespace sai {
@@ -62,7 +63,7 @@ struct AssembledApp {
     std::stop_source evolution_stop_source;  // keeps evolution thread alive
 
     // ── Multi-position detectors ──
-    using BankKey = std::pair<std::string, std::uint16_t>;
+    using BankKey = sai::pipeline::BankKey;
     // Ownership: PatchCore owns FeatureBank.
     // Declared BEFORE evolutions so destruction order is evolutions → patch_cores
     std::map<BankKey, std::shared_ptr<sai::detection::PatchCore>> patch_cores;

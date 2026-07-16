@@ -12,6 +12,7 @@
 
 #include "app_config.h"
 #include "cli_args.h"
+#include "embedder_factory.h"
 #include "evolution_offer.h"
 #include "knowledge_seed.h"
 #include "tuning_wiring.h"
@@ -21,7 +22,6 @@
 #include <sai/core/context.h>
 #include <sai/core/error.h>
 #include <sai/inference/tensorrt_engine.h>
-#include <sai/inference/dino_v3_adapter.h>
 #include <sai/inference/clip_adapter.h>
 #include <sai/inference/sam2_segmenter.h>
 #include <sai/embedding/patch_embedder.h>
@@ -73,36 +73,10 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     // 2. Inference / embedding setup — TensorRT + DINOv3 (1024-dim)
     // =========================================================================
 
-    // Validate required engine files exist (fail fast with clear message)
-    if (!std::filesystem::exists(kDinoV3Engine)) {
-        return tl::make_unexpected(ErrorInfo{
-            ErrorCode::Core_ConstructionFailed,
-            "DINOv3 engine not found: " + std::string(kDinoV3Engine)});
-    }
-
-    auto infer_engine = std::make_shared<inference::TensorRtEngine>(/*device_ordinal=*/0);
-    std::cout << "Inference: TensorRtEngine (GPU)\n";
-
-    inference::DinoV3Config dino_cfg;
-    dino_cfg.engine_path = kDinoV3Engine;
-    dino_cfg.image_size = kImageSize;
-    dino_cfg.patch_size = kPatchSize;
-    dino_cfg.embed_dim = kEmbedDim;
-
-    auto dino_adapter = inference::DinoV3Adapter::Create(*infer_engine, dino_cfg);
-    if (!dino_adapter) {
-        return tl::make_unexpected(ErrorInfo{
-            ErrorCode::Inference_EngineExecutionFailed,
-            "DinoV3Adapter creation failed: " + dino_adapter.error().message});
-    }
-    auto patch_emb = embedding::PatchEmbedder::Create(std::move(*dino_adapter));
-    if (!patch_emb) {
-        return tl::make_unexpected(ErrorInfo{
-            ErrorCode::Inference_EngineExecutionFailed,
-            "PatchEmbedder creation failed"});
-    }
-    auto embedder = std::make_shared<embedding::PatchEmbedder>(std::move(*patch_emb));
-    std::cout << "Embedder: PatchEmbedder (DINOv3)\n";
+    auto embedder_result = CreateDinoV3PatchEmbedder(
+        kDinoV3Engine, kImageSize, kPatchSize, kEmbedDim);
+    if (!embedder_result) return tl::make_unexpected(std::move(embedder_result.error()));
+    auto embedder = std::move(*embedder_result);
 
     // Wire GpuPool for zero-copy GPU feature extraction (D2D instead of D2H).
     // When available, TRT output is copied directly to pool-backed GPU memory

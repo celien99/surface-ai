@@ -1,7 +1,8 @@
 #pragma once
 
-#include <map>
+#include <array>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <string_view>
@@ -63,8 +64,11 @@ public:
     static auto PoolConfigForKey(std::string_view key) -> PoolConfig;
 
 private:
+    // Fixed-size array indexed by StageType (8 values: Capture=0..Custom=7).
+    // Unallocated entries hold std::nullopt — no heap allocation for lookups.
+    static constexpr std::size_t kStageTypeCount = 8;
     std::unique_ptr<Registry<runtime::WorkerPool>> pools_;
-    std::map<StageType, TypeId> stage_pool_map_;
+    std::array<std::optional<TypeId>, kStageTypeCount> stage_pool_map_;
     BackpressureConfig bp_config_{};
 };
 

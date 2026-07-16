@@ -9,6 +9,7 @@
 
 #include "app_config.h"
 #include "cli_args.h"
+#include "embedder_factory.h"
 
 #include <sai/core/error.h>
 #include <sai/io/importer.h>
@@ -16,9 +17,6 @@
 #include <sai/image/surface_image.h>
 #include <sai/image/preprocess.h>
 #include <sai/image/gpu_image.h>
-#include <sai/inference/tensorrt_engine.h>
-#include <sai/inference/dino_v3_adapter.h>
-#include <sai/embedding/patch_embedder.h>
 #include <sai/embedding/embedding.h>
 #include <sai/detection/feature_bank.h>
 #include <sai/io/coreset_manifest.h>
@@ -38,31 +36,14 @@ auto BuildCoreset(const CliArgs& cli) -> int {
     io::BasicImporter importer;
 
     // ── Create DINOv3 embedder ──
-    auto infer_engine = std::make_shared<inference::TensorRtEngine>(
-        /*device_ordinal=*/0);
-    inference::DinoV3Config dino_cfg;
-    dino_cfg.engine_path = kDinoV3Engine;
-    dino_cfg.image_size = kImageSize;
-    dino_cfg.patch_size = kPatchSize;
-    dino_cfg.embed_dim = kEmbedDim;
-
-    auto dino_adapter = inference::DinoV3Adapter::Create(
-        *infer_engine, dino_cfg);
-    if (!dino_adapter) {
-        std::cerr << "DinoV3Adapter creation failed: "
-                  << dino_adapter.error().message << "\n";
+    auto embedder_result = CreateDinoV3PatchEmbedder(
+        kDinoV3Engine, kImageSize, kPatchSize, kEmbedDim);
+    if (!embedder_result) {
+        std::cerr << "DINOv3 embedder creation failed: "
+                  << embedder_result.error().message << "\n";
         return 1;
     }
-    auto patch_emb = embedding::PatchEmbedder::Create(
-        std::move(*dino_adapter));
-    if (!patch_emb) {
-        std::cerr << "PatchEmbedder creation failed\n";
-        return 1;
-    }
-    auto embedder = std::make_unique<embedding::PatchEmbedder>(
-        std::move(*patch_emb));
-    std::cout << "Embedder: PatchEmbedder (DINOv3, dim="
-              << kEmbedDim << ")\n";
+    auto embedder = std::move(*embedder_result);
 
     // Read dataset manifest
     auto dataset_result = importer.ImportDataset(cli.dataset_path);

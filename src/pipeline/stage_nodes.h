@@ -126,7 +126,6 @@ public:
 
 private:
     std::string id_;
-    using BankKey = std::pair<std::string, std::uint16_t>;
     std::map<BankKey, std::shared_ptr<sai::detection::IDetector>> detectors_;
     std::shared_ptr<sai::detection::IDetector> default_detector_;
     bool stub_ = true;
