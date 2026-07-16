@@ -26,6 +26,10 @@
 
 namespace sai::inference {
 
+namespace {
+constexpr int kDefaultIntraOpThreads = 4;
+}  // namespace
+
 OnnxRuntimeEngine::OnnxRuntimeEngine() = default;
 
 OnnxRuntimeEngine::~OnnxRuntimeEngine() {
@@ -42,24 +46,21 @@ auto OnnxRuntimeEngine::Load(const std::filesystem::path& model_path,
     -> Result<void> {
     try {
         // Create ONNX Runtime environment
-        auto* raw_env = new Ort::Env(OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING,
-                                      "SurfaceAI");
-        env_.reset(raw_env);
+        env_ = std::make_unique<Ort::Env>(OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING,
+                                           "SurfaceAI");
 
         // Create session options
         Ort::SessionOptions session_opts;
-        session_opts.SetIntraOpNumThreads(4);
+        session_opts.SetIntraOpNumThreads(kDefaultIntraOpThreads);
         session_opts.SetGraphOptimizationLevel(
             GraphOptimizationLevel::ORT_ENABLE_ALL);
 
         // Load model
-        auto* raw_session = new Ort::Session(*env_, model_path.c_str(), session_opts);
-        session_.reset(raw_session);
+        session_ = std::make_unique<Ort::Session>(*env_, model_path.c_str(), session_opts);
 
         // Create CPU memory info
-        auto* raw_mem = new Ort::MemoryInfo(
+        memory_info_ = std::make_unique<Ort::MemoryInfo>(
             Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault));
-        memory_info_.reset(raw_mem);
 
     } catch (const Ort::Exception& e) {
         return tl::make_unexpected(ErrorInfo{

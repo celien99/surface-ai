@@ -9,6 +9,11 @@ namespace sai::inference {
 
 MultiLayerAggregator::MultiLayerAggregator(MultiLayerConfig cfg) noexcept
     : cfg_(std::move(cfg)) {
+    // Pre-compute layer_idx -> vector index for O(1) lookup in Group mode
+    for (std::size_t i = 0; i < cfg_.layers.size(); ++i) {
+        layer_index_[cfg_.layers[i]] = i;
+    }
+
     switch (cfg_.method) {
         case AggMethod::Concat:
             output_dim_ = cfg_.embed_dim * cfg_.layers.size();
@@ -64,10 +69,10 @@ auto MultiLayerAggregator::Aggregate(
             std::vector<float> group_mean(D, 0.0f);
             float inv_g = 1.0f / static_cast<float>(group.size());
             for (int layer_idx : group) {
-                // 找到 layer_idx 在 layer_features 中的位置
-                auto it = std::find(cfg_.layers.begin(), cfg_.layers.end(), layer_idx);
-                if (it == cfg_.layers.end()) continue;
-                auto l = static_cast<std::size_t>(std::distance(cfg_.layers.begin(), it));
+                // O(1) lookup via pre-computed layer_index_ map
+                auto it = layer_index_.find(layer_idx);
+                if (it == layer_index_.end()) continue;
+                auto l = it->second;
                 for (std::size_t j = 0; j < D; ++j) {
                     group_mean[j] += layer_features[l][i * D + j] * inv_g;
                 }

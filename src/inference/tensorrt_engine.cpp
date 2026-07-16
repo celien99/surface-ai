@@ -307,12 +307,12 @@ auto TensorRtEngine::Load(const std::filesystem::path& engine_path,
 
     inputs_ = std::move(inputs);
     outputs_ = std::move(outputs);
-    std::atomic_store(&state_, std::move(*state_result));
+    state_.store(std::move(*state_result));
     return {};
 }
 
 auto TensorRtEngine::Infer() noexcept -> Result<void> {
-    auto state = std::atomic_load(&state_);
+    auto state = state_.load();
     if (state == nullptr || state->context == nullptr) {
         return tl::make_unexpected(ErrorInfo{
             .code = ErrorCode::Inference_EngineExecutionFailed,
@@ -356,7 +356,7 @@ auto TensorRtEngine::Infer() noexcept -> Result<void> {
 }
 
 auto TensorRtEngine::InferAsync(void* stream) noexcept -> Result<void> {
-    auto state = std::atomic_load(&state_);
+    auto state = state_.load();
     if (state == nullptr || state->context == nullptr) {
         return tl::make_unexpected(ErrorInfo{
             .code = ErrorCode::Inference_EngineExecutionFailed,
@@ -403,7 +403,7 @@ auto TensorRtEngine::Reload(const std::filesystem::path& engine_path) noexcept -
     }
 
     // atomic swap——新 context 生效，旧 context 随 shared_ptr 引用计数自然释放。
-    std::atomic_store(&state_, std::move(*new_state_result));
+    state_.store(std::move(*new_state_result));
     return {};
 }
 
@@ -414,7 +414,7 @@ auto TensorRtEngine::SetTensorAddress(const std::string& name,
         if (binding.name == name) {
             binding.device_ptr = device_ptr;
             // 同步更新 TRT execution context（若已加载）。
-            auto state = std::atomic_load(&state_);
+            auto state = state_.load();
             if (state != nullptr && state->context != nullptr) {
                 if (!state->context->setTensorAddress(name.c_str(), device_ptr)) {
                     return tl::make_unexpected(ErrorInfo{
@@ -433,7 +433,7 @@ auto TensorRtEngine::SetTensorAddress(const std::string& name,
     for (auto& binding : outputs_) {
         if (binding.name == name) {
             binding.device_ptr = device_ptr;
-            auto state = std::atomic_load(&state_);
+            auto state = state_.load();
             if (state != nullptr && state->context != nullptr) {
                 if (!state->context->setTensorAddress(name.c_str(), device_ptr)) {
                     return tl::make_unexpected(ErrorInfo{

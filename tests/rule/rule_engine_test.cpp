@@ -15,9 +15,6 @@ namespace {
 // Helper — write a string to a temp file and return the path
 // ===========================================================================
 auto WriteTempYaml(const std::string& content) -> std::filesystem::path {
-    auto dir = std::filesystem::temp_directory_path();
-    auto path = dir / "sai_rule_test_XXXXXX.yaml";
-    // mkstemps needs a modifiable buffer; use a random suffix
     auto tmp = std::filesystem::temp_directory_path() /
                ("sai_rule_test_" + std::to_string(std::rand()) + ".yaml");
     std::ofstream ofs(tmp);

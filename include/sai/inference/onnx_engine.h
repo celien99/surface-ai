@@ -11,9 +11,11 @@
 
 // Forward-declare ONNX Runtime types to avoid header leakage.
 // The actual Ort API headers are only included in the .cpp file.
-struct OrtEnv;
-struct OrtSession;
-struct OrtMemoryInfo;
+namespace Ort {
+class Env;
+class Session;
+class MemoryInfo;
+}  // namespace Ort
 
 namespace sai::inference {
 
@@ -62,9 +64,9 @@ public:
 
 private:
     // Opaque ONNX Runtime session — implementation detail.
-    std::unique_ptr<OrtEnv> env_;
-    std::unique_ptr<OrtSession> session_;
-    std::unique_ptr<OrtMemoryInfo> memory_info_;
+    std::unique_ptr<Ort::Env> env_;
+    std::unique_ptr<Ort::Session> session_;
+    std::unique_ptr<Ort::MemoryInfo> memory_info_;
 
     std::vector<TensorBinding> inputs_;
     std::vector<TensorBinding> outputs_;

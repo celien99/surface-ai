@@ -6,6 +6,10 @@
 
 namespace sai::detection {
 
+namespace {
+constexpr float kNormalcyScoreThreshold = 0.9F;
+}  // namespace
+
 auto MultiSignalConsensusCheck(
     const NormalityAssessment& normalcy,
     const DetectionResult& detection,
@@ -16,7 +20,7 @@ auto MultiSignalConsensusCheck(
     float pca_self_query_p95) noexcept -> bool {
 
     // 1. k-NN 正常度
-    if (normalcy.normalcy_score < 0.9F) return false;
+    if (normalcy.normalcy_score < kNormalcyScoreThreshold) return false;
 
     // 2. 图像级异常分数在阈值以下
     if (detection.image_level_score >= effective_threshold) return false;

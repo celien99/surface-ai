@@ -23,18 +23,18 @@ HttpServer::~HttpServer() {
 void HttpServer::Start() {
     if (running_.exchange(true)) return;
 
-    thread_ = std::thread([this]() {
-        httplib::Server svr;
+    svr_ = std::make_shared<httplib::Server>();
 
+    thread_ = std::jthread([this](std::stop_token /*st*/) {
         // ── CORS headers ──────────────────────────────────────────
-        svr.set_default_headers({
+        svr_->set_default_headers({
             {"Access-Control-Allow-Origin", "*"},
             {"Access-Control-Allow-Methods", "GET, OPTIONS"},
             {"Content-Type", "application/json"},
         });
 
         // ── GET /api/status ───────────────────────────────────────
-        svr.Get("/api/status", [this](const httplib::Request&, httplib::Response& res) {
+        svr_->Get("/api/status", [this](const httplib::Request&, httplib::Response& res) {
             auto now = std::chrono::steady_clock::now();
             auto uptime = std::chrono::duration<double>(now - start_time_).count();
 
@@ -54,7 +54,7 @@ void HttpServer::Start() {
         });
 
         // ── GET /api/metrics ──────────────────────────────────────
-        svr.Get("/api/metrics", [this](const httplib::Request&, httplib::Response& res) {
+        svr_->Get("/api/metrics", [this](const httplib::Request&, httplib::Response& res) {
             nlohmann::json j = nlohmann::json::array();
             {
                 std::lock_guard<std::mutex> lk(mutex_);
@@ -73,7 +73,7 @@ void HttpServer::Start() {
         });
 
         // ── GET /api/results/latest ───────────────────────────────
-        svr.Get("/api/results/latest", [this](const httplib::Request&, httplib::Response& res) {
+        svr_->Get("/api/results/latest", [this](const httplib::Request&, httplib::Response& res) {
             nlohmann::json j;
             {
                 std::lock_guard<std::mutex> lk(mutex_);
@@ -93,7 +93,7 @@ void HttpServer::Start() {
         });
 
         // ── GET /api/results/history ──────────────────────────────
-        svr.Get("/api/results/history", [this](const httplib::Request& req, httplib::Response& res) {
+        svr_->Get("/api/results/history", [this](const httplib::Request& req, httplib::Response& res) {
             int limit = 50;
             if (req.has_param("limit")) {
                 limit = std::stoi(req.get_param_value("limit"));
@@ -117,7 +117,7 @@ void HttpServer::Start() {
         });
 
         // ── GET /api/alerts ───────────────────────────────────────
-        svr.Get("/api/alerts", [this](const httplib::Request&, httplib::Response& res) {
+        svr_->Get("/api/alerts", [this](const httplib::Request&, httplib::Response& res) {
             nlohmann::json j = nlohmann::json::array();
             {
                 std::lock_guard<std::mutex> lk(mutex_);
@@ -137,7 +137,7 @@ void HttpServer::Start() {
         });
 
         // ── GET / → dashboard HTML ────────────────────────────────
-        svr.Get("/", [](const httplib::Request&, httplib::Response& res) {
+        svr_->Get("/", [](const httplib::Request&, httplib::Response& res) {
             // Inline minimal dashboard HTML (also served from resources/web/ if available)
             std::string html = R"(<!DOCTYPE html>
 <html lang="zh-CN">
@@ -201,17 +201,17 @@ refresh();setInterval(refresh,2000);
             res.set_content(html, "text/html; charset=utf-8");
         });
 
-        svr.listen("0.0.0.0", port_);
+        svr_->listen("0.0.0.0", port_);
     });
 }
 
 void HttpServer::Stop() {
     if (!running_.exchange(false)) return;
-    // httplib server stops when listen() returns; we force-stop via a separate request.
-    // In production, use svr.stop(). For now, the thread exits on Stop().
-    if (thread_.joinable()) {
-        thread_.detach();  // Server will stop on process exit
+    if (svr_) {
+        svr_->stop();  // Unblock svr_->listen() so the thread can exit
     }
+    thread_.request_stop();
+    // std::jthread destructor auto-joins; no explicit join/detach needed
 }
 
 void HttpServer::UpdateResult(const InspectionSummary& summary) {

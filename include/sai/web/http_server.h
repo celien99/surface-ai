@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstddef>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -11,6 +12,11 @@
 
 #include <sai/reasoner/reasoner.h>
 #include <sai/pipeline/pipeline.h>
+
+// Forward-declare httplib types to avoid header leakage.
+namespace httplib {
+class Server;
+}  // namespace httplib
 
 namespace sai::web {
 
@@ -65,7 +71,8 @@ private:
     };
 
     int port_;
-    std::thread thread_;
+    std::shared_ptr<httplib::Server> svr_;
+    std::jthread thread_;
     std::atomic<bool> running_{false};
     std::chrono::steady_clock::time_point start_time_;
 

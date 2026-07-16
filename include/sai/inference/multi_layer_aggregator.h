@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <unordered_map>
 #include <vector>
 
 namespace sai::inference {
@@ -48,6 +49,7 @@ public:
 private:
     MultiLayerConfig cfg_;
     std::size_t output_dim_;
+    std::unordered_map<int, std::size_t> layer_index_;  // layer_idx -> index in layers vector
 };
 
 }  // namespace sai::inference
