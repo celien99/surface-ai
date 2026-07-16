@@ -11,6 +11,7 @@
 #include <span>
 
 #include <faiss/IndexFlat.h>
+#include <faiss/IndexIVFFlat.h>
 
 namespace sai::detection {
 
@@ -81,6 +82,13 @@ auto FeatureBank::Search(const float* query, std::size_t query_count,
 #else
     auto* idx = index_.get();
 #endif
+
+    // Configure nprobe for IVFFlat indices — dynamic_cast is safe here
+    // because this is on the hot path and the cast is a simple vtable check.
+    if (auto* ivf = dynamic_cast<faiss::IndexIVFFlat*>(idx)) {
+        ivf->nprobe = static_cast<std::size_t>(nprobe_);
+    }
+
     idx->search(nq, query, nk, distances.data(), labels.data());
 
     return distances;
@@ -348,5 +356,154 @@ auto FeatureBank::operator=(FeatureBank&&) noexcept -> FeatureBank& = default;
 FeatureBank::~FeatureBank() = default;
 
 FeatureBank::FeatureBank() noexcept = default;
+
+// ────────────────────────────────────────────────────────────────────
+// IVFFlat support: inverted index with K-means clustering
+// ────────────────────────────────────────────────────────────────────
+
+auto FeatureBank::BuildWithIVF(
+    std::span<const sai::embedding::Embedding* const> embeddings,
+    std::size_t dim,
+    std::size_t max_samples,
+    std::size_t nlist) noexcept -> Result<FeatureBank> {
+    // First, collect all vectors using the same logic as BuildFromEmbeddings
+    if (embeddings.empty()) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Detection_FeatureBankLoadFailed,
+            "BuildWithIVF: no embeddings provided",
+            std::source_location::current(),
+        });
+    }
+
+    std::vector<float> all_vectors;
+    std::size_t total_patches = 0;
+
+    for (const auto* emb : embeddings) {
+        if (emb == nullptr) continue;
+        const auto& meta = emb->Meta();
+        if (meta.dim != dim) {
+            return tl::make_unexpected(ErrorInfo{
+                ErrorCode::Detection_FeatureBankLoadFailed,
+                "BuildWithIVF: embedding dim mismatch (expected "
+                    + std::to_string(dim) + ", got " + std::to_string(meta.dim) + ")",
+                std::source_location::current(),
+            });
+        }
+        auto count = meta.count;
+        if (count == 0) continue;
+        const float* data = emb->Data();
+        all_vectors.insert(all_vectors.end(), data, data + count * dim);
+        total_patches += count;
+    }
+
+    if (total_patches == 0) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Detection_FeatureBankLoadFailed,
+            "BuildWithIVF: no patch vectors extracted from embeddings",
+            std::source_location::current(),
+        });
+    }
+
+    // Uniform subsampling if total exceeds max_samples
+    std::size_t num_samples = total_patches;
+    const float* sampled_data = all_vectors.data();
+    std::vector<float> subsampled;
+
+    if (total_patches > max_samples) {
+        num_samples = max_samples;
+        auto stride = static_cast<std::size_t>(
+            static_cast<double>(total_patches) / static_cast<double>(max_samples));
+        if (stride < 1) stride = 1;
+
+        subsampled.reserve(num_samples * dim);
+        for (std::size_t i = 0;
+             i < total_patches && subsampled.size() / dim < max_samples;
+             i += stride) {
+            subsampled.insert(subsampled.end(),
+                              all_vectors.data() + i * dim,
+                              all_vectors.data() + (i + 1) * dim);
+        }
+        sampled_data = subsampled.data();
+        num_samples = subsampled.size() / dim;
+    }
+
+    // Clamp nlist: FAISS requires nlist <= num_samples for training.
+    // For very small banks, fall back to a flat index.
+    auto effective_nlist = std::min(nlist, num_samples);
+    if (effective_nlist < 2) {
+        // Too few samples for clustering — fall back to flat index
+        FeatureBank bank;
+        bank.Rebuild(sampled_data, num_samples, dim);
+        return bank;
+    }
+
+    // Create IVFFlat quantizer + index
+    auto quantizer =
+        std::make_unique<faiss::IndexFlatL2>(static_cast<faiss::idx_t>(dim));
+    auto index = std::make_unique<faiss::IndexIVFFlat>(
+        quantizer.get(),
+        static_cast<faiss::idx_t>(dim),
+        static_cast<faiss::idx_t>(effective_nlist),
+        faiss::METRIC_L2);
+
+    // IndexIVFFlat takes ownership of quantizer — release unique_ptr
+    index->own_fields = true;
+    quantizer.release();
+
+    // Train K-means on all vectors
+    index->train(static_cast<faiss::idx_t>(num_samples), sampled_data);
+
+    // Add vectors to inverted lists
+    index->add(static_cast<faiss::idx_t>(num_samples), sampled_data);
+
+    FeatureBank bank;
+    bank.index_ = std::move(index);
+    bank.dim_ = dim;
+    bank.num_samples_ = num_samples;
+    bank.nprobe_ = 4;
+    return bank;
+}
+
+auto FeatureBank::ConvertToIVF(std::size_t nlist) noexcept -> Result<void> {
+    if (!index_ || num_samples_ == 0 || dim_ == 0) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Detection_FeatureBankLoadFailed,
+            "ConvertToIVF: FeatureBank is empty",
+            std::source_location::current(),
+        });
+    }
+
+    // Extract all vectors for training
+    auto vectors = ExtractAllVectors();
+    auto n = num_samples_;
+    auto d = dim_;
+
+    auto effective_nlist = std::min(nlist, n);
+    if (effective_nlist < 2) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Detection_FeatureBankLoadFailed,
+            "ConvertToIVF: too few samples (" + std::to_string(n)
+                + ") for clustering",
+            std::source_location::current(),
+        });
+    }
+
+    // Build IVFFlat index
+    auto quantizer =
+        std::make_unique<faiss::IndexFlatL2>(static_cast<faiss::idx_t>(d));
+    auto new_index = std::make_unique<faiss::IndexIVFFlat>(
+        quantizer.get(),
+        static_cast<faiss::idx_t>(d),
+        static_cast<faiss::idx_t>(effective_nlist),
+        faiss::METRIC_L2);
+    new_index->own_fields = true;
+    quantizer.release();
+
+    new_index->train(static_cast<faiss::idx_t>(n), vectors.data());
+    new_index->add(static_cast<faiss::idx_t>(n), vectors.data());
+
+    index_ = std::move(new_index);
+    return {};
+}
 
 }  // namespace sai::detection
