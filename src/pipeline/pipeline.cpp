@@ -15,6 +15,7 @@
 
 #include "pipeline_builder.h"
 #include "stage_factory.h"
+#include "scheduler/scheduler.h"
 
 using namespace std::chrono_literals;
 
@@ -52,44 +53,6 @@ private:
 };
 }  // namespace detail
 
-namespace {
-
-// ---------------------------------------------------------------------------
-// Maps StageType -> M1 stage_id string (used as WorkerPool registry key)
-// ---------------------------------------------------------------------------
-std::string StageTypeToStr(StageType t) {
-    switch (t) {
-        case StageType::Capture:     return "Capture";
-        case StageType::Preprocess:  return "Capture";
-        case StageType::Inference:   return "Inference";
-        case StageType::Detect:      return "Inference";
-        case StageType::RuleEval:    return "Reason";
-        case StageType::Reason:      return "Reason";
-        case StageType::Export:      return "IO";
-        case StageType::Custom:      return "Background";
-    }
-    return "Background";
-}
-
-// ---------------------------------------------------------------------------
-// Default pool sizes per StageType (string key)
-// ---------------------------------------------------------------------------
-struct PoolConfig {
-    size_t threads;
-    size_t queue_capacity;
-};
-
-PoolConfig PoolConfigFor(std::string_view stage_str) {
-    if (stage_str == "Capture")    return {2, 8};
-    if (stage_str == "Inference")  return {1, 4};
-    if (stage_str == "Reason")     return {2, 16};
-    if (stage_str == "IO")         return {1, 32};
-    if (stage_str == "Background") return {1, 16};
-    return {1, 8};
-}
-
-}  // anonymous namespace
-
 // =========================================================================
 // Pipeline::~Pipeline
 // =========================================================================
@@ -112,29 +75,23 @@ auto Pipeline::LoadFromYAML(std::filesystem::path yaml_path, Context& ctx)
     auto pipeline = std::unique_ptr<Pipeline>(new Pipeline());
     pipeline->ctx_ = &ctx;  // stored for lifecycle hooks (I2)
 
-    // Step 1: Create worker pools for each unique stage type string
-    std::set<std::string> stage_strs;
-    for (auto& s : config->stages) {
-        stage_strs.insert(StageTypeToStr(s.type));
+    // Step 1: Create pools via Scheduler (single source of truth for
+    // StageType → pool mapping, replacing the duplicated logic previously
+    // in the anonymous namespace above).
+    pipeline->stage_scheduler_ = std::make_unique<Scheduler>();
+    BackpressureConfig bp_cfg;
+    auto alloc_result = pipeline->stage_scheduler_->Allocate(
+        config->stages, bp_cfg);
+    if (!alloc_result.has_value()) {
+        return tl::make_unexpected(std::move(alloc_result.error()));
     }
 
-    pipeline->worker_pools_ =
-        std::make_unique<Registry<runtime::WorkerPool>>();
-
-    for (auto& str : stage_strs) {
-        auto pool_cfg = PoolConfigFor(str);
-        auto pool = std::make_shared<runtime::WorkerPool>(
-            pool_cfg.threads, pool_cfg.queue_capacity);
-        TypeId type_id = sai::detail::Fnv1aHash(str);
-        auto reg_result = pipeline->worker_pools_->Register(type_id, std::move(pool));
-        if (!reg_result.has_value()) return tl::make_unexpected(std::move(reg_result).error());
-    }
-
-    // Step 2: Create TaskScheduler + PipelineExecutor
-    pipeline->scheduler_ = std::make_unique<runtime::TaskScheduler>(
-        *pipeline->worker_pools_);
+    // Step 2: Create TaskScheduler + PipelineExecutor using the Scheduler's
+    // pool registry (formerly pipeline->worker_pools_).
+    pipeline->task_scheduler_ = std::make_unique<runtime::TaskScheduler>(
+        pipeline->stage_scheduler_->Pools());
     pipeline->executor_ = std::make_unique<runtime::PipelineExecutor>(
-        *pipeline->scheduler_);
+        *pipeline->task_scheduler_);
 
     // Step 3: Create stage nodes via StageFactory
     for (auto& stage_cfg : config->stages) {
@@ -155,7 +112,8 @@ auto Pipeline::LoadFromYAML(std::filesystem::path yaml_path, Context& ctx)
     pipeline->graph_ = std::make_unique<runtime::TaskGraph>();
 
     for (auto& stage_cfg : config->stages) {
-        auto stage_id = sai::detail::Fnv1aHash(StageTypeToStr(stage_cfg.type));
+        auto stage_id = sai::detail::Fnv1aHash(
+            std::string(Scheduler::StageTypeToPoolKey(stage_cfg.type)));
 
         runtime::TaskId task_id = sai::detail::Fnv1aHash(stage_cfg.id);
 
@@ -231,6 +189,24 @@ auto Pipeline::Start() -> Result<void> {
                             .count();
 
                     if (result.has_value()) {
+                        // Store SurfaceImage pixel snapshot for Export stage
+                        // (per-frame side channel). SurfaceImage is move-only
+                        // and forwarded to Inference, so we snapshot raw bytes.
+                        if (node_ptr->GetType() == StageType::Preprocess) {
+                            auto& variant = result.value();
+                            if (auto* si = std::get_if<sai::image::SurfaceImage>(&variant)) {
+                                SetFrameImage(*si);
+                            }
+                        }
+
+                        // M7: invoke detection callback for live defect overlay
+                        if (detection_callback_ && node_ptr->GetType() == StageType::Detect) {
+                            auto& variant = result.value();
+                            if (auto* dr = std::get_if<sai::detection::DetectionResult>(&variant)) {
+                                detection_callback_(*dr);
+                            }
+                        }
+
                         // M7: invoke result callback if set (Export stage only, last stage in chain)
                         if (result_callback_ && node_ptr->GetType() == StageType::Export) {
                             auto& variant = result.value();
@@ -462,6 +438,28 @@ auto Pipeline::Metrics() const -> std::vector<StageMetrics> {
 
 auto Pipeline::SetResultCallback(ResultCallback callback) -> void {
     result_callback_ = std::move(callback);
+}
+
+auto Pipeline::SetDetectionCallback(DetectionCallback callback) -> void {
+    detection_callback_ = std::move(callback);
+}
+
+auto Pipeline::SetFrameImage(const sai::image::SurfaceImage& image) -> void {
+    // Snapshot pixel data — SurfaceImage is move-only, but we need a
+    // copy for Export stage that runs later in the pipeline.
+    const auto& meta = image.Meta();
+    const auto* data = image.Data();
+    std::size_t size = image.SizeBytes();
+    if (data && size > 0) {
+        std::vector<std::uint8_t> snapshot(data, data + size);
+        current_frame_image_.emplace(std::move(snapshot), meta);
+    }
+}
+
+auto Pipeline::TakeFrameImage() -> std::optional<FrameImageSnapshot> {
+    auto result = std::move(current_frame_image_);
+    current_frame_image_.reset();
+    return result;
 }
 
 auto Pipeline::GetStage(std::string_view id) const -> IStageNode* {

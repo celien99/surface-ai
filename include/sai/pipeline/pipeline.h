@@ -10,9 +10,15 @@
 #include <thread>
 #include <vector>
 
+#include <optional>
+#include <utility>
+#include <vector>
+
 #include <sai/core/error.h>
 #include <sai/core/context.h>
+#include <sai/image/image.h>
 #include <sai/image/raw_image.h>
+#include <sai/image/surface_image.h>
 #include <sai/pipeline/pipeline_config.h>
 #include <sai/pipeline/stage_node.h>
 
@@ -28,10 +34,21 @@ class TaskScheduler;
 class WorkerPool;
 }  // namespace sai::runtime
 
+namespace sai::detection {
+struct DetectionResult;
+}  // namespace sai::detection
+
 namespace sai::pipeline {
+
+// Forward-declared for private member; defined in src/scheduler/scheduler.h
+class Scheduler;
 
 // M7: result callback type — invoked in Export worker thread per completed frame
 using ResultCallback = std::function<void(int frame_id, const sai::reasoner::ReasoningResult&)>;
+
+// M7: detection callback — invoked in Detect worker thread per frame.
+// Enables live defect overlay in QML via DefectModel::UpdateDefects().
+using DetectionCallback = std::function<void(const sai::detection::DetectionResult&)>;
 
 struct StageMetrics {
     std::string stage_id;
@@ -114,6 +131,14 @@ public:
     auto Metrics() const -> std::vector<StageMetrics>;
 
     auto SetResultCallback(ResultCallback callback) -> void;
+    auto SetDetectionCallback(DetectionCallback callback) -> void;
+
+    // Per-frame image side channel: Capture/Preprocess stage stores the
+    // processed SurfaceImage pixel snapshot; Export stage retrieves it for
+    // annotated exports. SurfaceImage is move-only, so we snapshot raw bytes.
+    using FrameImageSnapshot = std::pair<std::vector<std::uint8_t>, sai::image::ImageMeta>;
+    auto SetFrameImage(const sai::image::SurfaceImage& image) -> void;
+    auto TakeFrameImage() -> std::optional<FrameImageSnapshot>;
 
     // Returns the stage node with the given id, or nullptr if not found.
     // Caller must cast to the concrete stage type (e.g. CaptureStage) and
@@ -137,8 +162,9 @@ private:
 
     std::unique_ptr<runtime::TaskGraph> graph_;
     std::unique_ptr<runtime::PipelineExecutor> executor_;
-    std::unique_ptr<runtime::TaskScheduler> scheduler_;
-    std::unique_ptr<Registry<runtime::WorkerPool>> worker_pools_;
+    std::unique_ptr<runtime::TaskScheduler> task_scheduler_;
+    // Stage→pool mapper (M6 pipeline::Scheduler, owns the WorkerPool registry)
+    std::unique_ptr<Scheduler> stage_scheduler_;
     std::map<std::string, std::unique_ptr<IStageNode>> nodes_;
     // One input queue per stage (keyed by stage id). Entry stages receive
     // frames from Submit(); downstream stages receive from upstream EnqueueOutputs.
@@ -150,6 +176,10 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<bool> draining_{false};
     ResultCallback result_callback_;
+    DetectionCallback detection_callback_;
+    // Per-frame image side channel (written by Preprocess stage worker,
+    // read by Export stage worker; single-writer, single-consumer so no mutex needed)
+    std::optional<FrameImageSnapshot> current_frame_image_;
     std::atomic<int> frame_counter_{0};
     std::vector<std::unique_ptr<runtime::WorkerPool>> pools_;
     std::string entry_stage_id_;  // first stage with empty depends_on

@@ -1,6 +1,10 @@
 #include "scheduler.h"
 
+#include <memory>
 #include <set>
+#include <string>
+#include <string_view>
+#include <vector>
 
 #include <sai/core/registry.h>
 #include <sai/runtime/worker_pool.h>
@@ -10,53 +14,75 @@ namespace sai::pipeline {
 namespace {
 
 TypeId StageTypeToPoolId(StageType t) {
-    switch (t) {
-        case StageType::Capture:     return sai::detail::Fnv1aHash("Capture");
-        case StageType::Preprocess:  return sai::detail::Fnv1aHash("Capture");
-        case StageType::Inference:   return sai::detail::Fnv1aHash("Inference");
-        case StageType::Detect:      return sai::detail::Fnv1aHash("Inference");
-        case StageType::RuleEval:    return sai::detail::Fnv1aHash("Reason");
-        case StageType::Reason:      return sai::detail::Fnv1aHash("Reason");
-        case StageType::Export:      return sai::detail::Fnv1aHash("IO");
-        case StageType::Custom:      return sai::detail::Fnv1aHash("Background");
-    }
-    return sai::detail::Fnv1aHash("Background");
+    return sai::detail::Fnv1aHash(std::string(Scheduler::StageTypeToPoolKey(t)));
 }
 
 }  // anonymous namespace
 
-Scheduler::Scheduler(Registry<runtime::WorkerPool>& pools,
-                     const BackpressureConfig& bp_config)
-    : pools_(pools), bp_config_(bp_config) {}
+// ── StageType → pool key mapping (single source of truth) ─────────────
 
-auto Scheduler::Allocate(const std::vector<StageConfig>& stages)
+auto Scheduler::StageTypeToPoolKey(StageType t) -> std::string_view {
+    switch (t) {
+        case StageType::Capture:     return "Capture";
+        case StageType::Preprocess:  return "Capture";
+        case StageType::Inference:   return "Inference";
+        case StageType::Detect:      return "Inference";
+        case StageType::RuleEval:    return "Reason";
+        case StageType::Reason:      return "Reason";
+        case StageType::Export:      return "IO";
+        case StageType::Custom:      return "Background";
+    }
+    return "Background";
+}
+
+auto Scheduler::PoolConfigForKey(std::string_view key) -> PoolConfig {
+    if (key == "Capture")    return {2, 8};
+    if (key == "Inference")  return {1, 4};
+    if (key == "Reason")     return {2, 16};
+    if (key == "IO")         return {1, 32};
+    if (key == "Background") return {1, 16};
+    return {1, 8};
+}
+
+// ── Scheduler ──────────────────────────────────────────────────────────
+
+Scheduler::Scheduler()
+    : pools_(std::make_unique<Registry<runtime::WorkerPool>>()) {}
+
+auto Scheduler::Allocate(const std::vector<StageConfig>& stages,
+                          const BackpressureConfig& bp_config)
     -> Result<void> {
+    bp_config_ = bp_config;
     stage_pool_map_.clear();
 
-    // Map each stage type to its pool TypeId
-    std::set<TypeId> required_pools;
+    // Collect unique pool keys needed
+    std::set<std::string> required_keys;
     for (auto& s : stages) {
-        auto pool_id = StageTypeToPoolId(s.type);
-        required_pools.insert(pool_id);
-        stage_pool_map_[s.type] = pool_id;
+        required_keys.emplace(std::string(StageTypeToPoolKey(s.type)));
     }
 
-    // Verify all required pools exist in the registry
-    for (auto& pool_id : required_pools) {
-        auto resolved = pools_.Resolve(pool_id);
-        if (!resolved.has_value()) {
-            return tl::make_unexpected(ErrorInfo{
-                ErrorCode::Scheduler_PoolNotFound,
-                "No WorkerPool registered for stage type"});
+    // Create a WorkerPool for each unique key and register it
+    for (auto& key : required_keys) {
+        auto cfg = PoolConfigForKey(key);
+        auto pool = std::make_shared<runtime::WorkerPool>(
+            cfg.threads, cfg.queue_capacity);
+        TypeId type_id = sai::detail::Fnv1aHash(key);
+        auto reg_result = pools_->Register(type_id, std::move(pool));
+        if (!reg_result.has_value()) {
+            return tl::make_unexpected(std::move(reg_result.error()));
         }
+    }
+
+    // Build stage_type → pool_id map for PoolFor lookups
+    for (auto& s : stages) {
+        stage_pool_map_[s.type] = StageTypeToPoolId(s.type);
     }
 
     return {};
 }
 
-auto Scheduler::Deallocate() -> Result<void> {
+auto Scheduler::Deallocate() -> void {
     stage_pool_map_.clear();
-    return {};
 }
 
 auto Scheduler::PoolFor(StageType type) const
@@ -65,10 +91,9 @@ auto Scheduler::PoolFor(StageType type) const
     if (it == stage_pool_map_.end()) {
         return tl::make_unexpected(ErrorInfo{
             ErrorCode::Scheduler_PoolNotFound,
-            "StageType not allocated"});
+            "StageType not allocated — call Allocate() first"});
     }
-    // Resolve from registry (returns shared_ptr<WorkerPool>)
-    auto resolved = pools_.Resolve(it->second);
+    auto resolved = pools_->Resolve(it->second);
     if (!resolved.has_value()) {
         return tl::make_unexpected(ErrorInfo{
             ErrorCode::Scheduler_PoolNotFound,
