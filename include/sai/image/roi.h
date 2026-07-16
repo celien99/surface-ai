@@ -5,12 +5,12 @@
 #include <vector>
 
 #include <sai/core/error.h>
-#include <sai/device/device.h>
+#include <sai/core/rect.h>
 #include <sai/image/image.h>
 
 namespace sai::image {
 
-using Rect = sai::device::Rect;  // 共用定义
+using Rect = sai::core::Rect;  // 共用定义
 
 struct ROI {
     std::vector<Rect> regions;

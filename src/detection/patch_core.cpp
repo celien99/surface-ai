@@ -13,7 +13,7 @@
 
 #include <sai/detection/feature_bank.h>
 #include <sai/detection/post_process_utils.h>
-#include <sai/device/device.h>
+#include <sai/core/rect.h>
 #include <sai/embedding/dimension_reducer.h>
 
 namespace sai::detection {

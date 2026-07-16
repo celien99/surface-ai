@@ -5,7 +5,7 @@
 #include <cstddef>
 #include <vector>
 
-#include <sai/device/device.h>  // Rect
+#include <sai/core/rect.h>
 
 namespace sai::detection {
 
@@ -29,7 +29,7 @@ struct AnomalyMap {
 
 // 候选缺陷区域：由连通分量标记从二值化 anomaly map 中提取
 struct RegionProposal {
-    sai::device::Rect bounding_box;
+    sai::core::Rect bounding_box;
     float max_anomaly_score = 0.0F;
     float mean_anomaly_score = 0.0F;
     std::size_t area_pixels = 0;

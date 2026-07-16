@@ -5,9 +5,13 @@
 #include <functional>
 #include <string_view>
 
+#include <sai/core/rect.h>
 #include <sai/plugin/plugin.h>
 
 namespace sai::device {
+
+// Re-export Rect from sai::core — canonical definition lives there.
+using Rect = sai::core::Rect;
 
 class IDevice : public IPlugin {
 public:
@@ -18,16 +22,6 @@ public:
     [[nodiscard]] virtual auto IsConnected() const noexcept -> bool = 0;
     [[nodiscard]] virtual auto SerialNumber() const noexcept -> std::string_view = 0;
     [[nodiscard]] virtual auto CurrentState() const noexcept -> State = 0;
-};
-
-struct Rect {
-    std::size_t x = 0;
-    std::size_t y = 0;
-    std::size_t width = 0;
-    std::size_t height = 0;
-
-    [[nodiscard]] auto Area() const noexcept -> std::size_t { return width * height; }
-    [[nodiscard]] auto IsEmpty() const noexcept -> bool { return width == 0 || height == 0; }
 };
 
 }  // namespace sai::device

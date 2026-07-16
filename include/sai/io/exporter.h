@@ -9,13 +9,13 @@
 
 #include <sai/core/error.h>
 #include <sai/core/service.h>
-#include <sai/device/device.h>  // Rect
+#include <sai/core/rect.h>
 #include <sai/image/surface_image.h>
 #include <sai/plugin/plugin.h>
 
 namespace sai::io {
 
-using sai::device::Rect;
+using sai::core::Rect;
 
 struct DefectRecord {
     std::string label;            // "划痕", "破洞", "褶皱"

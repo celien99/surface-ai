@@ -19,7 +19,7 @@ add_library(sai_image STATIC ${SAI_IMAGE_SOURCES})
 add_library(sai::image ALIAS sai_image)
 
 target_include_directories(sai_image PUBLIC ${CMAKE_SOURCE_DIR}/include)
-target_link_libraries(sai_image PUBLIC sai::core sai::memory sai::device)
+target_link_libraries(sai_image PUBLIC sai::core sai::memory)
 if(CUDAToolkit_FOUND)
     target_link_libraries(sai_image PUBLIC sai::runtime CUDA::cudart)
 endif()

@@ -5,6 +5,10 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Optimization: Release builds get LTO + march=native for cross-TU inlining.
+# Debug builds keep defaults (-Og/-O0) for fast iteration.
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -flto -march=native")
+
 enable_testing()
 
 add_subdirectory(src/core)
@@ -22,11 +26,11 @@ add_subdirectory(tests/runtime)
 add_subdirectory(src/infra)
 add_subdirectory(tests/infra)
 
-add_subdirectory(src/device)
-add_subdirectory(tests/device)
-
 add_subdirectory(src/image)
 add_subdirectory(tests/image)
+
+add_subdirectory(src/device)
+add_subdirectory(tests/device)
 
 add_subdirectory(src/io)
 add_subdirectory(tests/io)

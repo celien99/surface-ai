@@ -192,7 +192,7 @@ auto ConnectedComponents(const float* binary, std::size_t h, std::size_t w,
         const auto& ci = comps[i];
         if (ci.pixel_count == 0) continue;
 
-        sai::device::Rect bbox{
+        sai::core::Rect bbox{
             ci.min_x,
             ci.min_y,
             ci.max_x - ci.min_x + 1,
