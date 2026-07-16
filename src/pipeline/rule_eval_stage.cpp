@@ -1,5 +1,6 @@
 #include "stage_nodes.h"
 
+#include <chrono>
 #include <filesystem>
 
 #include <sai/detection/detection_result.h>
@@ -121,6 +122,29 @@ auto RuleEvalStage::Process(StageInput input) -> Result<StageOutput> {
             if (!eval_result) return tl::make_unexpected(eval_result.error());
 
             auto resolved = rule_engine_->ResolveConflicts(*eval_result);
+
+            // ── Write GroundTruth record for Bayesian auto-tuning ──
+            // Records detection_score so that TuningObjective::EvaluateSimulated
+            // can replay candidate thresholds against raw anomaly scores,
+            // enabling true Shadow Mode evaluation for the GP surrogate.
+            if (recorder_ && recorder_->IsEnabled()) {
+                auto surface_id =
+                    det->surface_id.empty() ? "default" : det->surface_id;
+                std::string machine_verdict = "OK";
+                for (const auto& r : resolved) {
+                    if (r.matched && r.action.base_severity > 0.0) {
+                        machine_verdict = "NG";
+                        break;
+                    }
+                }
+                auto now_us = std::chrono::duration_cast<
+                    std::chrono::microseconds>(
+                    std::chrono::system_clock::now().time_since_epoch())
+                    .count();
+                (void)recorder_->WriteRecord(
+                    static_cast<double>(det->image_level_score),
+                    machine_verdict, surface_id, now_us);
+            }
 
             return StageOutput(RuleEvalOutput{std::move(fb), std::move(resolved)});
         }

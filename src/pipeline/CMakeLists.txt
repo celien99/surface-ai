@@ -14,6 +14,7 @@ target_sources(sai_pipeline PRIVATE
     rule_eval_stage.cpp
     reason_stage.cpp
     export_stage.cpp
+    inspection_recorder.cpp
 )
 
 target_include_directories(sai_pipeline PUBLIC

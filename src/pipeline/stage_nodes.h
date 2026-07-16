@@ -24,6 +24,7 @@
 #include <sai/reasoner/reasoner.h>
 #include <sai/inference/sam2_segmenter.h>
 #include <sai/io/exporter.h>
+#include <sai/pipeline/inspection_recorder.h>
 
 namespace sai::pipeline {
 
@@ -154,12 +155,16 @@ public:
     auto SetVectorPath(std::shared_ptr<sai::retrieval::VectorPath> vp) -> void {
         vp_ = std::move(vp);
     }
+    auto SetInspectionRecorder(std::shared_ptr<InspectionRecorder> rec) -> void {
+        recorder_ = std::move(rec);
+    }
 private:
     std::string id_;
     std::shared_ptr<sai::rule::RuleEngine> rule_engine_;
     std::shared_ptr<sai::knowledge::KnowledgeGraph> kg_;
     std::shared_ptr<sai::retrieval::VectorPath> vp_;
     std::unique_ptr<sai::rule::FactBuilder> fact_builder_;
+    std::shared_ptr<InspectionRecorder> recorder_;
     std::string rule_file_;
     bool stub_ = true;
 };
