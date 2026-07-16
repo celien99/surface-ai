@@ -34,5 +34,6 @@ target_link_libraries(sai_pipeline PUBLIC
     sai::reasoner
     sai::knowledge
     sai::retrieval
+    sai::scheduler
     yaml-cpp::yaml-cpp
 )

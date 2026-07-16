@@ -12,5 +12,6 @@ target_include_directories(sai_scheduler PUBLIC
 target_link_libraries(sai_scheduler PUBLIC
     sai::core
     sai::runtime
-    sai::pipeline
 )
+# Note: sai::pipeline types (StageConfig, BackpressureConfig, StageType) are
+# header-only and accessed via include path — no link dependency needed.

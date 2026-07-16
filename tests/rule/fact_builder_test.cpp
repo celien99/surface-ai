@@ -118,7 +118,7 @@ auto MakeDetection(float image_level, std::size_t n_regions = 1)
         auto rx = 10U + static_cast<unsigned>(i * 5);
         auto ry = 20U + static_cast<unsigned>(i * 5);
         detection::RegionProposal rp{
-            device::Rect{rx, ry, 100U, 200U},
+            core::Rect{rx, ry, 100U, 200U},
             0.9F - static_cast<float>(i) * 0.1F,
             0.5F - static_cast<float>(i) * 0.1F,
             500U + i * 100};

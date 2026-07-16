@@ -67,6 +67,9 @@ private:
     // Fixed-size array indexed by StageType (8 values: Capture=0..Custom=7).
     // Unallocated entries hold std::nullopt — no heap allocation for lookups.
     static constexpr std::size_t kStageTypeCount = 8;
+    static_assert(static_cast<std::size_t>(StageType::Custom) + 1 == kStageTypeCount,
+                  "kStageTypeCount must equal the number of StageType enum values. "
+                  "If you added/removed a StageType value, update kStageTypeCount.");
     std::unique_ptr<Registry<runtime::WorkerPool>> pools_;
     std::array<std::optional<TypeId>, kStageTypeCount> stage_pool_map_;
     BackpressureConfig bp_config_{};

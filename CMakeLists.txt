@@ -5,6 +5,10 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Warning flags: -Wall -Wextra catch switch-enum gaps, unused, sign-mismatch, etc.
+# -Wpedantic is omitted for now (Qt/QML + third-party headers generate noise).
+add_compile_options(-Wall -Wextra)
+
 # Optimization: Release builds get LTO + march=native for cross-TU inlining.
 # Debug builds keep defaults (-Og/-O0) for fast iteration.
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -flto -march=native")

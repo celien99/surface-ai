@@ -25,14 +25,14 @@ auto MakeTestResult() -> InspectionResult {
     d1.label = "scratch";
     d1.severity = "CRITICAL";
     d1.confidence = 0.95F;
-    d1.location = sai::device::Rect{10, 20, 100, 200};
+    d1.location = sai::core::Rect{10, 20, 100, 200};
     d1.evidence_path = "/tmp/scratch_crop.png";
 
     DefectRecord d2;
     d2.label = "dent";
     d2.severity = "MINOR";
     d2.confidence = 0.60F;
-    d2.location = sai::device::Rect{50, 60, 80, 90};
+    d2.location = sai::core::Rect{50, 60, 80, 90};
     d2.evidence_path = "";
 
     r.defects = {d1, d2};

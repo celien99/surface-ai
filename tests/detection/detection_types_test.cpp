@@ -48,7 +48,7 @@ TEST(AnomalyMapTest, IsDefective) {
 // ── RegionProposal ────────────────────────────────────────────
 
 TEST(RegionProposalTest, FieldsMatch) {
-    sai::device::Rect rect{10, 20, 100, 200};
+    sai::core::Rect rect{10, 20, 100, 200};
     sai::detection::RegionProposal prop{rect, 0.9F, 0.5F, 500};
 
     EXPECT_EQ(prop.bounding_box.x, 10U);
