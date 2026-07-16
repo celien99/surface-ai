@@ -35,7 +35,7 @@ graph TB
 
     subgraph L3["🧠 AI 推理"]
         Engine["IInferenceEngine<br/>TensorRT / ONNX / Mock"]
-        Adapt["模型适配器<br/>DINOv3 · CLIP · SAM2"]
+        Adapt["模型适配器<br/>DINOv3 · CLIP"]
         Emb["IEmbedder<br/>PatchEmbedder · GlobalEmbedder"]
         Det["IDetector<br/>PatchCore · PcaDetector"]
         Engine --> Adapt --> Emb --> Det
@@ -53,8 +53,10 @@ graph TB
         Rule["RuleEngine<br/>AST 表达式 · YAML 规则"]
         Tree["DecisionTree<br/>分支节点 · 加权 Sigmoid"]
         Reason["IReasoner<br/>裁决 · 溯源 · 证据"]
+        SAM2["SAM2Segmenter<br/>异常区域边界精细化"]
         Rule --> Reason
         Tree --> Reason
+        Reason -.->|可选，默认禁用| SAM2
     end
 
     subgraph L6["🎯 编排 & 调优"]
@@ -116,7 +118,7 @@ graph TB
 | 3 | Inference | `SurfaceImage` → `Embedding` | DINOv3 补丁特征 / CLIP 全局特征提取（TensorRT/ONNX） |
 | 4 | Detect | `Embedding` → `DetectionResult` | PatchCore k-NN 异常评分 / PCA 子空间建模，后处理（平滑+连通分量） |
 | 5 | RuleEval | `DetectionResult` → `FactBase` + `ResolvedRules` | 构建事实库（检测结果 + KG 路径解析 + FAISS 向量检索），AST 规则评估，冲突消解 |
-| 6 | Reason | `FactBase` + `ResolvedRules` → `ReasoningResult` | 决策树遍历，加权 Sigmoid 评分，生成裁决（OK/NG/WARN）+ 证据链 + 全链路溯源 |
+| 6 | Reason | `FactBase` + `ResolvedRules` → `ReasoningResult` | 决策树遍历，加权 Sigmoid 评分，生成裁决（OK/NG/WARN）+ 证据链 + 全链路溯源。可选启用 SAM2 对异常区域做边界精细化掩膜 |
 | 7 | Export | `ReasoningResult` → JSON + PPM | 检测报告输出，缺陷区域标注图，回调 UI 更新 |
 
 **后台闭环：** `InspectionRecorder` 将每帧检测分数写入 `KnowledgeGraph` → `TuningScheduler` 周期性读取反馈，用高斯过程 + 预期改进（GP+EI）自动寻优 Detection 阈值、规则权重、裁决边界 → 热重载生效，无需重启 Pipeline。熔断机制：若调优后 NG 率异常，自动回滚至上一次参数。
@@ -133,7 +135,7 @@ graph TB
 - **多信号共识**：正态性评估 + 检测分数 + 规则匹配 + 推理裁决，联合判否
 
 ### 特征提取
-- **DINOv3**（ViT 补丁特征）、**CLIP**（全局 [CLS] 特征）、**SAM2**（提示式分割）
+- **DINOv3**（ViT 补丁特征）、**CLIP**（全局 [CLS] 特征）
 - 多层特征聚合（Concat / Mean / Group），显著性掩码（Percentile / Otsu）
 - PCA 降维 + 球化白化 + 空间池化（Avg / Max），流式 PCA 支持大数据集
 - 双存储 Embedding（GPU/CPU），零拷贝共享指针，LRU 特征缓存
@@ -151,6 +153,7 @@ graph TB
 - **决策树**：分支节点（数值范围分派）+ 叶子节点（加权 Sigmoid 公式）
 - **全链路溯源**：TraceRecorder 记录每一步（表达式→规则→树分支→评分），EvidenceCollector 汇总证据
 - **FactBuilder**：自动从 DetectionResult + KnowledgeGraph + VectorPath 构建事实库
+- **SAM2Segmenter**（可选）：对异常区域做边界精细化掩膜，默认禁用
 
 ### 在线自进化
 - **CoresetEvolution**：后台线程周期性评估每帧正常性/新颖性，双缓冲热更新 FeatureBank
