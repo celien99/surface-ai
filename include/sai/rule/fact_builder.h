@@ -1,11 +1,13 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "sai/core/error.h"
+#include "sai/retrieval/vector_path.h"
 #include "sai/rule/fact_base.h"
 
 namespace sai::detection {
@@ -15,10 +17,6 @@ struct DetectionResult;
 namespace sai::knowledge {
 class KnowledgeGraph;
 }  // namespace sai::knowledge
-
-namespace sai::retrieval {
-class VectorPath;
-}  // namespace sai::retrieval
 
 namespace sai::rule {
 
@@ -33,6 +31,9 @@ namespace sai::rule {
 // - RunVectorRetrieval looks up a query vector from FactBase (as a Value
 //   list), calls VectorPath::Search with TopK mode, and expands results
 //   into FactBase keys.
+// - L2-distance-based retrieval cache: when a query vector is similar
+//   (L2 < cache_epsilon_) to the previous query, cached results are reused
+//   to avoid redundant FAISS searches. Default threshold 0.01.
 class FactBuilder {
 public:
     explicit FactBuilder(
@@ -57,6 +58,10 @@ public:
     auto RunVectorRetrieval(FactBase& fb, std::string_view embedding_key) noexcept
         -> Result<void>;
 
+    // Configure L2-distance threshold for retrieval cache hits.
+    // Set to 0.0 to disable caching entirely. Default 0.01.
+    auto SetRetrievalCacheEpsilon(double eps) noexcept -> void { cache_epsilon_ = eps; }
+
 private:
     auto MapDetection(FactBase& fb, const detection::DetectionResult& dr) -> void;
 
@@ -64,8 +69,21 @@ private:
                            const std::vector<std::string>& paths) noexcept
         -> Result<void>;
 
+    // Write VectorResults to FactBase — shared by cache-hit and cache-miss paths.
+    auto WriteRetrievalResults(FactBase& fb,
+                                const std::vector<retrieval::VectorResult>& results,
+                                std::size_t k) -> void;
+
     std::shared_ptr<knowledge::KnowledgeGraph> kg_;
     std::shared_ptr<retrieval::VectorPath> vp_;
+
+    // L2-distance-based retrieval cache
+    struct RetrievalCache {
+        std::vector<float> query;
+        std::vector<retrieval::VectorResult> results;
+    };
+    mutable std::optional<RetrievalCache> retrieval_cache_;
+    double cache_epsilon_ = 0.01;
 };
 
 }  // namespace sai::rule

@@ -74,7 +74,14 @@ auto FeatureBank::Search(const float* query, std::size_t query_count,
     std::vector<float> distances(static_cast<std::size_t>(nq * nk));
     std::vector<faiss::idx_t> labels(static_cast<std::size_t>(nq * nk));
 
-    index_->search(nq, query, nk, distances.data(), labels.data());
+    // Dispatch to GPU FAISS index when CUDA is available and FeatureBank has
+    // been migrated via ToGpu(). Falls back to CPU IndexFlatL2 otherwise.
+#if defined(SAI_CUDA_ENABLED)
+    auto* idx = (on_gpu_ && gpu_index_) ? gpu_index_.get() : index_.get();
+#else
+    auto* idx = index_.get();
+#endif
+    idx->search(nq, query, nk, distances.data(), labels.data());
 
     return distances;
 }

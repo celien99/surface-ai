@@ -44,7 +44,14 @@ auto VectorPath::Search(const float* query, std::size_t dim, const Config& cfg) 
         });
     }
 
+    // Dispatch to GPU FAISS index when CUDA is available and FeatureBank has
+    // been migrated via ToGpu(). Falls back to CPU IndexFlatL2 otherwise.
+#if defined(SAI_CUDA_ENABLED)
+    auto* index = (bank_.on_gpu_ && bank_.gpu_index_) ? bank_.gpu_index_.get()
+                                                       : bank_.index_.get();
+#else
     auto* index = bank_.index_.get();
+#endif
     if (!index || bank_.NumSamples() == 0) {
         return tl::make_unexpected(ErrorInfo{
             ErrorCode::Retrieval_EmptyIndex,

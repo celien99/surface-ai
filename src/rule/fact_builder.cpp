@@ -385,31 +385,58 @@ auto FactBuilder::RunVectorRetrieval(FactBase& fb,
         }
     }
 
+    // L2-distance-based retrieval cache: skip FAISS search when the query
+    // is nearly identical to the previous query. Reduces CPU load for
+    // consecutive frames that share the same CLIP global embedding.
+    if (retrieval_cache_.has_value() && cache_epsilon_ > 0.0) {
+        const auto& cached = retrieval_cache_->query;
+        if (cached.size() == dim) {
+            double sq_dist = 0.0;
+            for (std::size_t i = 0; i < dim; ++i) {
+                double d = static_cast<double>(query_vec[i]) -
+                           static_cast<double>(cached[i]);
+                sq_dist += d * d;
+            }
+            if (sq_dist < cache_epsilon_ * cache_epsilon_) {
+                WriteRetrievalResults(fb, retrieval_cache_->results, cfg.k);
+                return {};
+            }
+        }
+    }
+
     auto results = vp_->Search(query_vec.data(), dim, cfg);
     if (!results) {
         return tl::unexpected(results.error());
     }
 
-    // Store results in FactBase
-    auto result_count = static_cast<double>(results->size());
+    // Update cache
+    retrieval_cache_ = RetrievalCache{query_vec, *results};
+
+    WriteRetrievalResults(fb, *results, cfg.k);
+    return {};
+}
+
+auto FactBuilder::WriteRetrievalResults(
+    FactBase& fb,
+    const std::vector<retrieval::VectorResult>& results,
+    std::size_t k) -> void {
+    auto result_count = static_cast<double>(results.size());
     fb.Set("retrieval.count", Value::Of(result_count),
            FactSource{FactSourceKind::VectorSearch,
-                      std::string("VectorPath TopK k=").append(std::to_string(cfg.k))});
+                      std::string("VectorPath TopK k=").append(std::to_string(k))});
 
-    for (std::size_t i = 0; i < results->size(); ++i) {
+    for (std::size_t i = 0; i < results.size(); ++i) {
         auto rank = i + 1;
         auto prefix = std::string("retrieval.top")
                           .append(std::to_string(rank));
 
         fb.Set(prefix + ".index",
-               Value::Of(static_cast<double>(results->at(i).index)),
+               Value::Of(static_cast<double>(results[i].index)),
                FactSource{FactSourceKind::VectorSearch, prefix + ".index"});
         fb.Set(prefix + ".distance",
-               Value::Of(static_cast<double>(results->at(i).distance)),
+               Value::Of(static_cast<double>(results[i].distance)),
                FactSource{FactSourceKind::VectorSearch, prefix + ".distance"});
     }
-
-    return {};
 }
 
 // -----------------------------------------------------------------------
