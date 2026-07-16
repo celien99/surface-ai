@@ -190,7 +190,7 @@ private:
 
 class ExportStage final : public IStageNode {
 public:
-    ExportStage(std::string id, YAML::Node config);
+    ExportStage(std::string id, YAML::Node config, Pipeline* pipeline);
     auto GetType() const noexcept -> StageType override;
     auto GetId() const -> std::string_view override;
     auto OnInitialize(Context&) -> Result<void> override;
@@ -204,6 +204,7 @@ private:
     std::string id_;
     std::shared_ptr<sai::io::IExporter> exporter_;
     std::filesystem::path output_dir_;
+    Pipeline* pipeline_ = nullptr;  // non-owning, for per-frame image side channel
     bool stub_ = true;
 };
 

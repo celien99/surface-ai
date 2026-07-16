@@ -34,8 +34,26 @@ auto RunGui(int argc, char* argv[], AssembledApp& app) -> int {
     pipeline_vm->BindToPipeline(app.pipeline.get());
     auto* inspection_vm = new visualization::InspectionViewModel(&qapp);
     auto* config_vm = new visualization::ConfigViewModel(&qapp);
+    config_vm->BindToPipeline(app.pipeline.get());
+    config_vm->BindToRuleEngine(app.rule_engine.get());
+    if (app.reasoner) config_vm->BindToReasoner(app.reasoner.get());
+    // Register pipeline stage nodes for hot-reload support
+    for (auto stage_id : {"capture", "preprocess", "inference", "detect",
+                          "rule_eval", "reason", "export"}) {
+        auto* node = app.pipeline->GetStage(stage_id);
+        if (node) config_vm->RegisterStageNode(stage_id, node);
+    }
     auto* dashboard_vm = new visualization::DashboardViewModel(&qapp);
     auto* frame_provider = new visualization::FrameProvider();
+
+    // Live defect overlay: Pipe DetectionResult → DefectModel
+    auto* defect_model_ptr = inspection_vm->defectModel();
+    app.pipeline->SetDetectionCallback(
+        [defect_model_ptr](const sai::detection::DetectionResult& dr) {
+            QMetaObject::invokeMethod(
+                defect_model_ptr, "UpdateDefects", Qt::QueuedConnection,
+                Q_ARG(std::vector<sai::detection::RegionProposal>, dr.regions));
+        });
 
     if (!app.evolution.has_value() && app.evolutions.empty()) {
         // No evolution — keep simple callback (no self-evolution capture needed)
@@ -50,6 +68,13 @@ auto RunGui(int argc, char* argv[], AssembledApp& app) -> int {
                 dashboard_vm->AppendFrameSummary(std::move(summary));
             });
     } else {
+        // Detection callback also needed when evolution is active
+        app.pipeline->SetDetectionCallback(
+            [defect_model_ptr](const sai::detection::DetectionResult& dr) {
+                QMetaObject::invokeMethod(
+                    defect_model_ptr, "UpdateDefects", Qt::QueuedConnection,
+                    Q_ARG(std::vector<sai::detection::RegionProposal>, dr.regions));
+            });
         app.pipeline->SetResultCallback(
             [&](int fid, const reasoner::ReasoningResult& result) {
                 inspection_vm->UpdateResult(fid, result);
@@ -84,8 +109,12 @@ auto RunGui(int argc, char* argv[], AssembledApp& app) -> int {
         .width = 1024, .height = 1024, .fps = 10.0};
     auto camera = std::make_shared<device::FakeCamera>(cam_cfg);
     auto* pipeline_ptr = app.pipeline.get();
+    auto* fp = frame_provider;
+    auto frame_counter = std::make_shared<std::atomic<int>>(0);
     (void)camera->RegisterFrameCallback(
-        [pipeline_ptr](sai::image::RawImage img) {
+        [pipeline_ptr, fp, frame_counter](sai::image::RawImage img) {
+            int fid = frame_counter->fetch_add(1, std::memory_order_relaxed);
+            fp->RegisterRawFrame(fid, img);
             (void)pipeline_ptr->Submit(std::move(img));
         });
     (void)camera->Connect();

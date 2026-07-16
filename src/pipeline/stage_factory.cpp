@@ -68,7 +68,7 @@ auto StageFactory::Create(const StageConfig& config, Context& ctx,
         }
         case StageType::Export: {
             auto stage = std::make_unique<ExportStage>(
-                config.id, config.config);
+                config.id, config.config, pipeline);
             auto result = stage->OnInitialize(ctx);
             if (!result.has_value())
                 return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_StageInitFailed,
