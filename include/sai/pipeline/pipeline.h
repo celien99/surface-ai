@@ -120,6 +120,7 @@ public:
     virtual ~ErasedStageQueue() = default;
     virtual auto Depth() const -> size_t = 0;
     virtual auto Capacity() const -> size_t = 0;
+    virtual auto DroppedCount() const -> size_t = 0;
     virtual auto PushBlocking(std::unique_ptr<StageOutput>) -> void = 0;
     virtual auto TryPush(std::unique_ptr<StageOutput>) -> bool = 0;
     virtual auto TryPop() -> std::unique_ptr<StageOutput> = 0;

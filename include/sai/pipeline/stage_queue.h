@@ -46,10 +46,12 @@ public:
                 // If CAS fails, TryPop already advanced head_ concurrently
                 // (a slot was freed), so we have space either way — fall through.
                 size_t h = head_.load(std::memory_order_relaxed);
-                head_.compare_exchange_weak(h,
-                    (h + 1) % (logical_capacity_ + 1),
-                    std::memory_order_release,
-                    std::memory_order_relaxed);
+                if (head_.compare_exchange_weak(h,
+                        (h + 1) % (logical_capacity_ + 1),
+                        std::memory_order_release,
+                        std::memory_order_relaxed)) {
+                    dropped_count_.fetch_add(1, std::memory_order_relaxed);
+                }
                 // Now we have space — write at tail
                 buffer_[current_tail] = std::move(item);
                 tail_.store(next_tail, std::memory_order_release);
@@ -92,6 +94,12 @@ public:
         return (logical_capacity_ + 1) - h + t;
     }
 
+    // Number of items dropped via DropOldest policy. Single-producer (push side)
+    // only — no cache-line padding needed.
+    auto DroppedCount() const noexcept -> size_t {
+        return dropped_count_.load(std::memory_order_relaxed);
+    }
+
     // For PushBlocking / PopBlocking (external CV)
     auto IsFull() const noexcept -> bool {
         size_t next = (tail_.load(std::memory_order_relaxed) + 1)
@@ -112,6 +120,8 @@ private:
     // Padded to separate cache lines to avoid false sharing
     alignas(kCacheLineSize) std::atomic<size_t> head_;
     alignas(kCacheLineSize) std::atomic<size_t> tail_;
+    // Drop counter: only written by the push side (SPSC), no padding needed.
+    std::atomic<size_t> dropped_count_{0};
 };
 
 }  // namespace detail
@@ -178,6 +188,7 @@ public:
 
     auto Depth() const noexcept -> size_t { return ring_.Depth(); }
     auto Capacity() const noexcept -> size_t { return ring_.Capacity(); }
+    auto DroppedCount() const noexcept -> size_t { return ring_.DroppedCount(); }
 
 private:
     StageQueue(size_t capacity, BackpressurePolicy policy)

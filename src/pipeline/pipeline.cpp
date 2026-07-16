@@ -1,5 +1,7 @@
 #include <sai/pipeline/pipeline.h>
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <set>
 #include <thread>
@@ -38,6 +40,7 @@ public:
 
     auto Depth() const -> size_t override { return queue_->Depth(); }
     auto Capacity() const -> size_t override { return queue_->Capacity(); }
+    auto DroppedCount() const -> size_t override { return queue_->DroppedCount(); }
 
     auto PushBlocking(std::unique_ptr<StageOutput> item) -> void override {
         queue_->PushBlocking(std::move(item));
@@ -87,6 +90,13 @@ auto Pipeline::LoadFromYAML(std::filesystem::path yaml_path, Context& ctx)
     // StageType → pool mapping, replacing the duplicated logic previously
     // in the anonymous namespace above).
     pipeline->stage_scheduler_ = std::make_unique<sai::scheduler::Scheduler>();
+
+    // Apply YAML pool_config overrides before Allocate()
+    for (const auto& [pool_key, po] : config->pool_overrides) {
+        pipeline->stage_scheduler_->OverridePoolConfig(
+            pool_key, po.threads, po.queue_capacity);
+    }
+
     BackpressureConfig bp_cfg;
     auto alloc_result = pipeline->stage_scheduler_->Allocate(
         config->stages, bp_cfg);
@@ -181,13 +191,55 @@ auto Pipeline::Start() -> Result<void> {
         auto stage_id_sp = std::make_shared<std::string>(stage_id);
         IStageNode* node_ptr = node.get();
 
-        worker_threads_.emplace_back(
-            [this, stage_id_sp, node_ptr, metrics_ptr](std::stop_token st) {
+        // Determine thread count from scheduler pool config.
+        // Multiple threads share the same input queue (StageQueue mutex-serialized
+        // for both push and pop), turning each stage into a work-conserving pool.
+        auto pool_key = std::string(
+            sai::scheduler::Scheduler::StageTypeToPoolKey(node_ptr->GetType()));
+        auto pool_cfg = stage_scheduler_->GetEffectivePoolConfig(pool_key);
+        std::size_t num_threads = pool_cfg.threads;
+
+        // Shared drop-count tracker across all threads of this stage.
+        // Each thread reads the queue's DroppedCount() and atomically
+        // accumulates only the delta via compare-exchange, avoiding
+        // double-counting when multiple threads observe the same drop.
+        auto shared_drop_tracker = std::make_shared<std::atomic<std::size_t>>(0);
+
+        for (std::size_t t = 0; t < num_threads; ++t) {
+            auto thread_label = (num_threads > 1)
+                ? std::to_string(t) : std::string{};
+            worker_threads_.emplace_back(
+            [this, stage_id_sp, node_ptr, metrics_ptr, thread_label,
+             shared_drop_tracker](std::stop_token st) {
                 using Clock = std::chrono::steady_clock;
+
+                // P99 latency reservoir (fixed-size, 100 samples)
+                std::array<double, 100> latency_reservoir{};
+                std::size_t reservoir_idx = 0;
+                std::size_t reservoir_count = 0;
 
                 while (true) {
                     auto input = DequeueInput(*stage_id_sp, st);
                     if (!input) break;  // stop requested AND queue drained
+
+                    // (A) Snapshot queue depth + accumulate dropped frames
+                    auto qit = input_queues_.find(*stage_id_sp);
+                    if (qit != input_queues_.end()) {
+                        metrics_ptr->set_queue_depth(qit->second->Depth());
+                        // Atomically accumulate drop count delta across threads
+                        std::size_t dc = qit->second->DroppedCount();
+                        std::size_t prev =
+                            shared_drop_tracker->load(std::memory_order_relaxed);
+                        while (dc > prev &&
+                               !shared_drop_tracker->compare_exchange_weak(
+                                   prev, dc, std::memory_order_relaxed)) {
+                            // prev reloaded by CAS; retry
+                        }
+                        if (dc > prev) {
+                            metrics_ptr->frames_dropped.fetch_add(
+                                dc - prev, std::memory_order_relaxed);
+                        }
+                    }
 
                     auto t_start = Clock::now();
                     auto result = node_ptr->Process(std::move(*input));
@@ -195,6 +247,23 @@ auto Pipeline::Start() -> Result<void> {
                         std::chrono::duration<double, std::micro>(
                             Clock::now() - t_start)
                             .count();
+
+                    // (B) Update P99 latency reservoir
+                    latency_reservoir[reservoir_idx % 100] = elapsed;
+                    ++reservoir_idx;
+                    if (reservoir_count < 100) ++reservoir_count;
+                    if (reservoir_count > 0) {
+                        std::array<double, 100> sorted;
+                        std::copy_n(latency_reservoir.begin(), reservoir_count,
+                                    sorted.begin());
+                        auto end = sorted.begin() + reservoir_count;
+                        std::sort(sorted.begin(), end);
+                        auto p99_idx = static_cast<std::size_t>(
+                            static_cast<double>(reservoir_count) * 0.99);
+                        if (p99_idx >= reservoir_count)
+                            p99_idx = reservoir_count - 1;
+                        metrics_ptr->p99_latency_us = sorted[p99_idx];
+                    }
 
                     if (result.has_value()) {
                         // Store SurfaceImage pixel snapshot for Export stage
@@ -237,6 +306,7 @@ auto Pipeline::Start() -> Result<void> {
                     }
                 }
             });
+        }  // for each thread in this stage's pool
     }
 
     return {};
