@@ -9,16 +9,23 @@ PatchEmbedder::PatchEmbedder(sai::inference::DinoV3Adapter adapter) noexcept
     : adapter_(std::move(adapter)), has_adapter_(true) {}
 
 PatchEmbedder::PatchEmbedder(PatchEmbedder&& other) noexcept
-    : adapter_(std::move(other.adapter_)), has_adapter_(true)
+    : adapter_(std::move(other.adapter_))
+    , gpu_pool_(other.gpu_pool_)
+    , cuda_stream_(other.cuda_stream_)
+    , has_adapter_(true)
 {
     other.has_adapter_ = false;
+    other.cuda_stream_ = nullptr;
 }
 
 auto PatchEmbedder::operator=(PatchEmbedder&& other) noexcept -> PatchEmbedder& {
     if (this != &other) {
         adapter_ = std::move(other.adapter_);
+        gpu_pool_ = other.gpu_pool_;
+        cuda_stream_ = other.cuda_stream_;
         has_adapter_ = true;
         other.has_adapter_ = false;
+        other.cuda_stream_ = nullptr;
     }
     return *this;
 }
@@ -94,6 +101,9 @@ auto PatchEmbedder::ExtractGpu(const sai::image::Image& /*image*/) noexcept
         .source_location = std::source_location::current(),
     });
 }
+
+// 可移植析构函数：无 CUDA 环境下 cuda_stream_ 恒为 nullptr（ExtractGpu 永不被调用）
+PatchEmbedder::~PatchEmbedder() = default;
 #endif
 
 }  // namespace sai::embedding

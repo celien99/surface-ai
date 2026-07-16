@@ -69,4 +69,64 @@ auto ClipAdapter::Infer(const sai::image::GpuImage& image) noexcept -> Result<Gl
     };
 }
 
+auto ClipAdapter::InferAsync(const sai::image::GpuImage& image,
+                              void* stream) noexcept -> Result<GlobalFeatures> {
+    // 1. Set input tensor address (same as sync path)
+    auto set_result = engine_->SetTensorAddress(
+        "pixel_values",
+        const_cast<std::uint8_t*>(image.Data()));
+    if (!set_result.has_value()) {
+        return tl::make_unexpected(set_result.error());
+    }
+
+    // 2. Execute async GPU inference — no cudaStreamSynchronize.
+    auto infer_result = engine_->InferAsync(stream);
+    if (!infer_result.has_value()) {
+        return tl::make_unexpected(infer_result.error());
+    }
+
+    // 3. Read output binding (same as sync path)
+    const auto& outputs = engine_->OutputBindings();
+    const TensorBinding* features_binding = nullptr;
+    for (const auto& b : outputs) {
+        if (b.name == "image_features") {
+            features_binding = &b;
+            break;
+        }
+    }
+
+    if (features_binding == nullptr) {
+        return tl::make_unexpected(ErrorInfo{
+            .code = ErrorCode::Inference_InvalidBinding,
+            .message = "ClipAdapter: output binding 'image_features' not found",
+            .source_location = std::source_location::current(),
+        });
+    }
+
+    if (features_binding->device_ptr == nullptr) {
+        return tl::make_unexpected(ErrorInfo{
+            .code = ErrorCode::Inference_InvalidBinding,
+            .message = "ClipAdapter: output binding 'image_features' has null device_ptr",
+            .source_location = std::source_location::current(),
+        });
+    }
+
+    // 4. Validate output dimensions
+    std::size_t expected_bytes = cfg_.embed_dim * sizeof(float);
+    if (features_binding->size_bytes < expected_bytes) {
+        return tl::make_unexpected(ErrorInfo{
+            .code = ErrorCode::Inference_ModelConfigMismatch,
+            .message = "ClipAdapter: output size mismatch (expected " +
+                       std::to_string(expected_bytes) + " bytes, got " +
+                       std::to_string(features_binding->size_bytes) + ")",
+            .source_location = std::source_location::current(),
+        });
+    }
+
+    return GlobalFeatures{
+        .device_ptr = static_cast<float*>(features_binding->device_ptr),
+        .dim = cfg_.embed_dim,
+    };
+}
+
 }  // namespace sai::inference

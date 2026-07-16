@@ -9,16 +9,21 @@ GlobalEmbedder::GlobalEmbedder(sai::inference::ClipAdapter adapter) noexcept
     : adapter_(std::move(adapter)), has_adapter_(true) {}
 
 GlobalEmbedder::GlobalEmbedder(GlobalEmbedder&& other) noexcept
-    : adapter_(std::move(other.adapter_)), has_adapter_(true)
+    : adapter_(std::move(other.adapter_))
+    , cuda_stream_(other.cuda_stream_)
+    , has_adapter_(true)
 {
     other.has_adapter_ = false;
+    other.cuda_stream_ = nullptr;
 }
 
 auto GlobalEmbedder::operator=(GlobalEmbedder&& other) noexcept -> GlobalEmbedder& {
     if (this != &other) {
         adapter_ = std::move(other.adapter_);
+        cuda_stream_ = other.cuda_stream_;
         has_adapter_ = true;
         other.has_adapter_ = false;
+        other.cuda_stream_ = nullptr;
     }
     return *this;
 }
@@ -92,6 +97,9 @@ auto GlobalEmbedder::ExtractGpu(const sai::image::Image& /*image*/) noexcept
         .source_location = std::source_location::current(),
     });
 }
+
+// 可移植析构函数：无 CUDA 环境下 cuda_stream_ 恒为 nullptr
+GlobalEmbedder::~GlobalEmbedder() = default;
 #endif
 
 }  // namespace sai::embedding

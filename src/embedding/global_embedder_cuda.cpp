@@ -3,11 +3,12 @@
 //
 // 实现 GlobalEmbedder::ExtractGpu 的 GPU 推理路径：
 //   1. 校验输入为 GpuImage
-//   2. 调用 ClipAdapter::Infer() 获取 GlobalFeatures（GPU 指针）
-//   3. cudaMemcpy 至 CPU，构造 Embedding::FromCpu()
+//   2. 调用 ClipAdapter::InferAsync() 在独立 CUDA stream 上执行推理
+//   3. cudaMemcpyAsync 至 CPU，构造 Embedding::FromCpu()
 //
 // CLIP 输出单个全局特征向量（[CLS] token），维度较小（512/768），
 // DtoH 拷贝开销可忽略。
+// 每实例持有独立 CUDA stream，避免默认流隐式串行化。
 
 #include <sai/embedding/embedder.h>
 
@@ -21,6 +22,18 @@
 #include <sai/inference/clip_adapter.h>
 
 namespace sai::embedding {
+
+static auto EnsureStream(void*& stream) -> cudaError_t {
+    if (stream != nullptr) return cudaSuccess;
+    return cudaStreamCreate(reinterpret_cast<cudaStream_t*>(&stream));
+}
+
+GlobalEmbedder::~GlobalEmbedder() {
+    if (cuda_stream_ != nullptr) {
+        cudaStreamDestroy(reinterpret_cast<cudaStream_t>(cuda_stream_));
+        cuda_stream_ = nullptr;
+    }
+}
 
 auto GlobalEmbedder::ExtractGpu(const sai::image::Image& image) noexcept
     -> Result<Embedding> {
@@ -40,22 +53,53 @@ auto GlobalEmbedder::ExtractGpu(const sai::image::Image& image) noexcept
         });
     }
 
+    // 懒创建独立 CUDA stream
+    cudaError_t stream_err = EnsureStream(cuda_stream_);
+    if (stream_err != cudaSuccess) {
+        return tl::make_unexpected(ErrorInfo{
+            .code = ErrorCode::Inference_EngineExecutionFailed,
+            .message = std::string("GlobalEmbedder: failed to create CUDA stream: ")
+                       + cudaGetErrorString(stream_err),
+            .source_location = std::source_location::current(),
+        });
+    }
+    auto* stream = reinterpret_cast<cudaStream_t>(cuda_stream_);
+
     const auto& gpu_img = static_cast<const sai::image::GpuImage&>(image);
     auto start = std::chrono::steady_clock::now();
 
-    // Run CLIP inference on GPU.
-    auto global_result = adapter_.Infer(gpu_img);
+    // Async CLIP inference on dedicated stream.
+    auto global_result = adapter_.InferAsync(gpu_img, stream);
     if (!global_result) {
         return tl::make_unexpected(global_result.error());
     }
 
+    // Async D2H copy on same stream for CLIP [CLS] feature (small, 512/768 floats).
+    std::vector<float> cpu_features(global_result->dim);
+    cudaError_t d2h_err = cudaMemcpyAsync(
+        cpu_features.data(), global_result->device_ptr,
+        global_result->dim * sizeof(float), cudaMemcpyDeviceToHost, stream);
+    if (d2h_err != cudaSuccess) {
+        return tl::make_unexpected(ErrorInfo{
+            .code = ErrorCode::Inference_EngineExecutionFailed,
+            .message = std::string("GlobalEmbedder: D2H copy failed: ")
+                       + cudaGetErrorString(d2h_err),
+            .source_location = std::source_location::current(),
+        });
+    }
+
+    cudaError_t sync_err = cudaStreamSynchronize(stream);
     auto end = std::chrono::steady_clock::now();
     auto latency = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
 
-    // Download CLIP [CLS] feature to CPU (single vector, small — 512/768 floats).
-    std::vector<float> cpu_features(global_result->dim);
-    cudaMemcpy(cpu_features.data(), global_result->device_ptr,
-               global_result->dim * sizeof(float), cudaMemcpyDeviceToHost);
+    if (sync_err != cudaSuccess) {
+        return tl::make_unexpected(ErrorInfo{
+            .code = ErrorCode::Inference_EngineExecutionFailed,
+            .message = std::string("GlobalEmbedder: stream sync failed: ")
+                       + cudaGetErrorString(sync_err),
+            .source_location = std::source_location::current(),
+        });
+    }
 
     EmbeddingMeta meta;
     meta.model_name = "CLIP";

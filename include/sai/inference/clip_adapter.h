@@ -31,6 +31,10 @@ public:
 
     // 声明于此，定义留在门控 Task 3 的 .cpp 文件中。
     [[nodiscard]] auto Infer(const sai::image::GpuImage& image) noexcept -> Result<GlobalFeatures>;
+    // 异步推理——与 Infer 逻辑一致，但通过 stream 而非默认流执行。
+    // 调用者负责管理 stream 生命周期并同步。
+    [[nodiscard]] auto InferAsync(const sai::image::GpuImage& image,
+                                   void* stream) noexcept -> Result<GlobalFeatures>;
 
     [[nodiscard]] auto ModelName() const noexcept -> std::string_view { return "CLIP"; }
 

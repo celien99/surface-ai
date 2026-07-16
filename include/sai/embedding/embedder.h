@@ -44,6 +44,7 @@ public:
 
     PatchEmbedder(PatchEmbedder&&) noexcept;
     auto operator=(PatchEmbedder&&) noexcept -> PatchEmbedder&;
+    ~PatchEmbedder();
     PatchEmbedder(const PatchEmbedder&) = delete;
     auto operator=(const PatchEmbedder&) -> PatchEmbedder& = delete;
 
@@ -64,6 +65,7 @@ private:
     explicit PatchEmbedder(sai::inference::DinoV3Adapter adapter) noexcept;
     sai::inference::DinoV3Adapter adapter_;
     sai::memory::IMemoryPool* gpu_pool_ = nullptr;
+    void* cuda_stream_ = nullptr;  // 每实例独立 CUDA stream，避免默认流串行化
     bool has_adapter_ = true;
 };
 
@@ -82,6 +84,7 @@ public:
 
     GlobalEmbedder(GlobalEmbedder&&) noexcept;
     auto operator=(GlobalEmbedder&&) noexcept -> GlobalEmbedder&;
+    ~GlobalEmbedder();
     GlobalEmbedder(const GlobalEmbedder&) = delete;
     auto operator=(const GlobalEmbedder&) -> GlobalEmbedder& = delete;
 
@@ -92,6 +95,7 @@ public:
 private:
     explicit GlobalEmbedder(sai::inference::ClipAdapter adapter) noexcept;
     sai::inference::ClipAdapter adapter_;
+    void* cuda_stream_ = nullptr;  // 每实例独立 CUDA stream，避免默认流串行化
     bool has_adapter_ = true;
 };
 
