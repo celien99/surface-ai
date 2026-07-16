@@ -6,7 +6,6 @@ add_library(sai_visualization STATIC)
 add_library(sai::visualization ALIAS sai_visualization)
 
 target_sources(sai_visualization PRIVATE
-    placeholder.cpp
     pipeline_viewmodel.cpp
     inspection_viewmodel.cpp
     frame_provider.cpp

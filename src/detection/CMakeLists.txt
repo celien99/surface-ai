@@ -14,8 +14,6 @@ set(SAI_DETECTION_SOURCES
     specular_filter.cpp
     pca_detector.cpp
     normality_profile.cpp
-    normality_scorer.cpp
-    novelty_filter.cpp
     candidate_buffer.cpp
     coreset_updater.cpp
     multi_signal_consensus.cpp
