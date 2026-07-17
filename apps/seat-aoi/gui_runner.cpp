@@ -81,20 +81,23 @@ int RunReviewMode(const CliArgs& cli,
         }
     }
 
-    // Seed DashboardViewModel with review stats
-    for (int i = 0; i < ok; ++i) {
+    // Seed DashboardViewModel with real frame IDs and verdicts from JSON.
+    // Iterates the frames array directly so every verdict type (OK, NG, WARN,
+    // UNCERTAIN) is included and each FrameSummary uses the real frame_id
+    // from the file, matching what FrameProvider expects for lazy image loading.
+    for (auto& f : index["frames"]) {
         sai::visualization::FrameSummary summary;
-        summary.frame_id = i;
-        summary.verdict = "OK";
-        summary.severity = "0.0";
-        summary.timestamp = std::chrono::system_clock::now();
-        dashboard_vm->AppendFrameSummary(std::move(summary));
-    }
-    for (int i = 0; i < ng; ++i) {
-        sai::visualization::FrameSummary summary;
-        summary.frame_id = ok + i;
-        summary.verdict = "NG";
-        summary.severity = "1.0";
+        summary.frame_id = f.value("frame_id", 0);
+        summary.verdict = f.value("verdict", "?");
+        if (summary.verdict == "OK") {
+            summary.severity = "0.0";
+        } else if (summary.verdict == "NG") {
+            summary.severity = "1.0";
+        } else if (summary.verdict == "WARN") {
+            summary.severity = "0.5";
+        } else if (summary.verdict == "UNCERTAIN") {
+            summary.severity = "0.3";
+        }
         summary.timestamp = std::chrono::system_clock::now();
         dashboard_vm->AppendFrameSummary(std::move(summary));
     }
