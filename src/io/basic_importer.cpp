@@ -67,6 +67,8 @@ auto BasicImporter::ImportDataset(std::filesystem::path yaml_path) noexcept
             entry.position_id = pos.as<std::uint16_t>();
         if (auto lgt = img["light"]; lgt.IsDefined())
             entry.light_id = lgt.as<std::uint16_t>();
+        if (auto exp = img["expected"]; exp.IsDefined())
+            entry.expected_verdict = exp.as<std::string>();
         entries.push_back(std::move(entry));
     }
 

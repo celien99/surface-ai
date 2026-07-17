@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string_view>
 
 #include <sai/core/error.h>
@@ -23,6 +24,7 @@ struct DatasetEntry {
     std::string surface_id;
     std::uint16_t position_id = 0;
     std::uint16_t light_id = 0;
+    std::optional<std::string> expected_verdict;  // "OK" | "NG" | std::nullopt
 };
 
 class IImporter : public IPlugin {
