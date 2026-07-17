@@ -21,16 +21,20 @@ auto ParseArgs(int argc, char* argv[]) -> CliArgs {
             args.dataset_path = argv[++i];
         } else if (arg == "--coreset-output" && i + 1 < argc) {
             args.coreset_output_path = argv[++i];
+            args.train_mode = true;
         } else if (arg == "--coreset-algo" && i + 1 < argc) {
             args.coreset_algo = argv[++i];
         } else if (arg == "--coreset-max-samples" && i + 1 < argc) {
             args.coreset_max_samples = static_cast<std::size_t>(std::stoull(argv[++i]));
         } else if (arg == "--cpu") {
             args.cpu_mode = true;
+        } else if (arg == "--train") {
+            args.train_mode = true;
+        } else if (arg == "--review-dir" && i + 1 < argc) {
+            args.review_dir = argv[++i];
         }
     }
-    if (!args.dataset_path.empty() && args.coreset_output_path.empty()) {
-        args.coreset_output_path = "resources/coreset.bin";
-    }
+    // NOTE: auto-fill of coreset_output_path is DELETED.
+    // train_mode is now set explicitly by --train or --coreset-output.
     return args;
 }
