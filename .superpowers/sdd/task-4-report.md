@@ -1,97 +1,36 @@
-# Task 4 Report: TuningScheduler -- background thread orchestration + circuit breaker
+### Task 4 完成报告: headless_runner -- metrics 计算 + review_index.json
 
-## Summary
+**Status:** COMPLETE (code written, build not verified on this Windows machine)
 
-Task 4 created the `TuningScheduler` class that orchestrates the complete Bayesian auto-tuning cycle in a background thread, with circuit breaker monitoring and automatic rollback.
+**Commits:**
+- `feat(eval): ✨ headless模式自动计算precision/recall/F1并输出review_index.json`
 
-## Files Created / Modified
+**Files modified:**
+- `apps/seat-aoi/headless_runner.h` -- 新增 `FrameRecord` 结构体和 `WriteReviewIndex` 函数声明
+- `apps/seat-aoi/headless_runner.cpp` -- 完整重写，新增 `MetricsCounts`、FrameRecord 收集、metrics 计算、`WriteReviewIndex` 实现
 
-| File | Action |
-|------|--------|
-| `include/sai/tuning/tuning_scheduler.h` | Created (78 lines) |
-| `src/tuning/tuning_scheduler.cpp` | Created (220 lines) |
-| `src/tuning/CMakeLists.txt` | Modified (added tuning_scheduler.cpp) |
-| `tests/tuning/tuning_test.cpp` | Modified (appended 3 tests, +63 lines) |
+**Changes summary:**
 
-## Key Interfaces Produced
+1. **headless_runner.h** -- 添加 `<cstdint>`, `<string>`, `<string_view>`, `<vector>` 头文件；声明 `FrameRecord` 结构体（frame_id, image_path, verdict, severity, confidence, expected_verdict, position_id, light_id, surface_id）；声明 `WriteReviewIndex` 函数。
 
-### TuningState enum
+2. **headless_runner.cpp** -- 完整重写：
+   - 匿名命名空间中新增 `MetricsCounts` 辅助类（tp/fp/tn/fn + Precision/Recall/F1/Accuracy）
+   - `process_entries` lambda 中每条目创建 `FrameRecord` 并收集到 `records` vector
+   - `if constexpr (requires { ... })` 守卫正确处理 `DatasetEntry`（有 surface_id/position_id/light_id/expected_verdict）和 `DirEntry`（仅有 path）两种条目类型
+   - Pipeline 停止后调用 `MetricsCounts::Add` 遍历 records 计算混淆矩阵 + precision/recall/F1
+   - 调用 `WriteReviewIndex` 写入 `review_index.json`
+   - `WriteReviewIndex` 实现：遍历 records 构建 JSON，pretty-print 2-space indent
 
-```cpp
-enum class TuningState : std::uint8_t {
-    Idle, Evaluating, Optimizing, Monitoring, RolledBack
-};
-```
+3. **计划偏差：** 计划代码中 FrameRecord 构造时直接访问 `entry.position_id`/`entry.light_id`/`entry.surface_id` 而无 `if constexpr` 守卫。已修正为带 `if constexpr` 守卫的形式，DirEntry 使用默认值（position_id=0, light_id=0, surface_id=""）。
 
-### SchedulerConfig struct
+**Build verification:**
+- Windows 11 机器无法配置 Linux preset（缺少 vcpkg toolchain 和 Unix Makefiles）
+- 代码通过手动审查验证：所有 `if constexpr` 守卫正确，类型匹配，头文件完整
 
-Default values match the spec:
-- `interval`: 1 hour
-- `monitoring_window`: 5 minutes
-- `feedback_lookback`: 24 hours
-- `min_ng_rate`: 0.001
-- `max_ng_rate`: 0.50
-- `min_samples_for_trigger`: 50
+**Test summary:**
+- 无新测试用例（headless_runner 是应用层代码，依赖完整 pipeline 的集成测试）
+- 代码理论正确性：`if constexpr` 分支确保 DatasetEntry 和 DirEntry 两种路径均可编译；`MetricsCounts` 仅对 WARN/UNCERTAIN 做 passive tracking（不计入二分类矩阵）；`WriteReviewIndex` 兼容空 expected_verdict
 
-### TuningScheduler class
-
-- Constructor takes `SchedulerConfig`, `unique_ptr<BayesianOptimizer>`, `unique_ptr<ITuningObjective>`, `shared_ptr<KnowledgeGraph>`, `shared_ptr<KnowledgeEvolution>`
-- `SetParameterApplier(fn)` / `SetMetricsPoller(fn)` inject callbacks
-- `Start(stop_token)` spins up `std::jthread`
-- `Join()` requests stop, notifies CV, joins thread
-- `TriggerOnce()` forces immediate tuning cycle
-- `CurrentState()` returns atomic `TuningState`
-
-## Main Loop Implementation
-
-The worker thread executes this cycle:
-
-1. **Idle**: Wait `config.interval` on condition_variable, or wake on `TriggerOnce()` or stop request
-2. **Evaluating**: Query `objective_->Evaluate()` with current params and lookback window
-3. **Optimizing**: `optimizer_->AddObservation(current)`, then `optimizer_->Optimize()` to find best params
-4. **Apply**: If `best.cost < current.cost * 0.95` (5% improvement), write KG audit log (`TuningEvent` node with PROPOSED snapshot), write `KnowledgeEvolution` entry, call `apply_params_(best.params)`
-5. **Monitoring**: Poll `poll_ng_rate_()` every 30s during `monitoring_window`; if NG rate outside `[min_ng_rate, max_ng_rate]`, trigger rollback
-6. **Rollback**: If out-of-bounds, call `apply_params_(old_params)`, write ROLLBACK `TuningEvent`, restore old params
-7. **Commit**: Else write APPLIED `TuningEvent`, state returns to Idle
-
-## Platform Adaptation
-
-Apple libc++ does not implement `std::condition_variable::wait_for` with `std::stop_token` (C++20). The Idle wait loop uses a manual `wait_until` loop with an explicit `token.stop_requested()` check instead. This is functionally equivalent and portable.
-
-## Dependencies
-
-The scheduler uses:
-- `sai::knowledge::KnowledgeGraph` for audit logging (`TuningEvent` nodes)
-- `sai::knowledge::KnowledgeEvolution` for change records (`EvolutionOp::Update`)
-- `sai::infra::Logger` for operational logging at Info/Warning/Error levels
-- `sqlite3` (forward-declared in header, full include only in .cpp)
-
-No new CMake link dependencies were needed -- `sai::knowledge` was already linked from the tuning target.
-
-## Test Results
-
-**18/18 tests pass**, including 3 new tests:
-
-1. **SchedulerConfigTest.DefaultValues** -- verifies all 6 default config values match spec
-2. **TuningStateTest.DistinctValues** -- verifies all 5 enum values are distinct
-3. **TuningSchedulerTest.InitialStateIsIdle** -- constructs scheduler with in-memory KnowledgeGraph/KnowledgeEvolution, verifies `CurrentState() == TuningState::Idle`
-
-## Build Verification
-
-```bash
-cmake --build --preset default  # 100% success, no warnings
-ctest --preset default -I 550,567 --output-on-failure  # 18/18 passed
-```
-
-## Post-Task Fixes (2026-07-15)
-
-6 issues fixed after initial implementation (commit 926b2f3):
-
-| ID | Severity | Issue | Fix |
-|----|----------|-------|-----|
-| C1 | Critical | Destructor deadlock: implicit `~jthread()` does not notify CV, worker hangs forever on Apple libc++ | Added `~TuningScheduler() { Join(); }` to header; `Join()` calls `cv_.notify_all()` |
-| C2 | Critical | `min_samples_for_trigger` (default 50) never checked — monitoring loop triggered on any poll regardless of sample count | Added `MetricsSnapshot { ng_rate, sample_count }` struct; changed `MetricsPoller` from `Result<double>()` to `Result<MetricsSnapshot>()`; monitoring loop checks `snapshot.sample_count >= config_.min_samples_for_trigger` |
-| I3 | Important | When `current_cost_ <= 0.0`, improvement check (5% threshold) skipped entirely, always applying new params silently | Added Warning-level log: "current_cost_={} <= 0 -- applying new params without improvement check" |
-| I4 | Important | Monitoring loop overshoots deadline — `sleep_for(30s)` unconditionally even when `<30s` remain | Sleep capped to `std::min(30s, deadline - now)` with early break when remaining <= 0 |
-| I5 | Important | Failed rollback silently discards error with `(void)` cast at both rollback sites (apply-failure + monitoring) | Replaced `(void)` with Error-level log at both sites: "rollback failed: {error}" and "monitoring rollback failed: {error}" |
-| M7 | Minor | Redundant null check: inner `if (apply_params_)` inside outer `if (apply_params_)` block in the apply-failure rollback path | Removed the inner redundant `if (apply_params_)` guard |
+**Concerns:**
+- 需要在 Linux 机器上实际编译验证（`cmake --build --preset linux --target seat_aoi`）
+- `WriteReviewIndex` 从 `records.front().surface_id` 推断 surface_id -- 如果 records 混合多个 surface，review_index.json 的 surface_id 字段仅反映第一个，但 frames 数组中每条仍保留自己的 surface_id
