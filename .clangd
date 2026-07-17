@@ -1,0 +1,7 @@
+# Prefer CMake's compilation database when present (full flags / deps).
+# Fallback -Iinclude so #include <sai/...> still resolves before configure.
+CompileFlags:
+  CompilationDatabase: build/linux
+  Add:
+    - -Iinclude
+    - --std=c++20
