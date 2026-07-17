@@ -19,7 +19,7 @@ auto main(int argc, char* argv[]) -> int {
     // disk and only uses ViewModels. No model files or CUDA required.
     if (!cli.review_dir.empty()) {
         AssembledApp app;  // empty shell, review mode doesn't touch it
-        return RunGui(argc, argv, app);
+        return RunGui(argc, argv, app, cli);
     }
 
     // ── Headless batch mode ──
@@ -42,5 +42,5 @@ auto main(int argc, char* argv[]) -> int {
         return 1;
     }
     auto app = std::move(*app_result);
-    return RunGui(argc, argv, app);
+    return RunGui(argc, argv, app, cli);
 }

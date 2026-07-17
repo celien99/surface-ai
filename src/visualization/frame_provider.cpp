@@ -158,23 +158,56 @@ auto FrameProvider::requestImage(const QString& id, QSize* size,
         return QImage();
     }
 
-    std::shared_lock lock(cache_mutex_);
-
-    const int slot = frame_id % kCacheSize;
-    const auto& entry = cache_[slot];
-    if (entry.frame_id != frame_id) {
-        return QImage();
+    // ── Layer 1: in-memory ring-buffer cache (live mode) ──
+    {
+        std::shared_lock lock(cache_mutex_);
+        const int slot = frame_id % kCacheSize;
+        const auto& entry = cache_[slot];
+        if (entry.frame_id == frame_id) {
+            if (size) *size = entry.image.size();
+            if (requestedSize.isValid() && requestedSize != entry.image.size())
+                return entry.image.scaled(requestedSize);
+            return entry.image;
+        }
     }
 
-    if (size) {
-        *size = entry.image.size();
+    // ── Layer 2: disk-backed lazy load (review mode) ──
+    {
+        std::shared_lock lock(path_mutex_);
+        auto it = frame_paths_.find(frame_id);
+        if (it != frame_paths_.end()) {
+            QImage img(it->second);
+            if (!img.isNull()) {
+                if (size) *size = img.size();
+                // Populate cache for subsequent requests
+                {
+                    std::unique_lock cache_lock(cache_mutex_);
+                    const int slot = frame_id % kCacheSize;
+                    cache_[slot].frame_id = frame_id;
+                    cache_[slot].image = img;
+                    latest_frame_id_.store(frame_id);
+                }
+                if (requestedSize.isValid() && requestedSize != img.size())
+                    return img.scaled(requestedSize);
+                return img;
+            }
+        }
     }
 
-    if (requestedSize.isValid() && requestedSize != entry.image.size()) {
-        return entry.image.scaled(requestedSize);
-    }
+    return QImage();
+}
 
-    return entry.image;
+void FrameProvider::RegisterFramePath(int frame_id, const QString& image_path) {
+    std::unique_lock lock(path_mutex_);
+    frame_paths_[frame_id] = image_path;
+}
+
+void FrameProvider::LoadFromReviewIndex(const QString& review_dir) {
+    // JSON parsing is handled by the caller (gui_runner.cpp) because
+    // the visualization library does not depend on nlohmann_json.
+    // The caller iterates frames and calls RegisterFramePath() directly.
+    // This method is a reserved convenience entry point for future use.
+    (void)review_dir;
 }
 
 }  // namespace sai::visualization

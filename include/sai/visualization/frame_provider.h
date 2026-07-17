@@ -3,6 +3,7 @@
 #include <QQuickImageProvider>
 #include <QImage>
 #include <array>
+#include <map>
 #include <shared_mutex>
 #include <atomic>
 
@@ -30,6 +31,14 @@ public:
     /// Register a raw frame (called from Capture worker thread).
     void RegisterRawFrame(int frame_id, const sai::image::RawImage& image);
 
+    /// Register a file-system image path for lazy loading in review mode.
+    /// requestImage() loads from disk when no in-memory cache entry exists.
+    void RegisterFramePath(int frame_id, const QString& image_path);
+
+    /// Load all frame paths from a review_index.json directory.
+    /// Convenience entry point; actual JSON parsing is handled by the caller.
+    void LoadFromReviewIndex(const QString& review_dir);
+
 private:
     static constexpr int kCacheSize = 16;
 
@@ -45,6 +54,10 @@ private:
     std::array<CachedFrame, kCacheSize> cache_;
     std::atomic<int> latest_frame_id_{0};
     mutable std::shared_mutex cache_mutex_;
+
+    // Review mode: frame_id → disk path for lazy image loading
+    std::map<int, QString> frame_paths_;
+    mutable std::shared_mutex path_mutex_;
 };
 
 }  // namespace sai::visualization

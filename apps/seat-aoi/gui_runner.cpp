@@ -1,6 +1,8 @@
 #include "gui_runner.h"
 
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -9,7 +11,10 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 
+#include <nlohmann/json.hpp>
+
 #include "app_builder.h"
+#include "cli_args.h"
 #include "evolution_offer.h"
 
 #include <sai/device/fake_camera.h>
@@ -24,16 +29,120 @@
 #include <sai/detection/coreset_evolution.h>
 #include <sai/tuning/tuning_scheduler.h>
 
-auto RunGui(int argc, char* argv[], AssembledApp& app) -> int {
+namespace {
+
+/// Review mode: load review_index.json and populate ViewModels.
+/// Does NOT start Pipeline / Camera / Tuning.
+int RunReviewMode(const CliArgs& cli,
+                  QGuiApplication& qapp,
+                  QQmlApplicationEngine& engine,
+                  sai::visualization::PipelineViewModel* pipeline_vm,
+                  sai::visualization::InspectionViewModel* inspection_vm,
+                  sai::visualization::DashboardViewModel* dashboard_vm,
+                  sai::visualization::FrameProvider* frame_provider,
+                  sai::visualization::ConfigViewModel* config_vm) {
+    using json = nlohmann::json;
+
+    auto index_path = std::filesystem::path(cli.review_dir) / "review_index.json";
+    std::ifstream ifs(index_path);
+    if (!ifs) {
+        std::cerr << "Review mode: cannot open " << index_path << "\n";
+        return 1;
+    }
+
+    json index;
+    try {
+        index = json::parse(ifs);
+    } catch (const json::exception& e) {
+        std::cerr << "Review mode: JSON parse error: " << e.what() << "\n";
+        return 1;
+    }
+
+    std::string surface_id = index.value("surface_id", "unknown");
+    int total_frames = index.value("total_frames", 0);
+    std::cout << "Review mode: " << surface_id
+              << " (" << total_frames << " frames)\n";
+
+    // Populate DashboardViewModel with aggregate stats
+    int ok = 0, ng = 0, warn = 0, uncertain = 0;
+    for (auto& f : index["frames"]) {
+        std::string v = f.value("verdict", "?");
+        if (v == "OK") ++ok;
+        else if (v == "NG") ++ng;
+        else if (v == "WARN") ++warn;
+        else if (v == "UNCERTAIN") ++uncertain;
+
+        // Register frame path for lazy image loading
+        int fid = f.value("frame_id", 0);
+        std::string img_path = f.value("image_path", "");
+        if (!img_path.empty()) {
+            frame_provider->RegisterFramePath(
+                fid, QString::fromStdString(img_path));
+        }
+    }
+
+    // Seed DashboardViewModel with review stats
+    for (int i = 0; i < ok; ++i) {
+        sai::visualization::FrameSummary summary;
+        summary.frame_id = i;
+        summary.verdict = "OK";
+        summary.severity = "0.0";
+        summary.timestamp = std::chrono::system_clock::now();
+        dashboard_vm->AppendFrameSummary(std::move(summary));
+    }
+    for (int i = 0; i < ng; ++i) {
+        sai::visualization::FrameSummary summary;
+        summary.frame_id = ok + i;
+        summary.verdict = "NG";
+        summary.severity = "1.0";
+        summary.timestamp = std::chrono::system_clock::now();
+        dashboard_vm->AppendFrameSummary(std::move(summary));
+    }
+
+    std::cout << "OK: " << ok << "  NG: " << ng
+              << "  WARN: " << warn << "  UNCERTAIN: " << uncertain << "\n";
+
+    // PipelineViewModel: no pipeline bound → shows "Stopped", which is correct
+    // for review mode (no live pipeline running).
+
+    engine.addImageProvider("pipeline", frame_provider);
+    engine.rootContext()->setContextProperty("pipelineVM", pipeline_vm);
+    engine.rootContext()->setContextProperty("inspectionVM", inspection_vm);
+    engine.rootContext()->setContextProperty("configVM", config_vm);
+    engine.rootContext()->setContextProperty("dashboardVM", dashboard_vm);
+
+    engine.load("qrc:/MainWindow.qml");
+
+    QObject::connect(&qapp, &QGuiApplication::aboutToQuit, [&]() {
+        pipeline_vm->StopRefresh();
+    });
+
+    return qapp.exec();
+}
+
+}  // namespace
+
+auto RunGui(int argc, char* argv[], AssembledApp& app, const CliArgs& cli) -> int {
     using namespace sai;
 
     QGuiApplication qapp(argc, argv);
     QQmlApplicationEngine engine;
 
     auto* pipeline_vm = new visualization::PipelineViewModel(&qapp);
-    pipeline_vm->BindToPipeline(app.pipeline.get());
     auto* inspection_vm = new visualization::InspectionViewModel(&qapp);
     auto* config_vm = new visualization::ConfigViewModel(&qapp);
+    auto* dashboard_vm = new visualization::DashboardViewModel(&qapp);
+    auto* frame_provider = new visualization::FrameProvider();
+
+    // ── Review mode: bypass Pipeline / Camera / Tuning ──
+    if (!cli.review_dir.empty()) {
+        return RunReviewMode(cli, qapp, engine,
+                             pipeline_vm, inspection_vm, dashboard_vm,
+                             frame_provider, config_vm);
+    }
+
+    // ── Live mode: existing logic (unchanged) ──
+    pipeline_vm->BindToPipeline(app.pipeline.get());
     config_vm->BindToPipeline(app.pipeline.get());
     config_vm->BindToRuleEngine(app.rule_engine.get());
     if (app.reasoner) config_vm->BindToReasoner(app.reasoner.get());
@@ -43,8 +152,6 @@ auto RunGui(int argc, char* argv[], AssembledApp& app) -> int {
         auto* node = app.pipeline->GetStage(stage_id);
         if (node) config_vm->RegisterStageNode(stage_id, node);
     }
-    auto* dashboard_vm = new visualization::DashboardViewModel(&qapp);
-    auto* frame_provider = new visualization::FrameProvider();
 
     // Live defect overlay: Pipe DetectionResult → DefectModel
     auto* defect_model_ptr = inspection_vm->defectModel();
