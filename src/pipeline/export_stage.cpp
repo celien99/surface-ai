@@ -3,6 +3,7 @@
 #include <optional>
 
 #include <sai/image/surface_image.h>
+#include <sai/pipeline/pipeline.h>
 #include <sai/reasoner/reasoner.h>
 #include <sai/io/exporter.h>
 
@@ -58,8 +59,8 @@ auto ExportStage::Process(StageInput input) -> Result<StageOutput> {
                                        : std::nullopt;
             std::optional<sai::image::SurfaceImage> frame_image;
             if (snapshot.has_value()) {
-                frame_image.emplace(std::move(snapshot->first),
-                                     snapshot->second);
+                frame_image = sai::image::SurfaceImage::FromOwnedBuffer(
+                    std::move(snapshot->first), snapshot->second);
             }
 
             auto export_result = exporter_->Export(

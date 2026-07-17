@@ -1,5 +1,9 @@
-# seat_aoi: Linux + GPU only (CUDA/TensorRT required)
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CUDAToolkit_FOUND)
+# seat_aoi: Linux + GPU only (CUDA/TensorRT + lock-free atomics required)
+# app_builder.cpp and coreset_builder.cpp include <sai/memory/gpu_pool.h> which
+# carries a static_assert on 16-byte lock-free atomics (see src/memory/CMakeLists.txt).
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+   CUDAToolkit_FOUND AND
+   SAI_MEMORY_HAS_LOCKFREE_16)
     find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Charts)
     find_package(nlohmann_json CONFIG REQUIRED)
 

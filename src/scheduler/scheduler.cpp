@@ -74,7 +74,7 @@ auto Scheduler::Allocate(const std::vector<StageConfig>& stages,
                           const BackpressureConfig& bp_config)
     -> Result<void> {
     bp_config_ = bp_config;
-    stage_pool_map_.clear();
+    stage_pool_map_.fill(std::nullopt);
 
     // Collect unique pool keys needed
     std::set<std::string> required_keys;

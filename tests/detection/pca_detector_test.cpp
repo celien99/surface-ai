@@ -105,10 +105,10 @@ protected:
 
     PcaDetector::Config cfg_{
         .pca_model_path = "",    // 将在 SetUp 中设置
-        .embed_dim = 1024,
         .image_width = 518,
         .image_height = 518,
         .patch_size = 14,
+        .embed_dim = 1024,
     };
     // 518 / 14 = 37
     std::size_t expected_grid_h = 37;

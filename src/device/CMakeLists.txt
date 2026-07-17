@@ -24,6 +24,7 @@ target_include_directories(sai_device PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(sai_device PUBLIC
     sai::plugin
     sai::image
+    sai::rule
 )
 if(aravis_FOUND)
     target_link_libraries(sai_device PUBLIC aravis)

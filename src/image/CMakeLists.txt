@@ -12,7 +12,16 @@ set(SAI_IMAGE_SOURCES
     preprocess.cpp
 )
 if(CUDAToolkit_FOUND)
-    list(APPEND SAI_IMAGE_SOURCES gpu_image.cpp gpu_preprocess.cpp)
+    # gpu_image.cpp includes <sai/memory/gpu_pool.h>, gpu_preprocess.cpp includes
+    # <sai/memory/pinned_pool.h> — both headers carry a static_assert on 16-byte
+    # lock-free atomics (see src/memory/CMakeLists.txt). Gate on the same check.
+    if(SAI_MEMORY_HAS_LOCKFREE_16)
+        list(APPEND SAI_IMAGE_SOURCES gpu_image.cpp gpu_preprocess.cpp)
+        message(STATUS "Lock-free atomics + CUDA — enabling GpuImage/GpuPreprocess")
+    else()
+        message(WARNING "Lock-free atomics NOT available — "
+                        "GpuImage/GpuPreprocess disabled")
+    endif()
 endif()
 
 add_library(sai_image STATIC ${SAI_IMAGE_SOURCES})
@@ -20,15 +29,14 @@ add_library(sai::image ALIAS sai_image)
 
 target_include_directories(sai_image PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(sai_image PUBLIC sai::core sai::memory)
-if(CUDAToolkit_FOUND)
+if(CUDAToolkit_FOUND AND SAI_MEMORY_HAS_LOCKFREE_16)
     target_link_libraries(sai_image PUBLIC sai::runtime CUDA::cudart)
 endif()
 target_compile_features(sai_image PUBLIC cxx_std_20)
 
-# gpu_pool.h/pinned_pool.h static_assert std::atomic<TaggedHead> (16 bytes) 是
-# 始终 lock-free。在 x86-64 上 __atomic_always_lock_free(16) 仅在 CMPXCHG16B 指令
-# 下为 true，该指令需 -mcx16。该标志在 arm64 上无效（arm64 有原生的 16 字节 LSE 原子操作），
-# 故按架构守卫——与 src/memory/CMakeLists.txt 的模式完全一致。
-if(CUDAToolkit_FOUND AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+# -mcx16: required for CMPXCHG16B instruction on x86-64 (16-byte lock-free
+# atomics used by gpu_pool.h/pinned_pool.h). Invalid on arm64 (native LSE).
+if(CUDAToolkit_FOUND AND SAI_MEMORY_HAS_LOCKFREE_16 AND
+   CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
     target_compile_options(sai_image PRIVATE -mcx16)
 endif()

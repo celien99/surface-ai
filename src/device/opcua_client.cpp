@@ -52,16 +52,16 @@ auto UaVariantToValue(const UA_Variant& var) -> sai::rule::Value {
             return sai::rule::Value::Of(static_cast<double>(*static_cast<const UA_UInt16*>(var.data)));
         }
         if (dt == &UA_TYPES[UA_TYPES_INT32]) {
-            return sai::rule::Value::Of(static_cast<std::int64_t>(*static_cast<const UA_Int32*>(var.data)));
+            return sai::rule::Value::Of(static_cast<double>(*static_cast<const UA_Int32*>(var.data)));
         }
         if (dt == &UA_TYPES[UA_TYPES_UINT32]) {
-            return sai::rule::Value::Of(static_cast<std::int64_t>(*static_cast<const UA_UInt32*>(var.data)));
+            return sai::rule::Value::Of(static_cast<double>(*static_cast<const UA_UInt32*>(var.data)));
         }
         if (dt == &UA_TYPES[UA_TYPES_INT64]) {
-            return sai::rule::Value::Of(*static_cast<const UA_Int64*>(var.data));
+            return sai::rule::Value::Of(static_cast<double>(*static_cast<const UA_Int64*>(var.data)));
         }
         if (dt == &UA_TYPES[UA_TYPES_UINT64]) {
-            return sai::rule::Value::Of(static_cast<std::int64_t>(*static_cast<const UA_UInt64*>(var.data)));
+            return sai::rule::Value::Of(static_cast<double>(*static_cast<const UA_UInt64*>(var.data)));
         }
         if (dt == &UA_TYPES[UA_TYPES_FLOAT]) {
             return sai::rule::Value::Of(static_cast<double>(*static_cast<const UA_Float*>(var.data)));
@@ -229,19 +229,16 @@ auto OpcUaClient::WriteValue(std::string_view node_id,
     UA_Variant_init(&ua_val);
 
     // Convert rule::Value → UA_Variant based on held type
-    // For simplicity, convert to string and write as UA_STRING
-    auto str_val = std::string(node_id);  // placeholder
-    if (value.IsDouble()) {
-        UA_Double d = value.AsDouble();
-        UA_Variant_setScalarCopy(&ua_val, &d, &UA_TYPES[UA_TYPES_DOUBLE]);
-    } else if (value.IsInt64()) {
-        UA_Int64 i = value.AsInt64();
-        UA_Variant_setScalarCopy(&ua_val, &i, &UA_TYPES[UA_TYPES_INT64]);
-    } else if (value.IsString()) {
-        auto s = value.AsString();
-        UA_String ua_s = UA_STRING_ALLOC(s.data());
+    if (auto d = value.AsDouble()) {
+        UA_Double dv = *d;
+        UA_Variant_setScalarCopy(&ua_val, &dv, &UA_TYPES[UA_TYPES_DOUBLE]);
+    } else if (auto s = value.AsString()) {
+        UA_String ua_s = UA_STRING_ALLOC(s->data());
         UA_Variant_setScalarCopy(&ua_val, &ua_s, &UA_TYPES[UA_TYPES_STRING]);
         UA_String_clear(&ua_s);
+    } else if (auto b = value.AsBool()) {
+        UA_Boolean bv = *b ? true : false;
+        UA_Variant_setScalarCopy(&ua_val, &bv, &UA_TYPES[UA_TYPES_BOOLEAN]);
     } else {
         UA_Variant_clear(&ua_val);
         return {};

@@ -1,5 +1,7 @@
 #include <sai/image/image.h>
 
+#include <utility>
+
 namespace sai::image {
 
 Image::Image(std::uint8_t* data, std::size_t size_bytes, ImageMeta meta) noexcept

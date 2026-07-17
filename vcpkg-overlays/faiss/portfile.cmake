@@ -15,10 +15,18 @@ vcpkg_check_features(OUT_FEATURE_OPTIONS FEATURE_OPTIONS
 )
 
 if ("gpu" IN_LIST FEATURES)
-    vcpkg_find_cuda(OUT_CUDA_TOOLKIT_ROOT cuda_toolkit_root)
+    # Pass CUDA paths directly to FAISS's CMake rather than calling
+    # find_package(CUDAToolkit) here — vcpkg portfiles run in script mode
+    # where add_library (used by FindCUDAToolkit) is not allowed.
+    # Prefer /usr/local/cuda (NVIDIA repo install) over the Ubuntu
+    # nvidia-cuda-toolkit stub which lacks cudart.
+    set(_cuda_root "/usr/local/cuda")
+    if(NOT EXISTS "${_cuda_root}/bin/nvcc")
+        message(FATAL_ERROR "FAISS GPU requires CUDA Toolkit at ${_cuda_root}")
+    endif()
     list(APPEND FEATURE_OPTIONS
-        "-DCMAKE_CUDA_COMPILER=${NVCC}"
-        "-DCUDAToolkit_ROOT=${cuda_toolkit_root}"
+        "-DCUDAToolkit_ROOT=${_cuda_root}"
+        "-DCMAKE_CUDA_COMPILER=${_cuda_root}/bin/nvcc"
     )
     if(VCPKG_TARGET_IS_WINDOWS)
         list(APPEND FEATURE_OPTIONS "-DCMAKE_CUDA_FLAGS_INIT=-Xcompiler=/Zc:preprocessor")

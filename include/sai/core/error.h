@@ -16,6 +16,7 @@ enum class ErrorCode : std::uint32_t {
     Lifecycle_RegisterAfterAssembly,
     Memory_ArenaExhausted,
     Memory_RequestExceedsSlabSize,
+    Memory_AllocationFailed,
     Memory_PoolExhausted,
     Plugin_VersionIncompatible,
     Plugin_CapabilityUnsupported,
@@ -23,6 +24,7 @@ enum class ErrorCode : std::uint32_t {
     Plugin_CircularDependency,
     Runtime_QueueFull,
     Runtime_Cancelled,
+    Runtime_GpuError,
     Runtime_NodeNotFound,
     Infra_LogSinkInitFailed,
     Infra_ConfigFileNotFound,       // ConfigStore::Load 指定路径不存在

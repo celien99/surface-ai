@@ -1,7 +1,7 @@
 # tensorrt_engine.cpp / dino_v3_adapter.cpp / sam2_adapter.cpp / clip_adapter.cpp
 # 包含真实的 CUDA Runtime API 和 TensorRT API 调用，仅用于目标平台
-# (Ubuntu x64 + NVIDIA GPU)。在没有 CUDA Toolkit 的宿主机上，这些文件不在
-# 源文件列表中，不会被编译——见下方的 if(CUDAToolkit_FOUND) 门控逻辑。
+# (Ubuntu x64 + NVIDIA GPU)。在没有 CUDA Toolkit 或 TensorRT SDK 的宿主机上，
+# 这些文件不在源文件列表中，不会被编译——见下方的门控逻辑。
 find_package(tl-expected CONFIG REQUIRED)
 find_package(CUDAToolkit QUIET)
 
@@ -11,13 +11,32 @@ set(SAI_INFERENCE_SOURCES
     saliency_mask.cpp
 )
 if(CUDAToolkit_FOUND)
-    list(APPEND SAI_INFERENCE_SOURCES
-        tensorrt_engine.cpp
-        dino_v3_adapter.cpp
-        sam2_adapter.cpp
-        sam2_segmenter.cpp
-        clip_adapter.cpp
+    # TensorRT SDK is separate from CUDA Toolkit — check for its header before
+    # compiling any CUDA-gated sources. On systems with CUDA but without
+    # TensorRT (e.g. WSL with nvidia-smi but no TensorRT installed), the
+    # previous CUDAToolkit_FOUND-only gate would produce a hard compilation
+    # error (NvInfer.h not found).
+    find_path(NVINFER_INCLUDE_DIR NvInfer.h
+        PATHS /usr/local/cuda/include
+              /usr/include/x86_64-linux-gnu
+              /opt/tensorrt/include
+              /usr/local/tensorrt/include
+              ${CUDAToolkit_INCLUDE_DIRS}
     )
+    if(NVINFER_INCLUDE_DIR)
+        list(APPEND SAI_INFERENCE_SOURCES
+            tensorrt_engine.cpp
+            dino_v3_adapter.cpp
+            sam2_adapter.cpp
+            sam2_segmenter.cpp
+            clip_adapter.cpp
+        )
+        message(STATUS "TensorRT found — enabling GPU inference engines")
+    else()
+        message(WARNING "TensorRT NvInfer.h not found — "
+                        "TensorRtEngine and adapters disabled. "
+                        "Install TensorRT SDK (or libnvinfer-dev) to enable GPU inference.")
+    endif()
 endif()
 
 # ONNX Runtime: optional CPU inference backend
@@ -32,8 +51,9 @@ add_library(sai::inference ALIAS sai_inference)
 
 target_include_directories(sai_inference PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(sai_inference PUBLIC sai::core)
-if(CUDAToolkit_FOUND)
+if(CUDAToolkit_FOUND AND NVINFER_INCLUDE_DIR)
     target_link_libraries(sai_inference PUBLIC CUDA::cudart)
+    target_include_directories(sai_inference PRIVATE ${NVINFER_INCLUDE_DIR})
 
     # TensorRT SDK
     find_library(NVINFER_LIB nvinfer

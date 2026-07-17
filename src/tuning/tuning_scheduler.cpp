@@ -27,7 +27,7 @@ auto SerializeParams(const std::vector<double>& params) -> std::string {
 
 // Retry rollback with exponential backoff (3 attempts: 100ms, 200ms, 400ms).
 // Returns true if rollback succeeded, false if all attempts failed.
-auto RetryRollback(const sai::tuning::ParameterApplier& apply_params,
+auto RetryRollback(const TuningScheduler::ParameterApplier& apply_params,
                    const std::vector<double>& old_params) -> bool {
     static constexpr int kMaxRetries = 3;
     static constexpr auto kBaseBackoff = std::chrono::milliseconds(100);

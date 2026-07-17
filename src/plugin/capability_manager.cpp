@@ -1,3 +1,5 @@
+#include <mutex>
+
 #include <sai/plugin/capability_manager.h>
 
 namespace sai {

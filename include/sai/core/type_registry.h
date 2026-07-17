@@ -1,6 +1,7 @@
 #pragma once
 
 #include <concepts>
+#include <mutex>
 #include <shared_mutex>
 #include <string_view>
 #include <type_traits>

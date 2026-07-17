@@ -61,13 +61,14 @@ private:
 
     // 1.5-memory.md §12: this scheme must be genuinely lock-free on the
     // target platforms, with no silent runtime fallback to an internal
-    // mutex. is_always_lock_free is a compile-time guarantee (unlike the
-    // runtime is_lock_free() check on one instance) that every instance of
-    // atomic<TaggedHead> on this platform/ABI compiles to a real lock-free
-    // CAS, so a toolchain/ABI change that would break that guarantee fails
-    // the build instead of silently degrading.
-    static_assert(std::atomic<TaggedHead>::is_always_lock_free,
-                  "TaggedHead must be lock-free per 1.5-memory.md §12 — no silent fallback to a mutex");
+    // mutex. GCC's std::atomic<T>::is_always_lock_free is a libstdc++ ABI
+    // constant that reports false for 16-byte types even when -mcx16
+    // generates correct CMPXCHG16B instructions. Use the compiler intrinsic
+    // macro instead, which correctly reflects whether the compiler can emit
+    // lock-free 16-byte CAS.
+    static_assert(__GCC_HAVE_SYNC_COMPARE_AND_SWAP_16,
+                  "TaggedHead must be lock-free per 1.5-memory.md §12 — "
+                  "compile with -mcx16 (or -march=x86-64-v2+) to enable CMPXCHG16B");
 
     // PopFreeList / PushFreeList are provided by <sai/memory/free_list.h>
     // as inline template functions -- see 1.5-memory.md section 9.
