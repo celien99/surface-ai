@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -197,7 +198,7 @@ TensorRtEngine::TensorRtEngine(std::size_t device_ordinal) noexcept
 TensorRtEngine::~TensorRtEngine() {
     // atomic<shared_ptr<EngineState>> 在析构时自动释放最后一个引用——
     // EngineState 的 shared_ptr 成员依次析构，各自的自定义 deleter 调用
-    // nvinfer1 对象的 destroy() 方法。
+    // delete 释放 nvinfer1 对象（TRT 10+ 移除了 destroy()，改用 delete）。
     state_.store(nullptr);
 }
 
@@ -228,7 +229,7 @@ auto TensorRtEngine::DeserializeAndValidate(
     }
     auto runtime = std::shared_ptr<nvinfer1::IRuntime>(
         raw_runtime,
-        [](nvinfer1::IRuntime* p) { if (p != nullptr) p->destroy(); });
+        [](nvinfer1::IRuntime* p) { delete p; });
 
     // 4. 反序列化 engine。
     auto* raw_engine = runtime->deserializeCudaEngine(
@@ -243,7 +244,7 @@ auto TensorRtEngine::DeserializeAndValidate(
     }
     auto engine = std::shared_ptr<nvinfer1::ICudaEngine>(
         raw_engine,
-        [](nvinfer1::ICudaEngine* p) { if (p != nullptr) p->destroy(); });
+        [](nvinfer1::ICudaEngine* p) { delete p; });
 
     // 5. 创建 ExecutionContext。
     auto* raw_context = engine->createExecutionContext();
@@ -256,7 +257,7 @@ auto TensorRtEngine::DeserializeAndValidate(
     }
     auto context = std::shared_ptr<nvinfer1::IExecutionContext>(
         raw_context,
-        [](nvinfer1::IExecutionContext* p) { if (p != nullptr) p->destroy(); });
+        [](nvinfer1::IExecutionContext* p) { delete p; });
 
     // 6. 校验 binding 名称。
     if (auto err = ValidateBindings(*engine, inputs, outputs)) {
