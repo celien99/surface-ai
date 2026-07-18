@@ -40,8 +40,15 @@ private:
 //
 // 输入要求：SurfaceImage（CPU 侧预处理完毕的 RGB8/Mono8 图像）。
 // 输出：一新 SurfaceImage（从 DtoH 的 pinned buffer 构造），所有权转移给调用方。
+}  // namespace sai::image
+
+// Forward declarations outside sai::image to avoid creating sai::image::sai::*
+// nested namespaces, which would pollute name lookup for "using sai::memory::..."
+// inside sai::image.
 namespace sai::memory { class PinnedPool; }
 namespace sai::runtime { class GpuStreamQueue; }
+
+namespace sai::image {
 
 [[nodiscard]] auto MakeGpuUploadStep(sai::memory::PinnedPool& pinned_pool,
                                      sai::runtime::GpuStreamQueue& gpu_queue) -> PreprocessFn;

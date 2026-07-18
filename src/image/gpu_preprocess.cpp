@@ -48,11 +48,6 @@ struct SyncAwaitable {
     }
 
     void await_suspend(std::coroutine_handle<> /*caller*/) noexcept {
-        // 驱动内部 Task<T> 直至完成。void 返回 → 外层协程保持挂起，
-        // 控制权返回给驱动循环（PreprocessFn 中的 while(!done()) 循环），
-        // 由驱动循环再次 resume() 以触发 await_resume()。
-        // 不在此处 resume caller——避免 caller 在 await_suspend 内部抵达
-        // final_suspend 后编译器再尝试 await_resume() 的 UB（见 C++20 标准）。
         while (!handle_.done()) {
             handle_.resume();
         }
@@ -75,7 +70,7 @@ struct SyncAwaitable {
 // GpuStreamQueue::EnqueueAsyncCopy 的接口未修改。
 auto GpuUploadCoroutine(PinnedPool& pinned_pool, GpuStreamQueue& gpu_queue,
                         std::unique_ptr<Image> image)
-    -> Task<Result<std::unique_ptr<Image>>> {
+    -> Task<std::unique_ptr<Image>> {
     auto meta = image->Meta();
     auto size = image->SizeBytes();
     const std::uint8_t* const cpu_data = image->Data();
