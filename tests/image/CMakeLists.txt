@@ -12,12 +12,6 @@ if(SAI_MEMORY_HAS_LOCKFREE_16)
     target_link_libraries(sai_image_types_test PRIVATE sai::image GTest::gtest_main)
     target_include_directories(sai_image_types_test PRIVATE ${CMAKE_SOURCE_DIR}/tests/memory)
 
-    # -mcx16: required for CMPXCHG16B on x86-64 (16-byte lock-free atomics).
-    # Invalid on arm64, so guard by arch.
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
-        target_compile_options(sai_image_types_test PRIVATE -mcx16)
-    endif()
-
     gtest_discover_tests(sai_image_types_test)
 else()
     message(WARNING "Lock-free atomics NOT available — "

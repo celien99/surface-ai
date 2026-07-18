@@ -46,10 +46,3 @@ if(CUDAToolkit_FOUND AND SAI_MEMORY_HAS_LOCKFREE_16)
     target_link_libraries(sai_memory PUBLIC CUDA::cudart)
 endif()
 target_compile_features(sai_memory PUBLIC cxx_std_20)
-
-# gpu_pool.h/pinned_pool.h static_assert on 16-byte lock-free atomics.
-# On x86-64, CMPXCHG16B (-mcx16) is required. The flag is invalid on arm64
-# (which has native 16-byte LSE atomics), so guard it by arch.
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
-    target_compile_options(sai_memory PRIVATE -mcx16)
-endif()

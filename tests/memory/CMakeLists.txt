@@ -25,14 +25,6 @@ if(SAI_MEMORY_HAS_LOCKFREE_16)
         PRIVATE sai::memory GTest::gtest_main Threads::Threads
     )
     gtest_discover_tests(sai_memory_host_test_pool_concurrency_test)
-
-    # These two targets compile host_test_pool.cpp directly, whose host_test_pool.h
-    # static_asserts std::atomic<TaggedHead> (16 bytes) is always lock-free. That
-    # needs -mcx16 (CMPXCHG16B) on x86-64; the flag is invalid on arm64, so guard it.
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
-        target_compile_options(sai_memory_pooled_ptr_test PRIVATE -mcx16)
-        target_compile_options(sai_memory_host_test_pool_concurrency_test PRIVATE -mcx16)
-    endif()
 else()
     message(WARNING "16-byte lock-free atomics NOT available — "
                     "skipping HostTestPool-based memory tests")

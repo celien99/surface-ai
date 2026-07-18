@@ -5,6 +5,32 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+
+find_package(CUDAToolkit QUIET)
+
+# GCC on x86-64 requires -latomic for 16-byte std::atomic operations even when
+# -mcx16 is active (libstdc++ ABI limitation).  Link it globally so that any
+# target using TaggedHead (gpu_pool.h, pinned_pool.h, host_test_pool.h) resolves
+# __atomic_store_16 / __atomic_load_16 / __atomic_compare_exchange_16.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64" AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    link_libraries(-latomic)
+endif()
+
+# -mcx16: enable CMPXCHG16B instruction on x86-64, required for 16-byte lock-free
+# atomics used by gpu_pool.h / pinned_pool.h / host_test_pool.h.  Applied globally
+# so that __GCC_HAVE_SYNC_COMPARE_AND_SWAP_16 is defined in every translation unit
+# that includes these headers (not just the ones that were manually annotated).
+# Invalid on arm64 (which has native 16-byte LSE atomics), so guard by arch.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    add_compile_options(-mcx16)
+endif()
+
+# yaml-cpp is used by many sub-libraries (retrieval, rule, reasoner, pipeline,
+# tuning, visualization, web).  find_package at root level ensures the vcpkg
+# imported target yaml-cpp::yaml-cpp is registered before any subdirectory
+# add_library call that links against it.
+find_package(yaml-cpp CONFIG REQUIRED)
+
 # Warning flags: -Wall -Wextra catch switch-enum gaps, unused, sign-mismatch, etc.
 # -Wpedantic is omitted for now (Qt/QML + third-party headers generate noise).
 add_compile_options(-Wall -Wextra)

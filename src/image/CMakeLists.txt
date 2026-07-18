@@ -33,10 +33,3 @@ if(CUDAToolkit_FOUND AND SAI_MEMORY_HAS_LOCKFREE_16)
     target_link_libraries(sai_image PUBLIC sai::runtime CUDA::cudart)
 endif()
 target_compile_features(sai_image PUBLIC cxx_std_20)
-
-# -mcx16: required for CMPXCHG16B instruction on x86-64 (16-byte lock-free
-# atomics used by gpu_pool.h/pinned_pool.h). Invalid on arm64 (native LSE).
-if(CUDAToolkit_FOUND AND SAI_MEMORY_HAS_LOCKFREE_16 AND
-   CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
-    target_compile_options(sai_image PRIVATE -mcx16)
-endif()
