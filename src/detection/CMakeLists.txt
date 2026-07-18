@@ -42,6 +42,6 @@ target_link_libraries(sai_detection PUBLIC sai::core sai::embedding sai::infra f
                       PRIVATE sai::knowledge)
 if(CUDAToolkit_FOUND AND SAI_FAISS_GPU_FOUND)
     target_link_libraries(sai_detection PUBLIC CUDA::cudart)
-    target_compile_definitions(sai_detection PUBLIC SAI_CUDA_ENABLED)
+    target_compile_definitions(sai_detection PUBLIC SAI_CUDA_ENABLED SAI_FAISS_GPU_ENABLED)
 endif()
 target_compile_features(sai_detection PUBLIC cxx_std_20)

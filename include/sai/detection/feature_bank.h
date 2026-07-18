@@ -98,8 +98,10 @@ public:
     auto SetNprobe(std::size_t nprobe) noexcept -> void { nprobe_ = nprobe; }
     [[nodiscard]] auto Nprobe() const noexcept -> std::size_t { return nprobe_; }
 
-    // GPU acceleration (only available when SAI_CUDA_ENABLED is defined).
-#if defined(SAI_CUDA_ENABLED)
+    // GPU acceleration (only available when SAI_CUDA_ENABLED is defined AND
+    // FAISS GPU headers are present — see detection/CMakeLists.txt which sets
+    // SAI_FAISS_GPU_FOUND when faiss/gpu/StandardGpuResources.h exists).
+#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
     [[nodiscard]] auto ToGpu(int device = 0) noexcept -> Result<void>;
     [[nodiscard]] auto IsOnGpu() const noexcept -> bool;
 #endif
@@ -122,7 +124,7 @@ private:
     std::size_t num_samples_ = 0;
     std::size_t nprobe_ = 4;  // default: probe 4 clusters per query
 
-#if defined(SAI_CUDA_ENABLED)
+#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
     std::unique_ptr<faiss::gpu::StandardGpuResources> gpu_resources_;
     std::unique_ptr<faiss::Index> gpu_index_;
     bool on_gpu_ = false;
