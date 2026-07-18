@@ -9,6 +9,10 @@
 #include <string>
 #include <vector>
 
+#include <sai/core/context.h>
+#include <sai/detection/coreset_evolution.h>
+#include <sai/pipeline/pipeline.h>
+#include <sai/tuning/tuning_scheduler.h>
 #include "app_builder.h"
 #include "cli_args.h"
 
@@ -227,11 +231,11 @@ auto RunHeadless(const CliArgs& cli, AssembledApp& app) -> int {
             std::cout << "Review index: " << cli.output_dir << "/review_index.json\n";
         }
 
-        if (app.evolution.has_value()) app.evolution->Stop();
+        if (app.evolution != nullptr) app.evolution->Stop();
         for (auto& [key, evo] : app.evolutions) {
-            evo.Stop();
+            evo->Stop();
         }
-        if (app.tuning_scheduler.has_value()) app.tuning_scheduler->Join();
+        if (app.tuning_scheduler != nullptr) app.tuning_scheduler->Join();
         (void)app.pipeline->Stop();
         (void)app.ctx->Stop();
         return (ng > 0 || failed > 0) ? 1 : 0;

@@ -6,6 +6,7 @@
 
 #include <QSize>
 
+#include <mutex>
 #include <shared_mutex>
 #include <cstdint>
 

@@ -1,6 +1,7 @@
 #include "sai/visualization/dashboard_viewmodel.h"
 #include <algorithm>
 #include <cmath>
+#include <mutex>
 
 namespace sai::visualization {
 

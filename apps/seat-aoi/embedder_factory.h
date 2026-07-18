@@ -7,7 +7,7 @@
 #include <string>
 
 #include <sai/core/error.h>
-#include <sai/embedding/patch_embedder.h>
+#include <sai/embedding/embedder.h>
 #include <sai/inference/dino_v3_adapter.h>
 #include <sai/inference/tensorrt_engine.h>
 

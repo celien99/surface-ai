@@ -13,8 +13,8 @@
 #include <sai/core/error.h>
 #include <sai/tuning/tuning_space.h>
 #include <sai/tuning/tuning_objective.h>
-#include <sai/tuning/bayesian_optimizer.h>
 #include <sai/tuning/tuning_scheduler.h>
+#include <sai/tuning/bayesian_optimizer.h>
 #include <sai/reasoner/reasoner.h>
 #include <sai/pipeline/pipeline.h>
 #include <sai/pipeline/pipeline_config.h>
@@ -101,13 +101,13 @@ auto TryCreateTuningScheduler(
     sai::knowledge::KnowledgeEvolution& kg_evolution,
     sai::reasoner::IReasoner& reasoner,
     sai::pipeline::Pipeline& pipeline
-) -> sai::Result<std::optional<sai::tuning::TuningScheduler>> {
+) -> sai::Result<std::unique_ptr<sai::tuning::TuningScheduler>> {
     using namespace sai;
     using namespace seat_aoi::config;
 
     auto tuning_node = pipeline_yaml["pipeline"]["tuning"];
     if (!tuning_node.IsDefined() || !tuning_node["enabled"].as<bool>(false)) {
-        return std::nullopt;
+        return std::unique_ptr<sai::tuning::TuningScheduler>{};
     }
 
     auto resource_dir = std::filesystem::path("resources");
@@ -122,7 +122,7 @@ auto TryCreateTuningScheduler(
     if (!space_result.has_value()) {
         std::cerr << "Tuning: failed to load tuning space: "
                   << space_result.error().message << "\n";
-        return std::nullopt;
+        return std::unique_ptr<sai::tuning::TuningScheduler>{};
     }
     auto space = std::move(*space_result);
     auto space_dim = space.Dimension();
@@ -253,5 +253,5 @@ auto TryCreateTuningScheduler(
     std::cout << "TuningScheduler: started with " << space_dim
               << " parameters\n";
 
-    return std::optional<sai::tuning::TuningScheduler>(std::move(*scheduler));
+    return std::unique_ptr<sai::tuning::TuningScheduler>(std::move(scheduler));
 }

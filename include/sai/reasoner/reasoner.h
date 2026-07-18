@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -18,6 +19,8 @@ namespace sai::reasoner {
 // ReasoningResult — output of the reasoning pipeline
 // -----------------------------------------------------------------------
 struct ReasoningResult {
+    std::string surface_id;                  // M7: surface identifier (for multi-position pipelines)
+    std::uint16_t position_id{0};           // M7: position index (for multi-position pipelines)
     std::string verdict;                     // NG / WARN / OK / UNCERTAIN
     double severity{0.0};                    // 0.0 – 1.0 (leaf score)
     std::string recommendation;              // human-readable action

@@ -5,11 +5,11 @@
 
 #include <yaml-cpp/yaml.h>
 #include <sai/core/error.h>
+#include <sai/tuning/tuning_scheduler.h>
 
 namespace sai {
 namespace knowledge { class KnowledgeGraph; class KnowledgeEvolution; }
 namespace reasoner { class IReasoner; }
-namespace tuning { class TuningScheduler; }
 namespace pipeline { class Pipeline; }
 }
 
@@ -33,4 +33,4 @@ auto TryCreateTuningScheduler(
     sai::knowledge::KnowledgeEvolution& kg_evolution,
     sai::reasoner::IReasoner& reasoner,
     sai::pipeline::Pipeline& pipeline
-) -> sai::Result<std::optional<sai::tuning::TuningScheduler>>;
+) -> sai::Result<std::unique_ptr<sai::tuning::TuningScheduler>>;

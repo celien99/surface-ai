@@ -13,6 +13,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include <sai/core/context.h>
+#include <sai/pipeline/pipeline.h>
+#include <sai/tuning/tuning_scheduler.h>
 #include "app_builder.h"
 #include "cli_args.h"
 #include "evolution_offer.h"
@@ -165,7 +168,7 @@ auto RunGui(int argc, char* argv[], AssembledApp& app, const CliArgs& cli) -> in
                 Q_ARG(std::vector<sai::detection::RegionProposal>, dr.regions));
         });
 
-    if (!app.evolution.has_value() && app.evolutions.empty()) {
+    if (app.evolution == nullptr && app.evolutions.empty()) {
         // No evolution — keep simple callback (no self-evolution capture needed)
         app.pipeline->SetResultCallback(
             [=](int fid, const reasoner::ReasoningResult& result) {
@@ -196,19 +199,19 @@ auto RunGui(int argc, char* argv[], AssembledApp& app, const CliArgs& cli) -> in
                 dashboard_vm->AppendFrameSummary(std::move(summary));
 
                 // Single-position evolution
-                if (app.evolution.has_value()) {
-                    OfferToEvolution(*app.evolution, app.patch_core->LastContext(),
-                                    result);
+                if (app.evolution != nullptr) {
+                    seat_aoi::OfferToEvolution(*app.evolution, app.patch_core->LastContext(),
+                                              result);
                 }
                 // Multi-position evolution
                 if (!app.evolutions.empty()) {
-                    AssembledApp::BankKey key{result.surface_id, result.position_id};
+                    sai::pipeline::BankKey key{result.surface_id, result.position_id};
                     auto eit = app.evolutions.find(key);
                     if (eit != app.evolutions.end()) {
                         auto pit = app.patch_cores.find(key);
                         if (pit != app.patch_cores.end()) {
-                            OfferToEvolution(eit->second, pit->second->LastContext(),
-                                            result);
+                            seat_aoi::OfferToEvolution(*eit->second, pit->second->LastContext(),
+                                                       result);
                         }
                     }
                 }
@@ -244,11 +247,11 @@ auto RunGui(int argc, char* argv[], AssembledApp& app, const CliArgs& cli) -> in
         (void)camera->StopAcquisition();
         (void)camera->Disconnect();
         (void)app.pipeline->Drain();
-        if (app.evolution.has_value()) app.evolution->Stop();
+        if (app.evolution != nullptr) app.evolution->Stop();
         for (auto& [key, evo] : app.evolutions) {
-            evo.Stop();
+            evo->Stop();
         }
-        if (app.tuning_scheduler.has_value()) app.tuning_scheduler->Join();
+        if (app.tuning_scheduler != nullptr) app.tuning_scheduler->Join();
         (void)app.pipeline->Stop();
         (void)app.ctx->Stop();
     });

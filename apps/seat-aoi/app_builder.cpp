@@ -24,8 +24,6 @@
 #include <sai/inference/tensorrt_engine.h>
 #include <sai/inference/clip_adapter.h>
 #include <sai/inference/sam2_segmenter.h>
-#include <sai/embedding/patch_embedder.h>
-#include <sai/embedding/global_embedder.h>
 #include <sai/embedding/embedder.h>
 #include <sai/memory/arena_allocator.h>
 #include <sai/memory/gpu_pool.h>
@@ -46,6 +44,11 @@
 
 #include <cuda_runtime.h>
 
+// Out-of-line destructor — all sai:: types are complete at this point in the
+// translation unit, so unique_ptr<Context/Pipeline/KnowledgeStore> can safely
+// call delete on their pointees.
+AssembledApp::~AssembledApp() = default;
+
 auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     using namespace sai;
     using namespace seat_aoi::config;
@@ -62,7 +65,7 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     // =========================================================================
     YAML::Node pipeline_yaml;
     try {
-        pipeline_yaml = YAML::LoadFile(kPipelineYaml.data());
+        pipeline_yaml = YAML::LoadFile(std::string(kPipelineYaml));
     } catch (const YAML::Exception& e) {
         return tl::make_unexpected(ErrorInfo{
             ErrorCode::Pipeline_InvalidConfig,
@@ -73,7 +76,7 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     // 2. Inference / embedding setup — TensorRT + DINOv3 (1024-dim)
     // =========================================================================
 
-    auto embedder_result = CreateDinoV3PatchEmbedder(
+    auto embedder_result = seat_aoi::CreateDinoV3PatchEmbedder(
         kDinoV3Engine, kImageSize, kPatchSize, kEmbedDim);
     if (!embedder_result) return tl::make_unexpected(std::move(embedder_result.error()));
     auto embedder = std::move(*embedder_result);
@@ -192,9 +195,9 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     // =========================================================================
     // 4b. Multi-position coreset loading (--coreset-manifest)
     // =========================================================================
-    std::map<BankKey, std::shared_ptr<detection::PatchCore>> patch_cores;
-    std::map<BankKey, detection::CoresetEvolution> evolutions_map;
-    std::map<BankKey, std::stop_source> evo_stop_sources_map;
+    std::map<sai::pipeline::BankKey, std::shared_ptr<detection::PatchCore>> patch_cores;
+    std::map<sai::pipeline::BankKey, std::unique_ptr<detection::CoresetEvolution>> evolutions_map;
+    std::map<sai::pipeline::BankKey, std::stop_source> evo_stop_sources_map;
 
     if (!cli.coreset_manifest_path.empty()) {
         auto manifest_result = io::LoadCoresetManifest(cli.coreset_manifest_path);
@@ -207,7 +210,7 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
                       << " (" << manifest.banks.size() << " positions)\n";
 
             for (auto& bank : manifest.banks) {
-                BankKey key{manifest.surface_id, bank.position_id};
+                sai::pipeline::BankKey key{manifest.surface_id, bank.position_id};
 
                 auto fb_result = detection::FeatureBank::LoadFromFile(bank.path, kEmbedDim);
                 if (!fb_result) {
@@ -232,7 +235,7 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     // =========================================================================
     // 4c. Coreset Self-Evolution — YAML config-driven
     // =========================================================================
-    std::optional<detection::CoresetEvolution> evolution;
+    std::unique_ptr<detection::CoresetEvolution> evolution;
     {
         auto se_node = pipeline_yaml["pipeline"]["stages"][3]["config"]["self_evolution"];
         if (se_node.IsDefined()) {
@@ -246,16 +249,21 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
                         // Load profile from .profile.yaml alongside the bank file
                         auto profile_path = std::filesystem::path(
                             pc_cfg.feature_bank_path).replace_extension(".profile.yaml");
-                        auto profile = std::filesystem::exists(profile_path)
-                            ? detection::NormalityProfile::LoadFromYaml(profile_path)
-                            : std::optional<detection::NormalityProfile>{};
+                        std::optional<detection::NormalityProfile> profile;
+                        if (std::filesystem::exists(profile_path)) {
+                            auto r = detection::NormalityProfile::LoadFromYaml(profile_path);
+                            if (r.has_value()) {
+                                profile = std::move(*r);
+                            }
+                        }
 
                         if (profile.has_value()) {
-                            auto evo = detection::CoresetEvolution(
+                            auto ts = evo_cfg.target_size;
+                            auto evo = std::make_unique<detection::CoresetEvolution>(
                                 evo_cfg, *pc, std::move(*profile));
-                            evolutions_map.emplace(key, std::move(evo));
+                            evolutions_map.try_emplace(key, std::move(evo));
                             std::cout << "CoresetEvolution: pos " << key.second
-                                      << " enabled (target_size=" << evo_cfg.target_size << ")\n";
+                                      << " enabled (target_size=" << ts << ")\n";
                         } else {
                             std::cout << "CoresetEvolution: pos " << key.second
                                       << " skipped (no profile)\n";
@@ -265,15 +273,21 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
                     // Single-position evolution
                     auto profile_path = std::filesystem::path(cli.coreset_path)
                         .replace_extension(".profile.yaml");
-                    auto profile = std::filesystem::exists(profile_path)
-                        ? detection::NormalityProfile::LoadFromYaml(profile_path)
-                        : detection::NormalityProfile::Compute(*feature_bank);
+                    std::optional<detection::NormalityProfile> profile;
+                    if (std::filesystem::exists(profile_path)) {
+                        auto r = detection::NormalityProfile::LoadFromYaml(profile_path);
+                        if (r.has_value()) profile = std::move(*r);
+                    }
+                    if (!profile.has_value()) {
+                        profile = detection::NormalityProfile::Compute(*feature_bank);
+                    }
 
                     if (profile.has_value()) {
-                        evolution.emplace(
+                        auto ts = evo_cfg.target_size;
+                        evolution = std::make_unique<detection::CoresetEvolution>(
                             std::move(evo_cfg), *patch_core, std::move(*profile));
                         std::cout << "CoresetEvolution: enabled (target_size="
-                                  << evo_cfg.target_size << ")\n";
+                                  << ts << ")\n";
                     }
                 }
             }
@@ -404,7 +418,7 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     // =========================================================================
     // 9c. Bayesian Auto-Tuning (optional, guarded by pipeline.yaml tuning section)
     // =========================================================================
-    std::optional<tuning::TuningScheduler> tuning_scheduler;
+    std::unique_ptr<tuning::TuningScheduler> tuning_scheduler;
     std::stop_source tuning_stop_source;
 
     if (reasoner) {
@@ -413,8 +427,8 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
         if (!tuning_result) {
             std::cerr << "Tuning: setup failed: "
                       << tuning_result.error().message << "\n";
-        } else if (tuning_result->has_value()) {
-            tuning_scheduler.emplace(std::move(**tuning_result));
+        } else if (*tuning_result != nullptr) {
+            tuning_scheduler = std::move(*tuning_result);
             // 6. Start tuning thread
             tuning_scheduler->Start(tuning_stop_source.get_token());
         }
@@ -425,23 +439,23 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     //    Note: The callback set here is the evolution-aware variant.
     //    GuiRunner will override it if evolution is disabled.
     // =========================================================================
-    if (evolution.has_value() || !evolutions_map.empty()) {
+    if (evolution != nullptr || !evolutions_map.empty()) {
         pipeline->SetResultCallback(
             [patch_core, &evo = evolution, &evos = evolutions_map, &pcs = patch_cores]
             (int fid, const reasoner::ReasoningResult& result) {
                 (void)fid;
                 // Single-position evolution
-                if (evo.has_value()) {
-                    OfferToEvolution(*evo, patch_core->LastContext(), result);
+                if (evo != nullptr) {
+                    seat_aoi::OfferToEvolution(*evo, patch_core->LastContext(), result);
                 }
                 // Multi-position evolution
                 if (!evos.empty()) {
-                    BankKey key{result.surface_id, result.position_id};
+                    sai::pipeline::BankKey key{result.surface_id, result.position_id};
                     auto eit = evos.find(key);
                     if (eit != evos.end()) {
                         auto pit = pcs.find(key);
                         if (pit != pcs.end()) {
-                            OfferToEvolution(eit->second, pit->second->LastContext(),
+                            seat_aoi::OfferToEvolution(*eit->second, pit->second->LastContext(),
                                              result);
                         }
                     }
@@ -463,14 +477,14 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     // 10b. Start self-evolution background threads
     // =========================================================================
     std::stop_source evo_ss;
-    if (evolution.has_value()) {
+    if (evolution != nullptr) {
         evolution->Start(evo_ss.get_token());
         std::cout << "CoresetEvolution: started\n";
     }
     // Start per-position evolutions
     for (auto& [key, evo] : evolutions_map) {
         evo_stop_sources_map[key] = std::stop_source{};
-        evo.Start(evo_stop_sources_map[key].get_token());
+        evo->Start(evo_stop_sources_map[key].get_token());
         std::cout << "CoresetEvolution: pos " << key.second << " started\n";
     }
 

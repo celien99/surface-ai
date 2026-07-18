@@ -36,7 +36,7 @@ auto BuildCoreset(const CliArgs& cli) -> int {
     io::BasicImporter importer;
 
     // ── Create DINOv3 embedder ──
-    auto embedder_result = CreateDinoV3PatchEmbedder(
+    auto embedder_result = seat_aoi::CreateDinoV3PatchEmbedder(
         kDinoV3Engine, kImageSize, kPatchSize, kEmbedDim);
     if (!embedder_result) {
         std::cerr << "DINOv3 embedder creation failed: "
@@ -76,7 +76,7 @@ auto BuildCoreset(const CliArgs& cli) -> int {
     auto& gpu_pool = **gpu_pool_result;
 
     // Group entries by position_id for per-position coreset building
-    std::map<std::uint16_t, std::vector<decltype(entries)::value_type>> pos_entries;
+    std::map<std::uint16_t, std::vector<io::DatasetEntry>> pos_entries;
     std::string surface_id;
     for (auto& e : entries) {
         pos_entries[e.position_id].push_back(e);
@@ -91,7 +91,7 @@ auto BuildCoreset(const CliArgs& cli) -> int {
     for (auto& entry : entries) {
         auto img_result = importer.ImportImage(entry.path);
         if (!img_result) {
-            std::cerr << "Failed to import " << entry.entry.path.filename().string()
+            std::cerr << "Failed to import " << entry.path.filename().string()
                       << ": " << img_result.error().message << "\n";
             continue;
         }

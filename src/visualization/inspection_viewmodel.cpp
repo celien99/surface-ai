@@ -6,6 +6,7 @@
 #include "sai/rule/value.h"
 
 #include <cmath>
+#include <mutex>
 #include <shared_mutex>
 
 namespace sai::visualization {

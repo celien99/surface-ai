@@ -1,5 +1,8 @@
 #include <iostream>
 
+#include <sai/core/context.h>
+#include <sai/pipeline/pipeline.h>
+#include <sai/knowledge/knowledge_store.h>
 #include "app_builder.h"
 #include "cli_args.h"
 #include "coreset_builder.h"
