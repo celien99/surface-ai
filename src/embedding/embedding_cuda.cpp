@@ -58,7 +58,7 @@ auto Embedding::ToCpuAsync(sai::runtime::GpuStreamQueue& /*queue*/,
         cudaMemcpyDeviceToHost);
 
     if (err != cudaSuccess) {
-        pinned_buf.Release();
+        // pinned_buf 将在函数结束时通过 RAII 自动归还 PinnedPool
         co_return tl::make_unexpected(ErrorInfo{
             ErrorCode::Runtime_GpuError,
             std::string("cudaMemcpy DeviceToHost failed in ToCpuAsync: ") +
@@ -75,7 +75,8 @@ auto Embedding::ToCpuAsync(sai::runtime::GpuStreamQueue& /*queue*/,
     cpu_data_.assign(src, src + count);
 
     // 释放 GPU device buffer — 数据已安全拷贝到 CPU
-    device_buffer_.Release();
+    // PooledPtr 没有 Release() 方法；赋空触发 move-assignment，旧值通过 RAII 归还
+    device_buffer_ = sai::memory::PooledPtr<std::uint8_t>{};
     on_gpu_ = false;
 
     // pinned_buf 在作用域结束时通过 RAII 自动归还 PinnedPool
