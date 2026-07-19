@@ -4,10 +4,6 @@
 // embedding/detection/rule/reasoner modules.
 #pragma once
 
-#include <cassert>
-#include <memory>
-#include <new>
-#include <string>
 #include <string_view>
 #include <utility>
 
@@ -16,6 +12,7 @@
 #include <sai/core/context.h>
 #include <sai/image/raw_image.h>
 #include <sai/image/surface_image.h>
+#include <sai/pipeline/pipeline_config.h>
 
 // Forward declarations — StageData only needs complete types at the
 // point of Make<T>() / GetIf<T>() instantiation, which happens in .cpp files.
@@ -112,8 +109,10 @@ private:
         }
     }
 
-    // Compile-time type → tag mapping (specialized below)
-    template<typename T> static int TypeTag();
+    // Compile-time type → tag mapping (specialized below for known types).
+    // Primary template returns -1 (never matches any valid type_index_),
+    // so GetIf<UnknownType>() safely returns nullptr at runtime.
+    template<typename T> static int TypeTag() { return -1; }
 
     void* ptr_ = nullptr;
     void (*deleter_)(void*) = nullptr;

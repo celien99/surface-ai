@@ -9,6 +9,8 @@
 #include <sai/core/error.h>
 #include <sai/core/registry.h>
 #include <sai/core/type_id.h>
+#include <sai/detection/detection_result.h>
+#include <sai/reasoner/reasoner.h>
 #include <sai/runtime/task_graph.h>
 #include <sai/runtime/pipeline_executor.h>
 #include <sai/runtime/task_scheduler.h>
