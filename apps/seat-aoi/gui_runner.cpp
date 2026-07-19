@@ -147,30 +147,35 @@ auto RunGui(int argc, char* argv[], AssembledApp& app, const CliArgs& cli) -> in
                              frame_provider, config_vm);
     }
 
-    // ── Live mode: existing logic (unchanged) ──
-    pipeline_vm->BindToPipeline(app.pipeline.get());
-    config_vm->BindToPipeline(app.pipeline.get());
+    // ── Live mode: bind first pipeline to UI, create per-position cameras ──
+    auto& primary_pipeline = app.GetPipeline();
+    pipeline_vm->BindToPipeline(&primary_pipeline);
+    config_vm->BindToPipeline(&primary_pipeline);
     config_vm->BindToRuleEngine(app.rule_engine.get());
     if (app.reasoner) config_vm->BindToReasoner(app.reasoner.get());
-    // Register pipeline stage nodes for hot-reload support
     for (auto stage_id : {"capture", "preprocess", "inference", "detect",
                           "rule_eval", "reason", "export"}) {
-        auto* node = app.pipeline->GetStage(stage_id);
+        auto* node = primary_pipeline.GetStage(stage_id);
         if (node) config_vm->RegisterStageNode(stage_id, node);
     }
 
-    // Live defect overlay: Pipe DetectionResult → DefectModel
+    // Live defect overlay on the primary pipeline
     auto* defect_model_ptr = inspection_vm->defectModel();
-    app.pipeline->SetDetectionCallback(
+    primary_pipeline.SetDetectionCallback(
         [defect_model_ptr](const sai::detection::DetectionResult& dr) {
             QMetaObject::invokeMethod(
                 defect_model_ptr, "UpdateDefects", Qt::QueuedConnection,
                 Q_ARG(std::vector<sai::detection::RegionProposal>, dr.regions));
         });
 
-    if (app.evolution == nullptr && app.evolutions.empty()) {
-        // No evolution — keep simple callback (no self-evolution capture needed)
-        app.pipeline->SetResultCallback(
+    // Result callback on primary pipeline (UI updates)
+    bool has_evolution = false;
+    for (auto& pp : app.positions) {
+        if (pp.evolution != nullptr) { has_evolution = true; break; }
+    }
+
+    if (!has_evolution) {
+        primary_pipeline.SetResultCallback(
             [=](int fid, const reasoner::ReasoningResult& result) {
                 inspection_vm->UpdateResult(fid, result);
                 visualization::FrameSummary summary;
@@ -181,14 +186,13 @@ auto RunGui(int argc, char* argv[], AssembledApp& app, const CliArgs& cli) -> in
                 dashboard_vm->AppendFrameSummary(std::move(summary));
             });
     } else {
-        // Detection callback also needed when evolution is active
-        app.pipeline->SetDetectionCallback(
+        primary_pipeline.SetDetectionCallback(
             [defect_model_ptr](const sai::detection::DetectionResult& dr) {
                 QMetaObject::invokeMethod(
                     defect_model_ptr, "UpdateDefects", Qt::QueuedConnection,
                     Q_ARG(std::vector<sai::detection::RegionProposal>, dr.regions));
             });
-        app.pipeline->SetResultCallback(
+        primary_pipeline.SetResultCallback(
             [&](int fid, const reasoner::ReasoningResult& result) {
                 inspection_vm->UpdateResult(fid, result);
                 visualization::FrameSummary summary;
@@ -198,42 +202,36 @@ auto RunGui(int argc, char* argv[], AssembledApp& app, const CliArgs& cli) -> in
                 summary.timestamp = std::chrono::system_clock::now();
                 dashboard_vm->AppendFrameSummary(std::move(summary));
 
-                // Single-position evolution
-                if (app.evolution != nullptr) {
-                    seat_aoi::OfferToEvolution(*app.evolution, app.patch_core->LastContext(),
-                                              result);
-                }
-                // Multi-position evolution
-                if (!app.evolutions.empty()) {
-                    sai::pipeline::BankKey key{result.surface_id, result.position_id};
-                    auto eit = app.evolutions.find(key);
-                    if (eit != app.evolutions.end()) {
-                        auto pit = app.patch_cores.find(key);
-                        if (pit != app.patch_cores.end()) {
-                            seat_aoi::OfferToEvolution(*eit->second, pit->second->LastContext(),
-                                                       result);
-                        }
-                    }
+                // Route to correct position's evolution
+                auto* pp = app.FindPosition(result.surface_id, result.position_id);
+                if (pp && pp->evolution != nullptr) {
+                    seat_aoi::OfferToEvolution(*pp->evolution, pp->patch_core->LastContext(),
+                                               result);
                 }
             });
     }
 
-    device::FakeCamera::Config cam_cfg{
-        .width = 1024, .height = 1024, .fps = 10.0};
-    auto camera = std::make_shared<device::FakeCamera>(cam_cfg);
-    auto* pipeline_ptr = app.pipeline.get();
+    // Create one FakeCamera per position pipeline
     auto* fp = frame_provider;
     auto frame_counter = std::make_shared<std::atomic<int>>(0);
-    (void)camera->RegisterFrameCallback(
-        [pipeline_ptr, fp, frame_counter](sai::image::RawImage img) {
-            int fid = frame_counter->fetch_add(1, std::memory_order_relaxed);
-            fp->RegisterRawFrame(fid, img);
-            (void)pipeline_ptr->Submit(std::move(img));
-        });
-    (void)camera->Connect();
-    // FakeCamera is always free-run (generates frames on a timer).
-    // TriggerMode is not applicable — no external hardware trigger.
-    (void)camera->StartAcquisition();
+    std::vector<std::shared_ptr<device::FakeCamera>> cameras;
+    for (auto& pp : app.positions) {
+        device::FakeCamera::Config cam_cfg{
+            .width = 1024, .height = 1024, .fps = 10.0};
+        auto camera = std::make_shared<device::FakeCamera>(cam_cfg);
+        auto* pl_ptr = pp.pipeline.get();
+        (void)camera->RegisterFrameCallback(
+            [pl_ptr, fp, frame_counter](sai::image::RawImage img) {
+                int fid = frame_counter->fetch_add(1, std::memory_order_relaxed);
+                fp->RegisterRawFrame(fid, img);
+                (void)pl_ptr->Submit(std::move(img));
+            });
+        (void)camera->Connect();
+        (void)camera->StartAcquisition();
+        cameras.push_back(std::move(camera));
+    }
+    std::cout << "GUI: " << cameras.size() << " FakeCamera(s) → "
+              << app.positions.size() << " pipeline(s)\n";
 
     engine.addImageProvider("pipeline", frame_provider);
     engine.rootContext()->setContextProperty("pipelineVM", pipeline_vm);
@@ -245,15 +243,16 @@ auto RunGui(int argc, char* argv[], AssembledApp& app, const CliArgs& cli) -> in
 
     QObject::connect(&qapp, &QGuiApplication::aboutToQuit, [&]() {
         pipeline_vm->StopRefresh();
-        (void)camera->StopAcquisition();
-        (void)camera->Disconnect();
-        (void)app.pipeline->Drain();
-        if (app.evolution != nullptr) app.evolution->Stop();
-        for (auto& [key, evo] : app.evolutions) {
-            evo->Stop();
+        for (auto& cam : cameras) {
+            (void)cam->StopAcquisition();
+            (void)cam->Disconnect();
+        }
+        for (auto& pp : app.positions) {
+            (void)pp.pipeline->Drain();
+            if (pp.evolution != nullptr) pp.evolution->Stop();
+            (void)pp.pipeline->Stop();
         }
         if (app.tuning_scheduler != nullptr) app.tuning_scheduler->Join();
-        (void)app.pipeline->Stop();
         (void)app.ctx->Stop();
     });
 

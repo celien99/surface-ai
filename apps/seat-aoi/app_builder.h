@@ -4,6 +4,7 @@
 #include <memory>
 #include <optional>
 #include <stop_token>
+#include <vector>
 
 #include <sai/core/error.h>
 #include <sai/detection/coreset_evolution.h>  // complete type for map value
@@ -29,44 +30,59 @@ namespace memory { class GpuPool; }
 
 struct CliArgs;
 
+// ── Per-position pipeline instance ──
+// Each camera position gets its own independent 7-stage pipeline,
+// its own PatchCore + FeatureBank, and its own CoresetEvolution.
+// Shared components (RuleEngine, Reasoner, KnowledgeStore, etc.) are
+// injected into each pipeline's stages.
+struct PositionPipeline {
+    PositionPipeline() = default;
+    ~PositionPipeline();  // out-of-line: unique_ptr safe against incomplete types
+    PositionPipeline(PositionPipeline&&) noexcept = default;
+
+    using BankKey = sai::pipeline::BankKey;
+    BankKey key;
+
+    std::unique_ptr<sai::pipeline::Pipeline> pipeline;
+    std::shared_ptr<sai::detection::PatchCore> patch_core;
+    std::unique_ptr<sai::detection::CoresetEvolution> evolution;
+    std::stop_source evolution_stop_source;
+};
+
+// ── Assembled application ──
+// Shared components are created once and injected into each PositionPipeline.
 struct AssembledApp {
     AssembledApp() = default;
     ~AssembledApp();  // out-of-line: unique_ptr safe against incomplete types
     AssembledApp(AssembledApp&&) noexcept = default;  // inline: all types complete in header
 
-    // ── Core (must exist) ──
+    // ── Shared components ──
     std::unique_ptr<sai::Context> ctx;
-    std::unique_ptr<sai::pipeline::Pipeline> pipeline;
-    std::shared_ptr<sai::embedding::PatchEmbedder> embedder;
-    std::shared_ptr<sai::detection::PatchCore> patch_core;
-    std::shared_ptr<sai::rule::RuleEngine> rule_engine;
-    std::shared_ptr<sai::io::JsonExporter> exporter;
-
-    // ── Knowledge (kg/evolution are non-owning aliases into knowledge_store) ──
     std::unique_ptr<sai::knowledge::KnowledgeStore> knowledge_store;
-    std::shared_ptr<sai::knowledge::KnowledgeGraph> kg;
-    std::shared_ptr<sai::knowledge::KnowledgeEvolution> kg_evolution;
+    std::shared_ptr<sai::knowledge::KnowledgeGraph> kg;            // non-owning alias
+    std::shared_ptr<sai::knowledge::KnowledgeEvolution> kg_evolution; // non-owning alias
+    std::shared_ptr<sai::rule::RuleEngine> rule_engine;
+    std::shared_ptr<sai::reasoner::IReasoner> reasoner;
+    std::shared_ptr<sai::io::JsonExporter> exporter;
+    std::shared_ptr<sai::retrieval::VectorPath> vector_path;
+    std::shared_ptr<sai::memory::GpuPool> gpu_pool;
+    std::shared_ptr<sai::embedding::PatchEmbedder> embedder;      // shared across all positions
+    std::shared_ptr<sai::detection::FeatureBank> feature_bank;    // single-position coreset
 
-    // ── Optional components ──
+    // ── Optional shared ──
     std::shared_ptr<sai::embedding::IEmbedder> global_embedder;
     std::shared_ptr<sai::inference::Sam2Segmenter> sam2_segmenter;
-    std::shared_ptr<sai::reasoner::IReasoner> reasoner;
-    std::shared_ptr<sai::detection::FeatureBank> feature_bank;
-    std::shared_ptr<sai::retrieval::VectorPath> vector_path;
-
-    // unique_ptr: CoresetEvolution/TuningScheduler are immovable (move=delete),
-    // so optional<T> can't hold them. unique_ptr works because we move the pointer.
-    std::unique_ptr<sai::detection::CoresetEvolution> evolution;
     std::unique_ptr<sai::tuning::TuningScheduler> tuning_scheduler;
-    std::shared_ptr<sai::memory::GpuPool> gpu_pool;
     std::stop_source tuning_stop_source;
-    std::stop_source evolution_stop_source;
 
-    // ── Multi-position detectors ──
-    using BankKey = sai::pipeline::BankKey;
-    std::map<BankKey, std::shared_ptr<sai::detection::PatchCore>> patch_cores;
-    std::map<BankKey, std::unique_ptr<sai::detection::CoresetEvolution>> evolutions;
-    std::map<BankKey, std::stop_source> evolution_stop_sources;
+    // ── Per-position pipelines ──
+    std::vector<PositionPipeline> positions;
+
+    // ── Legacy convenience accessors (single-position mode) ──
+    [[nodiscard]] auto GetPipeline() -> sai::pipeline::Pipeline& { return *positions.at(0).pipeline; }
+    [[nodiscard]] auto GetPatchCore() -> sai::detection::PatchCore& { return *positions.at(0).patch_core; }
+    [[nodiscard]] auto HasPosition(const std::string& sid, std::uint16_t pid) const -> bool;
+    [[nodiscard]] auto FindPosition(const std::string& sid, std::uint16_t pid) -> PositionPipeline*;
 };
 
 auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp>;

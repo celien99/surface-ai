@@ -116,19 +116,25 @@ auto RunHeadless(const CliArgs& cli, AssembledApp& app) -> int {
             }
 
             auto* raw = dynamic_cast<image::RawImage*>(img_result->get());
+            // Route to the correct pipeline by position_id
+            std::uint16_t pos_id = 0;
+            if constexpr (requires { entry.position_id; }) pos_id = entry.position_id;
+            auto* pos_pipeline = app.FindPosition(rec.surface_id, pos_id);
+            if (!pos_pipeline) pos_pipeline = &app.positions.at(0); // fallback
+
             if (raw) {
                 img_result->release();
-                (void)app.pipeline->Submit(std::move(*raw));
+                (void)pos_pipeline->pipeline->Submit(std::move(*raw));
             } else {
                 auto meta = (*img_result)->Meta();
                 const auto* data = (*img_result)->Data();
                 auto size = (*img_result)->SizeBytes();
                 std::vector<std::uint8_t> buffer(data, data + size);
-                (void)app.pipeline->Submit(
+                (void)pos_pipeline->pipeline->Submit(
                     image::RawImage::FromOwnedBuffer(std::move(buffer), meta));
             }
 
-            (void)app.pipeline->Drain();
+            (void)pos_pipeline->pipeline->Drain();
 
             // Read the exported JSON result
             auto result_path = std::filesystem::path(cli.output_dir)
@@ -231,12 +237,11 @@ auto RunHeadless(const CliArgs& cli, AssembledApp& app) -> int {
             std::cout << "Review index: " << cli.output_dir << "/review_index.json\n";
         }
 
-        if (app.evolution != nullptr) app.evolution->Stop();
-        for (auto& [key, evo] : app.evolutions) {
-            evo->Stop();
+        for (auto& pp : app.positions) {
+            if (pp.evolution != nullptr) pp.evolution->Stop();
+            (void)pp.pipeline->Stop();
         }
         if (app.tuning_scheduler != nullptr) app.tuning_scheduler->Join();
-        (void)app.pipeline->Stop();
         (void)app.ctx->Stop();
         return (ng > 0 || failed > 0) ? 1 : 0;
     };

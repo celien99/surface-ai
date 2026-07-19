@@ -44,10 +44,20 @@
 
 #include <cuda_runtime.h>
 
-// Out-of-line destructor — all sai:: types are complete at this point in the
-// translation unit, so unique_ptr<Context/Pipeline/KnowledgeStore> can safely
-// call delete on their pointees.
+// Out-of-line destructor — all sai:: types are complete at this point
 AssembledApp::~AssembledApp() = default;
+PositionPipeline::~PositionPipeline() = default;
+
+auto AssembledApp::HasPosition(const std::string& sid, std::uint16_t pid) const -> bool {
+    for (auto& pp : positions)
+        if (pp.key.first == sid && pp.key.second == pid) return true;
+    return false;
+}
+auto AssembledApp::FindPosition(const std::string& sid, std::uint16_t pid) -> PositionPipeline* {
+    for (auto& pp : positions)
+        if (pp.key.first == sid && pp.key.second == pid) return &pp;
+    return nullptr;
+}
 
 auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     using namespace sai;
@@ -82,19 +92,13 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     auto embedder = std::move(*embedder_result);
 
     // Wire GpuPool for zero-copy GPU feature extraction (D2D instead of D2H).
-    // When available, TRT output is copied directly to pool-backed GPU memory
-    // via cudaMemcpy DeviceToDevice, avoiding the CPU round-trip.
-    // Falls back gracefully when GpuPool is not set.
     std::shared_ptr<sai::memory::GpuPool> gpu_pool_owner;
     {
-        // Arena for GpuPool metadata (host-side free-list nodes).
-        // 4 KiB holds metadata for all 4 slab nodes + internal bookkeeping.
         static sai::memory::ArenaAllocator gpu_pool_arena(4096);
         sai::memory::MemoryPoolConfig pool_cfg;
-        // DINOv3: (1024/14)×(1024/14)×1024×sizeof(float) ≈ 21.8 MB per slab
         pool_cfg.slab_size = kEmbedDim * (kImageSize / kPatchSize) *
                               (kImageSize / kPatchSize) * sizeof(float);
-        pool_cfg.slab_count = 4;  // ring buffer: 4 concurrent frames
+        pool_cfg.slab_count = 4;
         auto gpu_pool = sai::memory::GpuPool::Create(pool_cfg, gpu_pool_arena);
         if (gpu_pool) {
             embedder->SetGpuPool(gpu_pool->get());
@@ -110,7 +114,6 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     }
 
     // Global embedder (CLIP) for cross-modal vector retrieval.
-    // Enabled via pipeline.yaml → stages[2].config.global_model.enabled
     std::shared_ptr<embedding::IEmbedder> global_embedder;
     {
         auto global_cfg = pipeline_yaml["pipeline"]["stages"][2]["config"]["global_model"];
@@ -169,10 +172,8 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     std::shared_ptr<retrieval::VectorPath> vp;
 
     if (!cli.coreset_path.empty()) {
-        // Set the config path so PatchCore::Initialize can load it internally.
         pc_cfg.feature_bank_path = cli.coreset_path;
 
-        // Also load separately for VectorPath use.
         auto fb_result = detection::FeatureBank::LoadFromFile(cli.coreset_path, kEmbedDim);
         if (fb_result) {
             feature_bank = std::make_shared<detection::FeatureBank>(std::move(*fb_result));
@@ -244,19 +245,14 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
                 auto evo_cfg = std::move(*evo_cfg_result);
 
                 if (!patch_cores.empty()) {
-                    // Per-position evolutions: try loading profile alongside each bank
                     for (auto& [key, pc] : patch_cores) {
-                        // Load profile from .profile.yaml alongside the bank file
                         auto profile_path = std::filesystem::path(
                             pc_cfg.feature_bank_path).replace_extension(".profile.yaml");
                         std::optional<detection::NormalityProfile> profile;
                         if (std::filesystem::exists(profile_path)) {
                             auto r = detection::NormalityProfile::LoadFromYaml(profile_path);
-                            if (r.has_value()) {
-                                profile = std::move(*r);
-                            }
+                            if (r.has_value()) profile = std::move(*r);
                         }
-
                         if (profile.has_value()) {
                             auto ts = evo_cfg.target_size;
                             auto evo = std::make_unique<detection::CoresetEvolution>(
@@ -270,7 +266,6 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
                         }
                     }
                 } else if (feature_bank) {
-                    // Single-position evolution
                     auto profile_path = std::filesystem::path(cli.coreset_path)
                         .replace_extension(".profile.yaml");
                     std::optional<detection::NormalityProfile> profile;
@@ -278,16 +273,13 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
                         auto r = detection::NormalityProfile::LoadFromYaml(profile_path);
                         if (r.has_value()) profile = std::move(*r);
                     }
-                    if (!profile.has_value()) {
+                    if (!profile.has_value())
                         profile = detection::NormalityProfile::Compute(*feature_bank);
-                    }
-
                     if (profile.has_value()) {
                         auto ts = evo_cfg.target_size;
                         evolution = std::make_unique<detection::CoresetEvolution>(
                             std::move(evo_cfg), *patch_core, std::move(*profile));
-                        std::cout << "CoresetEvolution: enabled (target_size="
-                                  << ts << ")\n";
+                        std::cout << "CoresetEvolution: enabled (target_size=" << ts << ")\n";
                     }
                 }
             }
@@ -295,7 +287,7 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     }
 
     // =========================================================================
-    // 5. KnowledgeStore — unified KG + Evolution facade
+    // 5. KnowledgeStore — unified KG + Evolution facade (shared across positions)
     // =========================================================================
     auto ks_result = knowledge::KnowledgeStore::Create(
         knowledge::KnowledgeStore::Config{":memory:", true});
@@ -307,14 +299,12 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     auto ks = std::move(*ks_result);
     SeedKnowledgeGraph(ks->Graph());
 
-    // Non-owning shared_ptr wrappers — the store owns the objects
-    auto kg = std::shared_ptr<knowledge::KnowledgeGraph>(
-        &ks->Graph(), [](auto*) {});
+    auto kg = std::shared_ptr<knowledge::KnowledgeGraph>(&ks->Graph(), [](auto*) {});
     auto kg_evolution = std::shared_ptr<knowledge::KnowledgeEvolution>(
         &ks->Evolution(), [](auto*) {});
 
     // =========================================================================
-    // 5b. SAM2 segmenter (M5 placeholder — wired but not yet activated).
+    // 5b. SAM2 segmenter (M5 placeholder — shared across positions).
     // =========================================================================
     std::shared_ptr<inference::Sam2Segmenter> sam2_segmenter;
     {
@@ -330,162 +320,165 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
                 s2_cfg.engine_path = kSam2Engine;
                 s2_cfg.image_size = kImageSize;
 
-                auto sam2_adapter = inference::Sam2Adapter::Create(
-                    *sam2_engine, s2_cfg);
+                auto sam2_adapter = inference::Sam2Adapter::Create(*sam2_engine, s2_cfg);
                 if (sam2_adapter) {
                     auto seg_result = inference::Sam2Segmenter::Create(
                         std::move(*sam2_adapter));
                     if (seg_result) {
-                        sam2_segmenter =
-                            std::make_shared<inference::Sam2Segmenter>(
-                                std::move(*seg_result));
+                        sam2_segmenter = std::make_shared<inference::Sam2Segmenter>(
+                            std::move(*seg_result));
                         std::cout << "Sam2Segmenter: enabled\n";
                     }
                 } else {
                     std::cerr << "Warning: Sam2Adapter creation failed: "
                               << sam2_adapter.error().message << "\n";
                 }
-            }  // file check else
+            }
         }
     }
 
     // =========================================================================
-    // 6. Rule Engine + Reasoner — loaded from YAML
+    // 6. Rule Engine + Reasoner — shared across all positions
     // =========================================================================
     auto rule_engine = std::make_shared<rule::RuleEngine>();
 
-    auto tree_result = reasoner::DecisionTree::LoadFromYAML(
-        std::string(kDecisionTree));
+    auto tree_result = reasoner::DecisionTree::LoadFromYAML(std::string(kDecisionTree));
     std::shared_ptr<reasoner::IReasoner> reasoner;
     if (tree_result) {
-        reasoner = std::make_shared<reasoner::DefaultReasoner>(
-            std::move(*tree_result));
+        reasoner = std::make_shared<reasoner::DefaultReasoner>(std::move(*tree_result));
     } else {
         std::cerr << "Warning: decision tree load failed, reasoner unavailable\n";
     }
 
     // =========================================================================
-    // 7. Export
+    // 7. Export — shared across all positions
     // =========================================================================
     auto exporter = std::make_shared<io::JsonExporter>();
 
     // =========================================================================
-    // 8. Load Pipeline from YAML
+    // 8. Build per-position pipeline list
     // =========================================================================
-    auto pipeline_result = pipeline::Pipeline::LoadFromYAML(
-        std::string(kPipelineYaml), *ctx);
-    if (!pipeline_result) {
-        return tl::make_unexpected(ErrorInfo{
-            ErrorCode::Pipeline_InvalidConfig,
-            "Pipeline load failed: " + pipeline_result.error().message});
-    }
-    auto pipeline = std::move(*pipeline_result);
+    struct PositionDef {
+        sai::pipeline::BankKey key;
+        std::shared_ptr<detection::PatchCore> pc;
+        std::unique_ptr<detection::CoresetEvolution> evo;
+    };
+    std::vector<PositionDef> position_defs;
 
-    // =========================================================================
-    // 9. Wire all business objects into Pipeline stages
-    // =========================================================================
-    if (auto* s = pipeline->GetStage("inference")) {
-        static_cast<pipeline::InferenceStage*>(s)->SetEmbedder(embedder);
-        if (global_embedder)
-            static_cast<pipeline::InferenceStage*>(s)->SetGlobalEmbedder(
-                global_embedder);
-    }
-    if (auto* s = pipeline->GetStage("detect")) {
-        auto* ds = static_cast<pipeline::DetectStage*>(s);
-        if (!patch_cores.empty()) {
-            for (auto& [key, pc] : patch_cores) {
-                ds->AddDetector(key.first, key.second, pc);
-            }
-        } else {
-            ds->SetDetector(patch_core);
+    if (!patch_cores.empty()) {
+        for (auto& [key, pc] : patch_cores) {
+            PositionDef def;
+            def.key = key;
+            def.pc = pc;
+            auto eit = evolutions_map.find(key);
+            if (eit != evolutions_map.end()) def.evo = std::move(eit->second);
+            position_defs.push_back(std::move(def));
         }
+    } else {
+        PositionDef def;
+        def.key = sai::pipeline::BankKey{"default", 0};
+        def.pc = patch_core;
+        if (evolution) def.evo = std::move(evolution);
+        position_defs.push_back(std::move(def));
     }
-    if (auto* s = pipeline->GetStage("rule_eval")) {
-        auto* rs = static_cast<pipeline::RuleEvalStage*>(s);
-        rs->SetRuleEngine(rule_engine);
-        rs->SetKnowledgeGraph(kg);
-        if (vp) rs->SetVectorPath(vp);
-    }
-    if (auto* s = pipeline->GetStage("reason")) {
-        static_cast<pipeline::ReasonStage*>(s)->SetReasoner(reasoner);
-        if (sam2_segmenter)
-            static_cast<pipeline::ReasonStage*>(s)->SetSam2Segmenter(
-                sam2_segmenter);
-    }
-    if (auto* s = pipeline->GetStage("export"))
-        static_cast<pipeline::ExportStage*>(s)->SetExporter(exporter);
 
     // =========================================================================
-    // 9c. Bayesian Auto-Tuning (optional, guarded by pipeline.yaml tuning section)
+    // 9. Create one Pipeline per position — each runs independently
+    // =========================================================================
+    std::vector<PositionPipeline> position_pipelines;
+
+    for (auto& pos_def : position_defs) {
+        auto pipeline_result = pipeline::Pipeline::LoadFromYAML(
+            std::string(kPipelineYaml), *ctx);
+        if (!pipeline_result) {
+            return tl::make_unexpected(ErrorInfo{
+                ErrorCode::Pipeline_InvalidConfig,
+                "Pipeline load failed for position " + std::to_string(pos_def.key.second)
+                + ": " + pipeline_result.error().message});
+        }
+        auto pos_pipeline = std::move(*pipeline_result);
+
+        // Wire per-position detector
+        if (auto* s = pos_pipeline->GetStage("detect")) {
+            auto* ds = static_cast<pipeline::DetectStage*>(s);
+            ds->AddDetector(pos_def.key.first, pos_def.key.second, pos_def.pc);
+        }
+
+        // Wire shared components into this pipeline's stages
+        if (auto* s = pos_pipeline->GetStage("inference")) {
+            static_cast<pipeline::InferenceStage*>(s)->SetEmbedder(embedder);
+            if (global_embedder)
+                static_cast<pipeline::InferenceStage*>(s)->SetGlobalEmbedder(global_embedder);
+        }
+        if (auto* s = pos_pipeline->GetStage("rule_eval")) {
+            auto* rs = static_cast<pipeline::RuleEvalStage*>(s);
+            rs->SetRuleEngine(rule_engine);
+            rs->SetKnowledgeGraph(kg);
+            if (vp) rs->SetVectorPath(vp);
+        }
+        if (auto* s = pos_pipeline->GetStage("reason")) {
+            static_cast<pipeline::ReasonStage*>(s)->SetReasoner(reasoner);
+            if (sam2_segmenter)
+                static_cast<pipeline::ReasonStage*>(s)->SetSam2Segmenter(sam2_segmenter);
+        }
+        if (auto* s = pos_pipeline->GetStage("export"))
+            static_cast<pipeline::ExportStage*>(s)->SetExporter(exporter);
+
+        // Per-position result callback → evolution routing
+        if (pos_def.evo != nullptr) {
+            auto* pc_raw = pos_def.pc.get();
+            auto* evo_raw = pos_def.evo.get();
+            pos_pipeline->SetResultCallback(
+                [pc_raw, evo_raw](int /*fid*/, const reasoner::ReasoningResult& result) {
+                    seat_aoi::OfferToEvolution(*evo_raw, pc_raw->LastContext(), result);
+                });
+        }
+
+        // Start pipeline
+        auto start_result = pos_pipeline->Start();
+        if (!start_result) {
+            return tl::make_unexpected(ErrorInfo{
+                ErrorCode::Pipeline_InvalidConfig,
+                "Pipeline start failed for position " + std::to_string(pos_def.key.second)
+                + ": " + start_result.error().message});
+        }
+
+        // Start evolution
+        PositionPipeline pp;
+        pp.key = pos_def.key;
+        pp.pipeline = std::move(pos_pipeline);
+        pp.patch_core = pos_def.pc;
+        if (pos_def.evo != nullptr) {
+            pp.evolution_stop_source = std::stop_source{};
+            pos_def.evo->Start(pp.evolution_stop_source.get_token());
+        }
+        pp.evolution = std::move(pos_def.evo);
+        position_pipelines.push_back(std::move(pp));
+
+        std::cout << "Pipeline: position " << pos_def.key.second
+                  << " (" << pos_def.key.first << ") ready\n";
+    }
+
+    // =========================================================================
+    // 10. Bayesian Auto-Tuning (optional, shared across all positions)
     // =========================================================================
     std::unique_ptr<tuning::TuningScheduler> tuning_scheduler;
     std::stop_source tuning_stop_source;
-
-    if (reasoner) {
-        auto tuning_result = TryCreateTuningScheduler(
-            pipeline_yaml, ks->Graph(), ks->Evolution(), *reasoner, *pipeline);
-        if (!tuning_result) {
-            std::cerr << "Tuning: setup failed: "
-                      << tuning_result.error().message << "\n";
-        } else if (*tuning_result != nullptr) {
-            tuning_scheduler = std::move(*tuning_result);
-            // 6. Start tuning thread
-            tuning_scheduler->Start(tuning_stop_source.get_token());
+    {
+        auto tuning_node = pipeline_yaml["pipeline"]["tuning"];
+        if (tuning_node.IsDefined() && tuning_node["enabled"].as<bool>(false) && ks) {
+            auto tuning_result = seat_aoi::CreateTuningScheduler(
+                std::move(tuning_node), ks, embedder);
+            if (tuning_result.has_value()) {
+                auto& [scheduler, stop_src] = *tuning_result;
+                tuning_scheduler = std::move(scheduler);
+                tuning_stop_source = std::move(stop_src);
+                std::cout << "TuningScheduler: started (GP+EI)\n";
+            } else {
+                std::cerr << "Warning: failed to start tuning scheduler: "
+                          << tuning_result.error().message << "\n";
+            }
         }
-    }
-
-    // =========================================================================
-    // 9b. Result callback for self-evolution (shared by headless and GUI modes)
-    //    Note: The callback set here is the evolution-aware variant.
-    //    GuiRunner will override it if evolution is disabled.
-    // =========================================================================
-    if (evolution != nullptr || !evolutions_map.empty()) {
-        pipeline->SetResultCallback(
-            [patch_core, &evo = evolution, &evos = evolutions_map, &pcs = patch_cores]
-            (int fid, const reasoner::ReasoningResult& result) {
-                (void)fid;
-                // Single-position evolution
-                if (evo != nullptr) {
-                    seat_aoi::OfferToEvolution(*evo, patch_core->LastContext(), result);
-                }
-                // Multi-position evolution
-                if (!evos.empty()) {
-                    sai::pipeline::BankKey key{result.surface_id, result.position_id};
-                    auto eit = evos.find(key);
-                    if (eit != evos.end()) {
-                        auto pit = pcs.find(key);
-                        if (pit != pcs.end()) {
-                            seat_aoi::OfferToEvolution(*eit->second, pit->second->LastContext(),
-                                             result);
-                        }
-                    }
-                }
-            });
-    }
-
-    // =========================================================================
-    // 10. Start Pipeline
-    // =========================================================================
-    auto start_result = pipeline->Start();
-    if (!start_result) {
-        return tl::make_unexpected(ErrorInfo{
-            ErrorCode::Pipeline_InvalidConfig,
-            "Pipeline start failed: " + start_result.error().message});
-    }
-
-    // =========================================================================
-    // 10b. Start self-evolution background threads
-    // =========================================================================
-    std::stop_source evo_ss;
-    if (evolution != nullptr) {
-        evolution->Start(evo_ss.get_token());
-        std::cout << "CoresetEvolution: started\n";
-    }
-    // Start per-position evolutions
-    for (auto& [key, evo] : evolutions_map) {
-        evo_stop_sources_map[key] = std::stop_source{};
-        evo->Start(evo_stop_sources_map[key].get_token());
-        std::cout << "CoresetEvolution: pos " << key.second << " started\n";
     }
 
     // =========================================================================
@@ -493,10 +486,8 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     // =========================================================================
     AssembledApp app;
     app.ctx = std::move(ctx);
-    app.pipeline = std::move(pipeline);
     app.embedder = embedder;
     app.gpu_pool = std::move(gpu_pool_owner);
-    app.patch_core = patch_core;
     app.rule_engine = rule_engine;
     app.exporter = exporter;
     app.knowledge_store = std::move(ks);
@@ -507,13 +498,9 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     app.reasoner = reasoner;
     app.feature_bank = feature_bank;
     app.vector_path = vp;
-    app.evolution = std::move(evolution);
     app.tuning_scheduler = std::move(tuning_scheduler);
     app.tuning_stop_source = std::move(tuning_stop_source);
-    app.evolution_stop_source = std::move(evo_ss);
-    app.patch_cores = std::move(patch_cores);
-    app.evolutions = std::move(evolutions_map);
-    app.evolution_stop_sources = std::move(evo_stop_sources_map);
+    app.positions = std::move(position_pipelines);
 
     return app;
 }
