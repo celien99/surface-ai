@@ -8,7 +8,14 @@ namespace sai::pipeline {
 
 CaptureStage::CaptureStage(std::string id, YAML::Node config, Pipeline* pipeline)
     : id_(std::move(id)), pipeline_(pipeline) {
-    (void)config;  // config consumed in OnInitialize
+    auto mode_str = config["trigger_mode"].as<std::string>("freerun");
+    if (mode_str == "hardware") {
+        trigger_mode_ = device::ICamera::TriggerMode::Hardware;
+    } else if (mode_str == "software") {
+        trigger_mode_ = device::ICamera::TriggerMode::Software;
+    } else {
+        trigger_mode_ = device::ICamera::TriggerMode::FreeRun;
+    }
 }
 
 auto CaptureStage::GetType() const noexcept -> StageType { return StageType::Capture; }
@@ -29,7 +36,7 @@ auto CaptureStage::OnStart(Context&) -> Result<void> {
     auto result = camera_->Connect();
     if (!result) return result;
 
-    result = camera_->SetTriggerMode(device::ICamera::TriggerMode::FreeRun);
+    result = camera_->SetTriggerMode(trigger_mode_);
     if (!result) return result;
 
     result = camera_->RegisterFrameCallback(

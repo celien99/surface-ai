@@ -12,6 +12,7 @@ pipeline:
       depends_on: []
       config:
         device: "mock_camera_0"
+        trigger_mode: "freerun"  # freerun | hardware | software
 
     - id: preprocess
       type: Preprocess

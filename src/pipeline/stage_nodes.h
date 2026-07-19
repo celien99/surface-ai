@@ -48,6 +48,7 @@ private:
     std::string id_;
     Pipeline* pipeline_ = nullptr;
     std::shared_ptr<sai::device::ICamera> camera_;
+    sai::device::ICamera::TriggerMode trigger_mode_ = sai::device::ICamera::TriggerMode::FreeRun;
     bool stub_ = true;
 };
 
