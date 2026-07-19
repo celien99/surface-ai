@@ -333,6 +333,20 @@ auto CoresetEvolution::Start(std::stop_token token) noexcept -> void {
             auto candidates = impl_->buffer.DrainAll();
             if (candidates.empty()) continue;
 
+            // ── Safety gate: skip evolution if candidate quality is poor ──
+            // Avoid polluting the coreset with undetected NG / low-normalcy frames.
+            double mean_normalcy = 0.0;
+            for (auto& c : candidates) mean_normalcy += c.normalcy_score;
+            mean_normalcy /= static_cast<double>(candidates.size());
+            if (mean_normalcy < 0.80) {
+                sai::infra::Logger::Get("detection").Log(
+                    sai::infra::LogLevel::Warning,
+                    "CoresetEvolution: skipping evolution — mean normalcy {:.3f} "
+                    "below 0.80 gate ({} candidates)",
+                    mean_normalcy, candidates.size());
+                continue;
+            }
+
             auto start = std::chrono::steady_clock::now();
 
             // Flatten candidate patches
