@@ -6,10 +6,6 @@ target_link_libraries(sai_plugin_manifest_validators_test PRIVATE sai::plugin GT
 include(GoogleTest)
 gtest_discover_tests(sai_plugin_manifest_validators_test)
 
-add_executable(sai_plugin_module_manager_test module_manager_test.cpp)
-target_link_libraries(sai_plugin_module_manager_test PRIVATE sai::plugin GTest::gtest_main)
-gtest_discover_tests(sai_plugin_module_manager_test)
-
 # The fixture plugin is a real SHARED library, dlopen'd by plugin_manager_test
 # at test time — deliberately not linked into the test executable below (that
 # would resolve its symbols statically and defeat the point of this test

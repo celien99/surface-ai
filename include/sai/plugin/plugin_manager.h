@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <memory>
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -12,19 +13,17 @@
 #include <sai/core/error.h>
 #include <sai/core/registry.h>
 #include <sai/core/type_id.h>
-#include <sai/plugin/capability_manager.h>
-#include <sai/plugin/license_manager.h>
 #include <sai/plugin/plugin.h>
-#include <sai/plugin/version_manager.h>
 
 namespace sai {
 
-// Runtime manager for dynamically loaded .so plugins. Holds a
-// Registry<IPlugin> (instantiation of the 1.2 template, not redefined) so
-// plugins can Resolve each other by TypeId, and so the rest of the
-// framework can resolve already-loaded plugins the same way. See
-// 1.3-core-plugin-system.md §3/§4/§5 — Context never holds a pointer to any
-// plugin instance; PluginManager drives IPlugin's lifecycle hooks itself.
+// PluginManager — dynamic .so plugin loader + capability/license/version validation.
+//
+// Batch T3 refactor: merged CapabilityManager, LicenseManager, VersionManager,
+// and ModuleManager into PluginManager.  6 classes → 2 (PluginManager + PluginManifest).
+//
+// ModuleManager deleted — its RegisterBuiltin was a trivial wrapper around
+// Context::RegisterModule; callers can call ctx.RegisterModule() directly.
 class PluginManager {
 public:
     explicit PluginManager(Context& context) noexcept;
@@ -35,27 +34,20 @@ public:
     PluginManager(PluginManager&&) = delete;
     PluginManager& operator=(PluginManager&&) = delete;
 
-    // Scans plugin.yaml files under `plugin_dir` (any depth) and builds a
-    // name -> PluginManifest index. Reads manifest text only — no dlopen,
-    // no version/capability/license validation (a pure discovery step, see
-    // §3 Design).
+    // Register a capability tag known to this deployment.
+    // Duplicate registration returns Core_TypeAlreadyRegistered.
+    auto RegisterKnownCapability(std::string capability) -> Result<void>;
+
+    // Scans plugin.yaml files under `plugin_dir` and builds the manifest index.
     auto DiscoverManifests(const std::filesystem::path& plugin_dir) -> Result<void>;
 
-    // Loads a plugin by name: recursively ensures its dependencies are
-    // loaded first (see §5 Workflow), then loads the plugin itself. If a
-    // plugin with the same TypeId is already in plugin_registry_, returns
-    // success immediately (idempotent).
+    // Loads a plugin by name (with recursive dependency resolution).
     auto Load(const std::string& plugin_name) -> Result<void>;
 
     [[nodiscard]] auto Resolve(TypeId id) const -> Result<std::shared_ptr<IPlugin>>;
 
-    // Application-wide stop entry point: calls OnStop on every loaded
-    // plugin in plugin_registry_, in the reverse of load_order_ (same
-    // rationale as Context::Stop()'s reverse shutdown, see §3 Design). The
-    // application entry point must call this before context.Stop(). Same
-    // error-handling policy as Context::Stop(): a single plugin's OnStop
-    // failure does not block the remaining plugins; the return value is the
-    // first error encountered during the walk (or success if all succeed).
+    // Application-wide shutdown: calls OnStop on every loaded plugin in
+    // reverse load order.
     auto Shutdown() -> Result<void>;
 
 private:
@@ -64,29 +56,27 @@ private:
                        std::unordered_set<std::string>& visiting) -> Result<void>;
     auto ResolveEach(const std::vector<PluginDependency>& deps,
                       std::unordered_set<std::string>& visiting) -> Result<void>;
-
-    // Tail-to-head recursion over load_order_, same shape as ResolveEach's
-    // head/tail recursion, walking the opposite direction to express
-    // "reverse of load order". `remaining` carries the not-yet-processed
-    // prefix length, `first_error` is the first failure seen so far
-    // (initially success); the base case is remaining == 0.
     auto ShutdownFrom(std::size_t remaining, Result<void> first_error) -> Result<void>;
 
     [[nodiscard]] auto FindManifest(const std::string& plugin_name) const
         -> Result<PluginManifest>;
 
+    // Inline validators (formerly VersionManager / LicenseManager / CapabilityManager)
+    [[nodiscard]] static auto CheckVersion(const VersionRange& required,
+                                            const SemVer& actual) noexcept -> Result<void>;
+    [[nodiscard]] static auto ValidateLicense(std::string_view token) noexcept -> Result<void>;
+    [[nodiscard]] auto ValidateCapabilities(
+        const std::vector<std::string>& declared) const -> Result<void>;
+
     Context& context_;
-    VersionManager version_manager_;
-    LicenseManager license_manager_;
-    CapabilityManager capability_manager_;
     Registry<IPlugin> plugin_registry_;
+
+    // Capability manager state (inline)
+    mutable std::shared_mutex cap_mutex_;
+    std::unordered_set<std::string> known_capabilities_;
+
     std::unordered_map<std::string, PluginManifest> manifest_index_;
     std::unordered_map<std::string, void*> library_handles_;
-    // Order in which plugins were successfully Register()'d into
-    // plugin_registry_ (appended inside LoadSingle); Registry<IPlugin> is
-    // backed by an unordered_map internally and does not preserve insertion
-    // order, so Shutdown() needs this separate, order-preserving record to
-    // call OnStop in the reverse of load order.
     std::vector<TypeId> load_order_;
 };
 

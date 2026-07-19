@@ -2,10 +2,6 @@ find_package(yaml-cpp CONFIG REQUIRED)
 
 add_library(sai_plugin STATIC
     manifest.cpp
-    version_manager.cpp
-    capability_manager.cpp
-    license_manager.cpp
-    module_manager.cpp
     plugin_manager.cpp
 )
 add_library(sai::plugin ALIAS sai_plugin)

@@ -1,7 +1,5 @@
-#include <sai/plugin/capability_manager.h>
-#include <sai/plugin/license_manager.h>
 #include <sai/plugin/manifest.h>
-#include <sai/plugin/version_manager.h>
+#include <sai/plugin/plugin_manager.h>
 
 #include <cstdio>
 #include <filesystem>
@@ -18,88 +16,77 @@ constexpr sai::VersionRange kRange{.min_inclusive = kMinInclusive, .max_exclusiv
 
 }  // namespace
 
-// --- VersionManager -------------------------------------------------------
+// --- CheckVersion (formerly VersionManager::CheckCompatible) ----------------
 
 TEST(VersionManagerTest, InRangeVersionIsAccepted) {
-    auto result = sai::VersionManager::CheckCompatible(kRange, sai::SemVer{1, 5, 3});
-
+    auto result = sai::PluginManager::CheckVersion(kRange, sai::SemVer{1, 5, 3});
     EXPECT_TRUE(result.has_value());
 }
 
 TEST(VersionManagerTest, BelowMinInclusiveIsRejected) {
-    auto result = sai::VersionManager::CheckCompatible(kRange, sai::SemVer{1, 1, 9});
-
+    auto result = sai::PluginManager::CheckVersion(kRange, sai::SemVer{1, 1, 9});
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, sai::ErrorCode::Plugin_VersionIncompatible);
 }
 
 TEST(VersionManagerTest, ExactlyMinInclusiveIsAccepted) {
-    auto result = sai::VersionManager::CheckCompatible(kRange, kMinInclusive);
-
+    auto result = sai::PluginManager::CheckVersion(kRange, kMinInclusive);
     EXPECT_TRUE(result.has_value());
 }
 
 TEST(VersionManagerTest, ExactlyMaxExclusiveIsRejected) {
-    auto result = sai::VersionManager::CheckCompatible(kRange, kMaxExclusive);
-
+    auto result = sai::PluginManager::CheckVersion(kRange, kMaxExclusive);
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, sai::ErrorCode::Plugin_VersionIncompatible);
 }
 
 TEST(VersionManagerTest, AboveMaxExclusiveIsRejected) {
-    auto result = sai::VersionManager::CheckCompatible(kRange, sai::SemVer{2, 3, 0});
-
+    auto result = sai::PluginManager::CheckVersion(kRange, sai::SemVer{2, 3, 0});
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, sai::ErrorCode::Plugin_VersionIncompatible);
 }
 
-// --- CapabilityManager ------------------------------------------------------
+// --- RegisterKnownCapability (formerly CapabilityManager) -------------------
 
 TEST(CapabilityManagerTest, ValidateSubsetOfRegisteredCapabilitiesSucceeds) {
-    sai::CapabilityManager manager;
-    ASSERT_TRUE(manager.RegisterKnownCapability("camera.gige").has_value());
-    ASSERT_TRUE(manager.RegisterKnownCapability("detector.onnx").has_value());
+    sai::Context ctx;
+    sai::PluginManager pm(ctx);
+    ASSERT_TRUE(pm.RegisterKnownCapability("camera.gige").has_value());
+    ASSERT_TRUE(pm.RegisterKnownCapability("detector.onnx").has_value());
 
-    auto result = manager.Validate({"camera.gige"});
-
+    auto result = pm.ValidateCapabilities({"camera.gige"});
     EXPECT_TRUE(result.has_value());
 }
 
 TEST(CapabilityManagerTest, ValidateUnregisteredCapabilityReturnsCapabilityUnsupported) {
-    sai::CapabilityManager manager;
-    ASSERT_TRUE(manager.RegisterKnownCapability("camera.gige").has_value());
+    sai::Context ctx;
+    sai::PluginManager pm(ctx);
+    ASSERT_TRUE(pm.RegisterKnownCapability("camera.gige").has_value());
 
-    auto result = manager.Validate({"detector.onnx"});
-
+    auto result = pm.ValidateCapabilities({"detector.onnx"});
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, sai::ErrorCode::Plugin_CapabilityUnsupported);
 }
 
 TEST(CapabilityManagerTest, DuplicateRegisterReturnsTypeAlreadyRegistered) {
-    sai::CapabilityManager manager;
-    ASSERT_TRUE(manager.RegisterKnownCapability("camera.gige").has_value());
+    sai::Context ctx;
+    sai::PluginManager pm(ctx);
+    ASSERT_TRUE(pm.RegisterKnownCapability("camera.gige").has_value());
 
-    auto second = manager.RegisterKnownCapability("camera.gige");
-
+    auto second = pm.RegisterKnownCapability("camera.gige");
     ASSERT_FALSE(second.has_value());
     EXPECT_EQ(second.error().code, sai::ErrorCode::Core_TypeAlreadyRegistered);
 }
 
-// --- LicenseManager ----------------------------------------------------------
+// --- ValidateLicense (formerly LicenseManager) -------------------------------
 
 TEST(LicenseManagerTest, NonEmptyTokenIsValid) {
-    sai::LicenseManager manager;
-
-    auto result = manager.Validate("some-license-token");
-
+    auto result = sai::PluginManager::ValidateLicense("some-license-token");
     EXPECT_TRUE(result.has_value());
 }
 
 TEST(LicenseManagerTest, EmptyTokenIsInvalid) {
-    sai::LicenseManager manager;
-
-    auto result = manager.Validate("");
-
+    auto result = sai::PluginManager::ValidateLicense("");
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, sai::ErrorCode::Plugin_LicenseInvalid);
 }
@@ -175,6 +162,5 @@ TEST_F(PluginManifestFixture, LoadManifestRoundTripsAllFields) {
 
 TEST(LoadManifestTest, MissingFileReturnsError) {
     auto result = sai::LoadManifest(std::filesystem::path("/nonexistent/plugin.yaml"));
-
     EXPECT_FALSE(result.has_value());
 }
