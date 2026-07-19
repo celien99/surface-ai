@@ -467,12 +467,11 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     {
         auto tuning_node = pipeline_yaml["pipeline"]["tuning"];
         if (tuning_node.IsDefined() && tuning_node["enabled"].as<bool>(false) && ks) {
-            auto tuning_result = seat_aoi::CreateTuningScheduler(
-                std::move(tuning_node), ks, embedder);
-            if (tuning_result.has_value()) {
-                auto& [scheduler, stop_src] = *tuning_result;
-                tuning_scheduler = std::move(scheduler);
-                tuning_stop_source = std::move(stop_src);
+            auto tuning_result = TryCreateTuningScheduler(
+                pipeline_yaml, *kg, *kg_evolution, *reasoner,
+                *position_pipelines[0].pipeline);
+            if (tuning_result.has_value() && *tuning_result) {
+                tuning_scheduler = std::move(*tuning_result);
                 std::cout << "TuningScheduler: started (GP+EI)\n";
             } else {
                 std::cerr << "Warning: failed to start tuning scheduler: "

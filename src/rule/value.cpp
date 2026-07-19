@@ -27,6 +27,13 @@ auto Value::Of(bool v) -> Value {
     return val;
 }
 
+auto Value::Of(std::int64_t v) -> Value {
+    Value val;
+    val.kind_ = Kind::Scalar;
+    val.scalar_ = Scalar{static_cast<double>(v)};
+    return val;
+}
+
 auto Value::OfList(std::vector<Value> v) -> Value {
     Value val;
     val.kind_ = Kind::List;

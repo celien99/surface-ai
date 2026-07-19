@@ -479,8 +479,6 @@ auto KnowledgeGraph::EdgeCount() const noexcept -> std::size_t {
     return 0;
 }
 
-}  // namespace sai::knowledge
-
 // ── Evolution methods (merged from KnowledgeEvolution, Batch T3) ───────────
 
 namespace {
@@ -635,3 +633,4 @@ auto KnowledgeGraph::GetEvolutionSince(
     sqlite3_finalize(stmt);
     return entries;
 }
+}  // namespace sai::knowledge

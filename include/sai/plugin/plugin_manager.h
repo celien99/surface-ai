@@ -50,6 +50,13 @@ public:
     // reverse load order.
     auto Shutdown() -> Result<void>;
 
+    // Inline validators (formerly VersionManager / LicenseManager / CapabilityManager)
+    [[nodiscard]] static auto CheckVersion(const VersionRange& required,
+                                            const SemVer& actual) noexcept -> Result<void>;
+    [[nodiscard]] static auto ValidateLicense(std::string_view token) noexcept -> Result<void>;
+    [[nodiscard]] auto ValidateCapabilities(
+        const std::vector<std::string>& declared) const -> Result<void>;
+
 private:
     auto LoadSingle(const PluginManifest& manifest) -> Result<void>;
     auto EnsureLoaded(const std::string& plugin_name,
@@ -60,13 +67,6 @@ private:
 
     [[nodiscard]] auto FindManifest(const std::string& plugin_name) const
         -> Result<PluginManifest>;
-
-    // Inline validators (formerly VersionManager / LicenseManager / CapabilityManager)
-    [[nodiscard]] static auto CheckVersion(const VersionRange& required,
-                                            const SemVer& actual) noexcept -> Result<void>;
-    [[nodiscard]] static auto ValidateLicense(std::string_view token) noexcept -> Result<void>;
-    [[nodiscard]] auto ValidateCapabilities(
-        const std::vector<std::string>& declared) const -> Result<void>;
 
     Context& context_;
     Registry<IPlugin> plugin_registry_;

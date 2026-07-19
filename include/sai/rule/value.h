@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -18,6 +19,7 @@ public:
     static auto Of(double v) -> Value;
     static auto Of(std::string v) -> Value;
     static auto Of(bool v) -> Value;
+    static auto Of(std::int64_t v) -> Value;
     static auto OfList(std::vector<Value> v) -> Value;
 
     auto GetKind() const noexcept -> Kind;

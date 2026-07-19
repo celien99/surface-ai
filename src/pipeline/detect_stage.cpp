@@ -41,13 +41,13 @@ auto DetectStage::Process(StageInput input) -> Result<StageOutput> {
             // ── Cold-start bootstrap ──
             if (bootstrap_enabled_) {
                 auto& state = bootstrap_states_[key];
-                auto patch_count = emb->Meta().grid.grid_h * emb->Meta().grid.grid_w;
+                auto patch_count = emb->Meta().grid[0] * emb->Meta().grid[1];
                 auto dim = emb->Meta().dim;
 
                 if (state.dim == 0) {
                     state.dim = dim;
-                    state.grid_h = emb->Meta().grid.grid_h;
-                    state.grid_w = emb->Meta().grid.grid_w;
+                    state.grid_h = emb->Meta().grid[0];
+                    state.grid_w = emb->Meta().grid[1];
                 }
 
                 // Uniform-sample patches into the bootstrap buffer.
