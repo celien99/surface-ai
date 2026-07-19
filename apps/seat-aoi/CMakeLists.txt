@@ -25,7 +25,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
     target_link_libraries(seat_aoi PRIVATE
         sai::visualization
         sai::pipeline
-        sai::scheduler
         sai::tuning
         sai::rule
         sai::reasoner

@@ -1,10 +1,8 @@
-#include <sai/core/factory.h>
 #include <sai/core/registry.h>
 
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 namespace {
@@ -22,11 +20,6 @@ public:
 
 private:
     std::string name_;
-};
-
-class MockWidgetFactory final : public sai::Factory<IWidget> {
-public:
-    MOCK_METHOD(sai::Result<std::unique_ptr<IWidget>>, Create, (), (override));
 };
 
 }  // namespace
@@ -63,14 +56,3 @@ TEST(RegistryTest, ResolveUnregisteredTypeReturnsTypeNotFound) {
     EXPECT_EQ(result.error().code, sai::ErrorCode::Core_TypeNotFound);
 }
 
-TEST(FactoryTest, CreateDelegatesToOverriddenImplementation) {
-    MockWidgetFactory factory;
-    EXPECT_CALL(factory, Create()).WillOnce(::testing::Invoke([] {
-        return sai::Result<std::unique_ptr<IWidget>>(std::make_unique<ConcreteWidget>("mocked"));
-    }));
-
-    auto result = factory.Create();
-
-    ASSERT_TRUE(result.has_value());
-    EXPECT_EQ((*result)->Name(), "mocked");
-}

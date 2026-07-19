@@ -11,7 +11,6 @@ target_include_directories(sai_scheduler_test PRIVATE
 )
 
 target_link_libraries(sai_scheduler_test PRIVATE
-    sai::scheduler
     sai::pipeline
     GTest::gtest
     GTest::gtest_main

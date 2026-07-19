@@ -15,6 +15,7 @@ target_sources(sai_pipeline PRIVATE
     reason_stage.cpp
     export_stage.cpp
     inspection_recorder.cpp
+    scheduler.cpp
 )
 
 target_include_directories(sai_pipeline PUBLIC
@@ -35,6 +36,5 @@ target_link_libraries(sai_pipeline PUBLIC
     sai::reasoner
     sai::knowledge
     sai::retrieval
-    sai::scheduler
     yaml-cpp::yaml-cpp
 )
