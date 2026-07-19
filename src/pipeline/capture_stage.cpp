@@ -23,10 +23,9 @@ auto CaptureStage::GetId() const -> std::string_view { return id_; }
 
 auto CaptureStage::OnInitialize(Context& ctx) -> Result<void> {
     (void)ctx;
-    // When ICamera is resolvable via Context (e.g. ctx.Resolve<device::ICamera>()),
-    // the stub_ flag is cleared and the camera lifecycle hooks in OnStart/OnStop
-    // activate.  Currently ICamera (IPlugin) does not satisfy the IService
-    // constraint required by Context::Resolve<T>, so stub_ stays true.
+    // ICamera (via IPlugin) is injected externally via SetCamera() before Start().
+    // When no camera is set, stub_ remains true and OnStart/Process operate in
+    // passthrough mode.
     return {};
 }
 
@@ -59,9 +58,9 @@ auto CaptureStage::OnStop(Context&) -> Result<void> {
 }
 
 auto CaptureStage::Process(StageInput input) -> Result<StageOutput> {
-    // Passthrough: frames arrive via Pipeline::Submit (from camera callback),
-    // not through Process. Process handles the case where frames are already
-    // in the input queue (submitted externally or from upstream stubs).
+    // Passthrough: frames arrive via Pipeline::Submit (from camera callback or
+    // external submission) into this stage's input queue. The Capture worker
+    // dequeues and passes RawImage through to the downstream Preprocess stage.
     if (auto* img = input.GetIf<sai::image::RawImage>()) {
         return StageOutput::Make(std::move(*img));
     }

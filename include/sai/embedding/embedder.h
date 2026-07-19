@@ -14,7 +14,7 @@
 
 namespace sai::embedding {
 
-// IEmbedder——统一特征提取接口。不派生自 IService/IModule；
+// IEmbedder——统一特征提取接口，通过 setter 注入管线。
 // Embedder 是算法组件，由 Detector 或 Pipeline 直接持有。
 // 输入为基类 Image 引用，实现层负责校验 GPU 存储类型。
 class IEmbedder : public sai::Object {

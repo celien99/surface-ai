@@ -22,8 +22,8 @@ auto RuleEvalStage::GetType() const noexcept -> StageType { return StageType::Ru
 auto RuleEvalStage::GetId() const -> std::string_view { return id_; }
 
 auto RuleEvalStage::OnInitialize(Context& /*ctx*/) -> Result<void> {
-    // RuleEngine, KnowledgeGraph, VectorPath are concrete classes, not
-    // IService subtypes — set externally via setters before Start().
+    // RuleEngine, KnowledgeGraph, VectorPath are concrete classes —
+    // set externally via setters before Start().
     if (!rule_file_.empty() && rule_engine_) {
         auto load_result = rule_engine_->LoadFromYAML(rule_file_);
         if (!load_result) return load_result;
