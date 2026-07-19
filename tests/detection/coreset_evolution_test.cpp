@@ -334,15 +334,11 @@ TEST(MultiSignalConsensusTest, LowNormalcyFails) {
     EXPECT_FALSE(ok);
 }
 
-// ── CoresetUpdater (skeleton) ─────────────────────────────────
+// ── CandidateBuffer drain path ───────────────────────────────────
 
-TEST(CoresetUpdaterSkeletonTest, LightGreedyPreservesDim) {
-    // Verify that LightGreedySelect produces target_size x dim output.
-    // Since LightGreedySelect is in an anonymous namespace, test indirectly
-    // by checking that the prefilter won't accidentally change dimensions.
-    // Full integration test in Task 5.
-
-    // This test just verifies the buffer draining path.
+TEST(CandidateBufferDrainTest, DrainPreservesPatches) {
+    // Verify that CandidateBuffer::DrainAll correctly drains appended
+    // EvolutionCandidate entries with intact patch metadata.
     CandidateBuffer::Config buf_cfg;
     buf_cfg.trigger_frames = 2;
     CandidateBuffer buf(buf_cfg);

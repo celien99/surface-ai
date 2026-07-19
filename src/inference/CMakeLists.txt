@@ -39,13 +39,6 @@ if(CUDAToolkit_FOUND)
     endif()
 endif()
 
-# ONNX Runtime: optional CPU inference backend
-find_package(onnxruntime CONFIG QUIET)
-if(onnxruntime_FOUND)
-    message(STATUS "ONNX Runtime found — enabling CPU inference engine")
-    list(APPEND SAI_INFERENCE_SOURCES onnx_engine.cpp)
-endif()
-
 add_library(sai_inference STATIC ${SAI_INFERENCE_SOURCES})
 add_library(sai::inference ALIAS sai_inference)
 
@@ -72,8 +65,5 @@ if(CUDAToolkit_FOUND AND NVINFER_INCLUDE_DIR)
     if(NVINFER_PLUGIN_LIB)
         target_link_libraries(sai_inference PUBLIC ${NVINFER_PLUGIN_LIB})
     endif()
-endif()
-if(onnxruntime_FOUND)
-    target_link_libraries(sai_inference PUBLIC onnxruntime::onnxruntime)
 endif()
 target_compile_features(sai_inference PUBLIC cxx_std_20)

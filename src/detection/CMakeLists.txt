@@ -15,7 +15,6 @@ set(SAI_DETECTION_SOURCES
     pca_detector.cpp
     normality_profile.cpp
     candidate_buffer.cpp
-    coreset_updater.cpp
     multi_signal_consensus.cpp
     coreset_evolution.cpp
 )
