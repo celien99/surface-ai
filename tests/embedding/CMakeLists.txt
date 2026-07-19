@@ -12,7 +12,7 @@ add_executable(sai_feature_cache_test feature_cache_test.cpp)
 target_include_directories(sai_feature_cache_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(sai_feature_cache_test PRIVATE sai::embedding GTest::gtest_main)
 
-add_executable(sai_embedder_test embedder_test.cpp)
+add_executable(sai_embedder_test embedder_test.cpp ${CMAKE_SOURCE_DIR}/tests/inference/mock_engine.cpp)
 target_include_directories(sai_embedder_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(sai_embedder_test PRIVATE sai::embedding sai::inference sai::image GTest::gtest_main)
 

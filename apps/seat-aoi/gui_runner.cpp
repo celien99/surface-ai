@@ -231,7 +231,8 @@ auto RunGui(int argc, char* argv[], AssembledApp& app, const CliArgs& cli) -> in
             (void)pipeline_ptr->Submit(std::move(img));
         });
     (void)camera->Connect();
-    (void)camera->SetTriggerMode(device::ICamera::TriggerMode::FreeRun);
+    // FakeCamera is always free-run (generates frames on a timer).
+    // TriggerMode is not applicable — no external hardware trigger.
     (void)camera->StartAcquisition();
 
     engine.addImageProvider("pipeline", frame_provider);

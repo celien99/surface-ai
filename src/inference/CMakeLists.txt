@@ -6,7 +6,6 @@ find_package(tl-expected CONFIG REQUIRED)
 find_package(CUDAToolkit QUIET)
 
 set(SAI_INFERENCE_SOURCES
-    mock_engine.cpp
     multi_layer_aggregator.cpp
     saliency_mask.cpp
 )

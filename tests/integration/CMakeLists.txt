@@ -21,6 +21,7 @@ target_include_directories(sai_integration_acquisition_to_export_test PRIVATE
 # Task 9: M3 推理管线端到端集成测试
 add_executable(sai_integration_inference_pipeline_test
     inference_pipeline_test.cpp
+    ${CMAKE_SOURCE_DIR}/tests/inference/mock_engine.cpp
 )
 target_include_directories(sai_integration_inference_pipeline_test PRIVATE
     ${CMAKE_SOURCE_DIR}/include
