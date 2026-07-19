@@ -31,7 +31,7 @@ auto ExportStage::OnStart(Context&) -> Result<void> { return {}; }
 auto ExportStage::OnStop(Context&) -> Result<void> { return {}; }
 
 auto ExportStage::Process(StageInput input) -> Result<StageOutput> {
-    if (auto* result = std::get_if<sai::reasoner::ReasoningResult>(&input)) {
+    if (auto* result = input.GetIf<sai::reasoner::ReasoningResult>()) {
         if (!stub_ && exporter_) {
             // Build InspectionResult from ReasoningResult
             io::InspectionResult inspection;
@@ -68,7 +68,7 @@ auto ExportStage::Process(StageInput input) -> Result<StageOutput> {
                 frame_image.has_value() ? &*frame_image : nullptr);
             if (!export_result) return tl::make_unexpected(export_result.error());
         }
-        return StageOutput(std::move(*result));
+        return StageOutput::Make(std::move(*result));
     }
     return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_StageTypeMismatch,
         "Export expects ReasoningResult input"});

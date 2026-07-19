@@ -37,6 +37,10 @@ namespace sai::detection {
 struct DetectionResult;
 }  // namespace sai::detection
 
+namespace sai::reasoner {
+struct ReasoningResult;
+}  // namespace sai::reasoner
+
 namespace sai::scheduler {
 class Scheduler;
 }  // namespace sai::scheduler

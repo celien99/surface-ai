@@ -55,8 +55,8 @@ auto CaptureStage::Process(StageInput input) -> Result<StageOutput> {
     // Passthrough: frames arrive via Pipeline::Submit (from camera callback),
     // not through Process. Process handles the case where frames are already
     // in the input queue (submitted externally or from upstream stubs).
-    if (auto* img = std::get_if<sai::image::RawImage>(&input)) {
-        return StageOutput(std::move(*img));
+    if (auto* img = input.GetIf<sai::image::RawImage>()) {
+        return StageOutput::Make(std::move(*img));
     }
     return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_StageTypeMismatch,
         "Capture expects RawImage input"});

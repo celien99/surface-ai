@@ -3,6 +3,7 @@
 #include <chrono>
 #include <filesystem>
 
+#include <sai/pipeline/rule_eval_output.h>
 #include <sai/detection/detection_result.h>
 #include <sai/rule/rule_engine.h>
 #include <sai/rule/fact_base.h>
@@ -38,7 +39,7 @@ auto RuleEvalStage::OnStart(Context&) -> Result<void> { return {}; }
 auto RuleEvalStage::OnStop(Context&) -> Result<void> { return {}; }
 
 auto RuleEvalStage::Process(StageInput input) -> Result<StageOutput> {
-    if (auto* det = std::get_if<sai::detection::DetectionResult>(&input)) {
+    if (auto* det = input.GetIf<sai::detection::DetectionResult>()) {
         rule::FactBase fb;
 
         if (!stub_ && rule_engine_) {
@@ -146,11 +147,11 @@ auto RuleEvalStage::Process(StageInput input) -> Result<StageOutput> {
                     machine_verdict, surface_id, now_us);
             }
 
-            return StageOutput(RuleEvalOutput{std::move(fb), std::move(resolved)});
+            return StageOutput::Make(RuleEvalOutput{std::move(fb), std::move(resolved)});
         }
 
         // Stub: return empty RuleEvalOutput
-        return StageOutput(RuleEvalOutput{std::move(fb), {}});
+        return StageOutput::Make(RuleEvalOutput{std::move(fb), {}});
     }
     return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_StageTypeMismatch,
         "RuleEval expects DetectionResult input"});

@@ -1,5 +1,6 @@
 #include "stage_nodes.h"
 
+#include <sai/pipeline/rule_eval_output.h>
 #include <sai/rule/rule_engine.h>
 #include <sai/reasoner/reasoner.h>
 #include <sai/reasoner/decision_tree.h>
@@ -27,7 +28,7 @@ auto ReasonStage::OnStart(Context&) -> Result<void> { return {}; }
 auto ReasonStage::OnStop(Context&) -> Result<void> { return {}; }
 
 auto ReasonStage::Process(StageInput input) -> Result<StageOutput> {
-    if (auto* eval_output = std::get_if<RuleEvalOutput>(&input)) {
+    if (auto* eval_output = input.GetIf<RuleEvalOutput>()) {
         sai::reasoner::ReasoningResult result;
 
         if (!stub_ && reasoner_) {
@@ -53,7 +54,7 @@ auto ReasonStage::Process(StageInput input) -> Result<StageOutput> {
             (void)sam2_segmenter_;  // reserved for M5 spatial reasoning
         }
 
-        return StageOutput(std::move(result));
+        return StageOutput::Make(std::move(result));
     }
     return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_StageTypeMismatch,
         "Reason expects RuleEvalOutput input"});

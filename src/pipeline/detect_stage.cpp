@@ -20,7 +20,7 @@ auto DetectStage::OnStart(Context&) -> Result<void> { return {}; }
 auto DetectStage::OnStop(Context&) -> Result<void> { return {}; }
 
 auto DetectStage::Process(StageInput input) -> Result<StageOutput> {
-    if (auto* emb = std::get_if<sai::embedding::Embedding>(&input)) {
+    if (auto* emb = input.GetIf<sai::embedding::Embedding>()) {
         sai::detection::DetectionResult result;
 
         // Select detector by (surface_id, position_id)
@@ -41,7 +41,7 @@ auto DetectStage::Process(StageInput input) -> Result<StageOutput> {
             result.surface_id = emb->SurfaceId();
         }
         result.position_id = emb->PositionId();
-        return StageOutput(std::move(result));
+        return StageOutput::Make(std::move(result));
     }
     return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_StageTypeMismatch,
         "Detect expects Embedding input"});

@@ -23,7 +23,7 @@ auto InferenceStage::OnStart(Context&) -> Result<void> { return {}; }
 auto InferenceStage::OnStop(Context&) -> Result<void> { return {}; }
 
 auto InferenceStage::Process(StageInput input) -> Result<StageOutput> {
-    if (auto* img = std::get_if<sai::image::SurfaceImage>(&input)) {
+    if (auto* img = input.GetIf<sai::image::SurfaceImage>()) {
         // Primary: Patch embedder (DINOv3 → patch features for PatchCore)
         sai::embedding::Embedding embedding = [&]() -> sai::embedding::Embedding {
             if (!stub_ && embedder_) {
@@ -59,7 +59,7 @@ auto InferenceStage::Process(StageInput input) -> Result<StageOutput> {
             embedding.SetPositionId(img_meta.position_id);
         }
 
-        return StageOutput(std::move(embedding));
+        return StageOutput::Make(std::move(embedding));
     }
     return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_StageTypeMismatch,
         "Inference expects SurfaceImage input"});

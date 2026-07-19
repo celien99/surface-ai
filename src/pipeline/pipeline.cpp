@@ -271,7 +271,7 @@ auto Pipeline::Start() -> Result<void> {
                         // and forwarded to Inference, so we snapshot raw bytes.
                         if (node_ptr->GetType() == StageType::Preprocess) {
                             auto& variant = result.value();
-                            if (auto* si = std::get_if<sai::image::SurfaceImage>(&variant)) {
+                            if (auto* si = variant.GetIf<sai::image::SurfaceImage>()) {
                                 SetFrameImage(*si);
                             }
                         }
@@ -279,7 +279,7 @@ auto Pipeline::Start() -> Result<void> {
                         // M7: invoke detection callback for live defect overlay
                         if (detection_callback_ && node_ptr->GetType() == StageType::Detect) {
                             auto& variant = result.value();
-                            if (auto* dr = std::get_if<sai::detection::DetectionResult>(&variant)) {
+                            if (auto* dr = variant.GetIf<sai::detection::DetectionResult>()) {
                                 detection_callback_(*dr);
                             }
                         }
@@ -287,7 +287,7 @@ auto Pipeline::Start() -> Result<void> {
                         // M7: invoke result callback if set (Export stage only, last stage in chain)
                         if (result_callback_ && node_ptr->GetType() == StageType::Export) {
                             auto& variant = result.value();
-                            if (auto* rr = std::get_if<sai::reasoner::ReasoningResult>(&variant)) {
+                            if (auto* rr = variant.GetIf<sai::reasoner::ReasoningResult>()) {
                                 int frame_id = frame_counter_.fetch_add(
                                     1, std::memory_order_relaxed);
                                 result_callback_(frame_id, *rr);
@@ -299,7 +299,7 @@ auto Pipeline::Start() -> Result<void> {
                         EnqueueOutputs(
                             *stage_id_sp,
                             std::make_unique<StageOutput>(
-                                std::move(result.value())));
+                                std::move(result).value()));
                     } else {
                         metrics_ptr->frames_failed.fetch_add(
                             1, std::memory_order_relaxed);
@@ -330,7 +330,7 @@ auto Pipeline::Submit(sai::image::RawImage image) -> Result<void> {
             "No entry stage queue found for: " + entry_stage_id_});
     }
 
-    auto output = std::make_unique<StageOutput>(std::move(image));
+    auto output = std::make_unique<StageOutput>(StageOutput::Make(std::move(image)));
     it->second->PushBlocking(std::move(output));
     return {};
 }
