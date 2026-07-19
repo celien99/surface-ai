@@ -85,6 +85,11 @@ public:
         return old;
     }
 
+    // 只读访问当前 FeatureBank（用于进化后自检验证）。
+    [[nodiscard]] auto GetFeatureBank() const noexcept -> const FeatureBank* {
+        return feature_bank_.get();
+    }
+
     // ── 最近一帧检测上下文（供 CoresetEvolution 访问） ──
     // 每次 Detect() 调用后更新。调用方在 ResultCallback 中使用。
     struct DetectionContext {

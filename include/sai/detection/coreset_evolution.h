@@ -188,6 +188,15 @@ struct EvolutionConfig {
     // to replace stale patches with fresh ones. Disabled by default to avoid
     // unexpected rebuilds during production.
     bool drift_auto_rebuild = false;
+
+    // ── Self-validation ──
+    // After each incremental swap, sample old bank patches and query the new
+    // bank to verify coverage did not degrade. If new coverage drops below
+    // old_coverage * validation_degradation_threshold, the swap is rejected
+    // and the old bank is restored.
+    bool evolution_self_validation = true;
+    float validation_degradation_threshold = 0.80F;  // 20% degradation tolerance
+    std::size_t validation_sample_count = 100;        // patches sampled from old bank
 };
 
 // ── 更新统计 ──

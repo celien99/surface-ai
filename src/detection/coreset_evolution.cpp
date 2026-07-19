@@ -145,6 +145,12 @@ auto EvolutionConfig::FromYaml(const YAML::Node& node) -> Result<EvolutionConfig
                 m["max_incremental_updates"].as<std::size_t>(100);
             cfg.drift_auto_rebuild =
                 m["drift_auto_rebuild"].as<bool>(false);
+            cfg.evolution_self_validation =
+                m["self_validation"].as<bool>(true);
+            cfg.validation_degradation_threshold =
+                m["validation_degradation_threshold"].as<float>(0.80F);
+            cfg.validation_sample_count =
+                m["validation_sample_count"].as<std::size_t>(100);
         }
     } catch (const YAML::Exception& e) {
         return tl::make_unexpected(ErrorInfo{
@@ -476,6 +482,65 @@ auto CoresetEvolution::Start(std::stop_token token) noexcept -> void {
                 impl_->active_profile = NormalityProfile::ComputeFast(
                     *impl_->standby_bank, impl_->cfg.normality_k,
                     100, impl_->cfg.tail_ratio_max);
+
+                // ── Self-validation ──
+                if (impl_->cfg.evolution_self_validation
+                    && impl_->standby_bank
+                    && impl_->standby_bank->NumSamples() > 0) {
+                    auto* new_fb = impl_->detector.GetFeatureBank();
+                    if (new_fb && new_fb->NumSamples() > 0) {
+                        auto old_vecs = impl_->standby_bank->ExtractAllVectors();
+                        auto old_n = impl_->standby_bank->NumSamples();
+                        auto sample_n = std::min(impl_->cfg.validation_sample_count, old_n);
+                        auto old_dim = impl_->standby_bank->Dim();
+
+                        // Uniform sample from old bank
+                        std::vector<float> sampled;
+                        sampled.reserve(sample_n * old_dim);
+                        auto stride = old_n / sample_n;
+                        if (stride < 1) stride = 1;
+                        for (std::size_t i = 0; i < sample_n; ++i) {
+                            auto idx = i * stride;
+                            if (idx >= old_n) idx = old_n - 1;
+                            auto offset = idx * old_dim;
+                            sampled.insert(sampled.end(),
+                                           old_vecs.begin() + static_cast<std::ptrdiff_t>(offset),
+                                           old_vecs.begin() + static_cast<std::ptrdiff_t>(offset + old_dim));
+                        }
+
+                        auto dists = new_fb->Search(sampled.data(), sample_n,
+                                                    impl_->cfg.normality_k);
+                        std::size_t covered = 0;
+                        float p50 = impl_->active_profile.p50;
+                        for (std::size_t i = 0; i < sample_n; ++i) {
+                            auto kth = dists[i * impl_->cfg.normality_k
+                                            + impl_->cfg.normality_k - 1];
+                            if (kth < p50) ++covered;
+                        }
+                        float new_coverage = static_cast<float>(covered) / static_cast<float>(sample_n);
+
+                        // Old bank self-coverage: by p95 definition ~95% of self-patches
+                        // are within p50. Use standby_profile.self_normalcy as proxy.
+                        float old_coverage = impl_->standby_profile.self_normalcy;
+                        if (old_coverage <= 0.0F) old_coverage = 0.50F; // fallback
+
+                        if (new_coverage < old_coverage * impl_->cfg.validation_degradation_threshold) {
+                            sai::infra::Logger::Get("detection").Log(
+                                sai::infra::LogLevel::Error,
+                                "CoresetEvolution: self-validation FAILED — "
+                                "new coverage {:.3f} < old coverage {:.3f} * {:.2f}. "
+                                "Rejecting swap, restoring old bank.",
+                                new_coverage, old_coverage,
+                                impl_->cfg.validation_degradation_threshold);
+
+                            // Swap back: restore old bank into detector
+                            auto rejected = impl_->detector.SwapFeatureBank(
+                                std::move(impl_->standby_bank));
+                            impl_->standby_bank = std::move(rejected);
+                            impl_->active_profile = std::move(impl_->standby_profile);
+                        }
+                    }
+                }
             }
 
             // ── Long-term maintenance: periodic full rebuild ──

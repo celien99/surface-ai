@@ -4,6 +4,7 @@
 // Each class is defined in its own *_stage.cpp file.
 // stage_factory.cpp includes this to construct stages by type.
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -126,11 +127,42 @@ public:
         return default_detector_;
     }
 
+    // ── Cold-start bootstrap ──
+    // When enabled, unseen BankKeys trigger bootstrap instead of falling back
+    // to default_detector_. Patches are accumulated into a buffer; once enough
+    // frames have been collected, a FeatureBank + PatchCore are built and
+    // registered as a new detector. The caller is notified via callback.
+    using BootstrapCallback = std::function<void(
+        BankKey, std::shared_ptr<sai::detection::IDetector>)>;
+    auto SetBootstrapCallback(BootstrapCallback cb) -> void { on_bootstrap_ = std::move(cb); }
+    auto SetBootstrapConfig(bool enabled, std::size_t min_frames,
+                            std::size_t target_size) -> void;
+
+    [[nodiscard]] auto HasDetector(const std::string& surface_id,
+                                    std::uint16_t position_id) const -> bool {
+        return detectors_.count({surface_id, position_id}) > 0;
+    }
+
 private:
     std::string id_;
     std::map<BankKey, std::shared_ptr<sai::detection::IDetector>> detectors_;
     std::shared_ptr<sai::detection::IDetector> default_detector_;
     bool stub_ = true;
+
+    // Bootstrap state
+    bool bootstrap_enabled_ = false;
+    std::size_t bootstrap_min_frames_ = 50;
+    std::size_t bootstrap_target_size_ = 10000;
+
+    struct BootstrapState {
+        std::vector<float> vectors;  // accumulated patch vectors (flattened)
+        std::size_t dim = 0;
+        std::size_t grid_h = 0;
+        std::size_t grid_w = 0;
+        std::size_t frame_count = 0;
+    };
+    std::map<BankKey, BootstrapState> bootstrap_states_;
+    BootstrapCallback on_bootstrap_;
 };
 
 class RuleEvalStage final : public IStageNode {

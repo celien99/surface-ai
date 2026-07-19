@@ -63,6 +63,9 @@ pipeline:
             saturation_window: 10
             max_incremental_updates: 100
             drift_auto_rebuild: false
+            self_validation: true
+            validation_degradation_threshold: 0.80
+            validation_sample_count: 100
 
     - id: rule_eval
       type: RuleEval
