@@ -37,15 +37,30 @@ struct NormalityProfile {
     float mean = 0.0F;
     float stddev = 0.0F;
 
+    // 通过 coreset 自查询计算出的 normalcy_score。
+    // 所有门控阈值均由此值推导，无需人类标定。
+    float self_normalcy = 0.0F;
+
     // 从 FeatureBank 计算自查询统计（O(N²·D)，初始化/FullRebuild 时调用）
     [[nodiscard]] static auto Compute(const FeatureBank& bank,
-                                       std::size_t k = 5) noexcept -> NormalityProfile;
+                                       std::size_t k = 5,
+                                       float tail_ratio_max = 0.10F) noexcept
+        -> NormalityProfile;
 
     // 对 standby bank 做采样自查询（O(sqrt(K)²·D) ≈ 50ms），用于运行时更新
     [[nodiscard]] static auto ComputeFast(const FeatureBank& bank,
                                             std::size_t k = 5,
-                                            std::size_t sample_count = 100) noexcept
+                                            std::size_t sample_count = 100,
+                                            float tail_ratio_max = 0.10F) noexcept
         -> NormalityProfile;
+
+    // 由 self_normalcy 推导 consensus 门控阈值。
+    // 新帧 normalcy_score 低于此值时被共识判定拒绝。
+    [[nodiscard]] auto ConsensusThreshold() const noexcept -> float;
+
+    // 由 self_normalcy 推导进化安全门控阈值。
+    // 候选帧 mean normalcy 低于此值时跳过整批进化。
+    [[nodiscard]] auto EvolutionGate() const noexcept -> float;
 
     [[nodiscard]] static auto LoadFromYaml(const std::filesystem::path& path) noexcept
         -> Result<NormalityProfile>;
@@ -122,8 +137,9 @@ private:
     std::size_t matched_rules_count,
     const std::string& reasoner_verdict,
     float effective_threshold,
-    float pca_image_score,       // 0.0F if PCA not enabled
-    float pca_self_query_p95)    // PCA self-query threshold (0.0F if not enabled)
+    float normalcy_threshold,     // from NormalityProfile::ConsensusThreshold() — data-driven
+    float pca_image_score,        // 0.0F if PCA not enabled
+    float pca_self_query_p95)     // PCA self-query threshold (0.0F if not enabled)
     noexcept -> bool;
 
 // ── 自进化配置 ──

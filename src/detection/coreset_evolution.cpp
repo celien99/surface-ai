@@ -280,9 +280,12 @@ auto CoresetEvolution::AssessAndOffer(
             distances, query_count, impl_->active_profile, impl_->cfg.tail_ratio_max);
 
         // 2. Multi-signal consensus
+        // Data-driven threshold from the active profile's self-query.
+        float consensus_threshold = impl_->active_profile.ConsensusThreshold();
         bool consensus = MultiSignalConsensusCheck(
             normalcy, det_result, matched_rules_count, reasoner_verdict,
-            effective_threshold, pca_image_score, pca_self_query_p95);
+            effective_threshold, consensus_threshold,
+            pca_image_score, pca_self_query_p95);
 
         if (!consensus) return;
 
@@ -338,12 +341,14 @@ auto CoresetEvolution::Start(std::stop_token token) noexcept -> void {
             double mean_normalcy = 0.0;
             for (auto& c : candidates) mean_normalcy += c.normalcy_score;
             mean_normalcy /= static_cast<double>(candidates.size());
-            if (mean_normalcy < 0.80) {
+            float evolution_gate = impl_->active_profile.EvolutionGate();
+            if (mean_normalcy < evolution_gate) {
                 sai::infra::Logger::Get("detection").Log(
                     sai::infra::LogLevel::Warning,
                     "CoresetEvolution: skipping evolution — mean normalcy {:.3f} "
-                    "below 0.80 gate ({} candidates)",
-                    mean_normalcy, candidates.size());
+                    "below {:.2f} gate (self_normalcy={:.3f}, {} candidates)",
+                    mean_normalcy, evolution_gate, impl_->active_profile.self_normalcy,
+                    candidates.size());
                 continue;
             }
 
@@ -417,7 +422,8 @@ auto CoresetEvolution::Start(std::stop_token token) noexcept -> void {
                 // Update profile (fast sampling)
                 impl_->standby_profile = std::move(impl_->active_profile);
                 impl_->active_profile = NormalityProfile::ComputeFast(
-                    *impl_->standby_bank, impl_->cfg.normality_k);
+                    *impl_->standby_bank, impl_->cfg.normality_k,
+                    100, impl_->cfg.tail_ratio_max);
             }
 
             // Record stats
@@ -541,7 +547,8 @@ auto CoresetEvolution::FullRebuild(const std::filesystem::path& save_path) noexc
     auto sample_count = static_cast<std::size_t>(std::sqrt(
         static_cast<double>(new_bank->NumSamples())));
     auto new_profile = NormalityProfile::ComputeFast(
-        *new_bank, impl_->cfg.normality_k, std::max(sample_count, std::size_t{1}));
+        *new_bank, impl_->cfg.normality_k,
+        std::max(sample_count, std::size_t{1}), impl_->cfg.tail_ratio_max);
 
     // Compute mean displacement for drift detection
     float mean_displacement = 0.0F;

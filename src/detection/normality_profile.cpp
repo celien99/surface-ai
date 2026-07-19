@@ -14,7 +14,8 @@
 namespace sai::detection {
 
 auto NormalityProfile::Compute(const FeatureBank& bank,
-                                std::size_t k) noexcept -> NormalityProfile {
+                                std::size_t k,
+                                float tail_ratio_max) noexcept -> NormalityProfile {
     auto dim = bank.Dim();
     auto num = bank.NumSamples();
     if (num == 0 || dim == 0) return {};
@@ -57,12 +58,28 @@ auto NormalityProfile::Compute(const FeatureBank& bank,
     }
     profile.stddev = static_cast<float>(std::sqrt(var_sum / static_cast<double>(num)));
 
+    // ── 数据驱动门控：计算 coreset 自身的 normalcy_score ──
+    // 按定义约 5% 的 patch 超过 p95，因此 self_tail_ratio ≈ 0.05。
+    // self_normalcy = 1.0 - self_tail_ratio / tail_ratio_max。
+    // 所有运行时门控阈值均由此值推导，自适应不同材料的自然方差。
+    std::size_t self_tail = 0;
+    for (auto d : nn_dists) {
+        if (d > profile.p95) ++self_tail;
+    }
+    float self_tail_ratio = static_cast<float>(self_tail) / static_cast<float>(num);
+    if (tail_ratio_max > 0.0F) {
+        profile.self_normalcy = 1.0F - std::min(1.0F, self_tail_ratio / tail_ratio_max);
+    } else {
+        profile.self_normalcy = 1.0F;
+    }
+
     return profile;
 }
 
 auto NormalityProfile::ComputeFast(const FeatureBank& bank,
                                      std::size_t k,
-                                     std::size_t sample_count) noexcept -> NormalityProfile {
+                                     std::size_t sample_count,
+                                     float tail_ratio_max) noexcept -> NormalityProfile {
     auto num = bank.NumSamples();
     if (num == 0) return {};
     auto actual_samples = std::min(sample_count, num);
@@ -110,7 +127,34 @@ auto NormalityProfile::ComputeFast(const FeatureBank& bank,
     }
     profile.stddev = static_cast<float>(std::sqrt(var_sum / static_cast<double>(actual_samples)));
 
+    // 数据驱动门控：采样自查询的 self_normalcy
+    std::size_t self_tail = 0;
+    for (auto d : nn_dists) {
+        if (d > profile.p95) ++self_tail;
+    }
+    float self_tail_ratio = static_cast<float>(self_tail) / static_cast<float>(actual_samples);
+    if (tail_ratio_max > 0.0F) {
+        profile.self_normalcy = 1.0F - std::min(1.0F, self_tail_ratio / tail_ratio_max);
+    } else {
+        profile.self_normalcy = 1.0F;
+    }
+
     return profile;
+}
+
+// ── 数据驱动阈值推导 ──
+// 因子 0.8 / 0.7 的含义："阈值放宽到 coreset 自身正常度的 80%/70%"
+// 紧凑材料（金属）self_normalcy ≈ 0.50 → consensus ≈ 0.40, evolution ≈ 0.35
+// 松散材料（织物）self_normalcy 更低 → 自动放宽
+
+auto NormalityProfile::ConsensusThreshold() const noexcept -> float {
+    if (self_normalcy <= 0.0F) return 0.40F;  // fallback for uninitialized profile
+    return self_normalcy * 0.8F;
+}
+
+auto NormalityProfile::EvolutionGate() const noexcept -> float {
+    if (self_normalcy <= 0.0F) return 0.30F;
+    return self_normalcy * 0.7F;
 }
 
 auto NormalityProfile::LoadFromYaml(const std::filesystem::path& path) noexcept
@@ -135,6 +179,7 @@ auto NormalityProfile::LoadFromYaml(const std::filesystem::path& path) noexcept
         profile.p99 = s["p99"].as<float>(0.0F);
         profile.mean = s["mean"].as<float>(0.0F);
         profile.stddev = s["stddev"].as<float>(0.0F);
+        profile.self_normalcy = s["self_normalcy"].as<float>(0.0F);
         return profile;
     } catch (const YAML::Exception& e) {
         return tl::make_unexpected(ErrorInfo{
@@ -160,6 +205,7 @@ auto NormalityProfile::SaveToYaml(const std::filesystem::path& path) const noexc
         out << YAML::Key << "p99" << YAML::Value << p99;
         out << YAML::Key << "mean" << YAML::Value << mean;
         out << YAML::Key << "stddev" << YAML::Value << stddev;
+        out << YAML::Key << "self_normalcy" << YAML::Value << self_normalcy;
         out << YAML::EndMap;
         out << YAML::EndMap;
         out << YAML::EndMap;
