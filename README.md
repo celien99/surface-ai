@@ -4,7 +4,6 @@
 
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue?logo=c%2B%2B)](https://en.cppreference.com/w/cpp/20)
 [![CMake](https://img.shields.io/badge/CMake-3.21%2B-brightgreen?logo=cmake)](https://cmake.org/)
-[![Tests](https://img.shields.io/badge/tests-621%20passed-success)](https://github.com)
 [![Platform](https://img.shields.io/badge/platform-Ubuntu%2022.04%20x64%20%7C%20NVIDIA%20GPU-lightgrey)]()
 [![Docker](https://img.shields.io/badge/Docker-nvidia--container--toolkit-blue?logo=docker)]()
 
@@ -12,8 +11,9 @@
 
 - 🧠 **PatchCore + PCA 双检测器**，FAISS 向量检索引擎，GPU 加速
 - 📚 **SQLite 知识图谱** + FAISS 混合检索（向量 + 元数据双路径 + RRF/加权融合）
-- ⚖️ **自研 AST 规则引擎** + 决策树推理器，YAML 热重载，全链路可溯源
-- 🎯 **贝叶斯自动调优**（GP + EI），在线监控 + 熔断自动回滚
+- ⚖️ **自研 AST 规则引擎** + 决策树推理器，YAML 存储，全链路可溯源
+- 🔄 **在线自进化**：多信号共识门控 + 新颖性检测 + 双缓冲热更新 FeatureBank，支持多 SKU/多工位独立进化
+- 🎯 **贝叶斯自动调优**（GP + EI），离线优化 detection 参数，熔断自动回滚
 - ⚡ **C++20 协程** + 无锁 SPSC 队列 + CUDA Stream 异步推理，工业级吞吐
 - 🖥️ **Qt6/QML 工业深色 UI**，4 屏仪表板（Pipeline / 检测 / 仪表板 / 配置）
 - 🐳 **Docker 一键部署**，systemd 守护，OPC UA 工业协议
@@ -34,7 +34,7 @@ graph TB
     end
 
     subgraph L3["🧠 AI 推理"]
-        Engine["IInferenceEngine<br/>TensorRT / ONNX / Mock"]
+        Engine["IInferenceEngine<br/>TensorRT / Mock"]
         Adapt["模型适配器<br/>DINOv3 · CLIP"]
         Emb["IEmbedder<br/>PatchEmbedder · GlobalEmbedder"]
         Det["IDetector<br/>PatchCore · PcaDetector"]
@@ -59,12 +59,12 @@ graph TB
         Reason -.->|可选，默认禁用| SAM2
     end
 
-    subgraph L6["🎯 编排 & 调优"]
-        PL["Pipeline<br/>7-Stage DAG · YAML 驱动"]
+    subgraph L6["🎯 编排 & 进化"]
+        PL["Pipeline<br/>7-Stage · YAML 驱动"]
+        Evo["CoresetEvolution<br/>在线自进化 · BankKey 路由"]
         Tune["TuningScheduler<br/>GP+EI 贝叶斯优化"]
-        PL -.->|周期读取 KG 反馈| Tune
-        Tune -.->|热重载阈值/权重| Rule
-        Tune -.->|热重载阈值/权重| Tree
+        PL --> Evo
+        PL -.->|读取 KG 反馈| Tune
     end
 
     subgraph L7["🖥️ 呈现"]
@@ -81,11 +81,13 @@ graph TB
     PL --> VM
 ```
 
+> **注意**：TuningScheduler 的 GP+EI 优化器完整可用，但优化结果的热重载（自动写入 detection 阈值/规则权重/裁决边界）尚未绑定——ParameterApplier 回调接口已预留，参数产出写入 KG，但运行时自动热更新路径待实现。
+
 ---
 
 ## 主链路
 
-一帧图像从采集到最终裁决的完整数据流，以及后台自动调优闭环：
+一帧图像从采集到最终裁决的完整数据流：
 
 ```
 ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐
@@ -96,32 +98,33 @@ graph TB
 └──────────┘   └──────────┘   └──────────┘   └────┬─────┘   │  Rules   │   │(verdict  │   └──────────┘
                                                   │         └──────────┘   │ severity │
                                                   │              │        │ evidence)│
-                                                  ▼              ▼        └──────────┘
-                                         ┌────────────────────────────┐
-                                         │     KnowledgeGraph          │
-                                         │  InspectionRecorder 写入    │
-                                         │  FactBuilder 读取+检索      │
-                                         └────────────┬───────────────┘
-                                                      │
-                                         ┌────────────▼───────────────┐
-                                         │   TuningScheduler (后台)    │
-                                         │   GP+EI 贝叶斯优化         │
-                                         │   读取 KG 反馈 → 热重载    │
-                                         │   阈值 / 权重 / 裁决边界   │
+                                                  ▼              ▼        └─────┬────┘
+                                         ┌────────────────────────────┐        │
+                                         │     KnowledgeGraph          │        │
+                                         │  InspectionRecorder 写入    │        │
+                                         │  FactBuilder 读取+检索      │        │
+                                         └────────────┬───────────────┘        │
+                                                      │                        │
+                                         ┌────────────▼───────────────┐        │
+                                         │   CoresetEvolution (后台)   │◀───────┘
+                                         │   多信号共识 · 新颖性检测   │  result callback
+                                         │   双缓冲热更新 FeatureBank   │  per-BankKey 路由
                                          └────────────────────────────┘
 ```
 
 | # | 阶段 | 输入 → 输出 | 核心职责 |
 |---|------|------------|---------|
-| 1 | Capture | — → `RawImage` | 相机帧抓取（GenICam / FakeCamera），唯一允许丢帧的阶段 |
+| 1 | Capture | — → `RawImage` | 相机帧抓取（GenICam / FakeCamera），支持硬件/软件/自由运行触发模式 |
 | 2 | Preprocess | `RawImage` → `SurfaceImage` | 去拜耳、白平衡、缩放、ROI 提取、HDR 合成 |
-| 3 | Inference | `SurfaceImage` → `Embedding` | DINOv3 补丁特征 / CLIP 全局特征提取（TensorRT/ONNX） |
-| 4 | Detect | `Embedding` → `DetectionResult` | PatchCore k-NN 异常评分 / PCA 子空间建模，后处理（平滑+连通分量） |
+| 3 | Inference | `SurfaceImage` → `Embedding` | DINOv3 补丁特征 / CLIP 全局特征提取（TensorRT） |
+| 4 | Detect | `Embedding` → `DetectionResult` | PatchCore k-NN 异常评分 / PCA 子空间建模，BankKey(surface_id, position_id) 多工位路由 |
 | 5 | RuleEval | `DetectionResult` → `FactBase` + `ResolvedRules` | 构建事实库（检测结果 + KG 路径解析 + FAISS 向量检索），AST 规则评估，冲突消解 |
-| 6 | Reason | `FactBase` + `ResolvedRules` → `ReasoningResult` | 决策树遍历，加权 Sigmoid 评分，生成裁决（OK/NG/WARN）+ 证据链 + 全链路溯源。可选启用 SAM2 对异常区域做边界精细化掩膜 |
+| 6 | Reason | `FactBase` + `ResolvedRules` → `ReasoningResult` | 决策树遍历，加权 Sigmoid 评分，生成裁决（OK/NG/WARN）+ 证据链 + 全链路溯源 |
 | 7 | Export | `ReasoningResult` → JSON + PPM | 检测报告输出，缺陷区域标注图，回调 UI 更新 |
 
-**后台闭环：** `InspectionRecorder` 将每帧检测分数写入 `KnowledgeGraph` → `TuningScheduler` 周期性读取反馈，用高斯过程 + 预期改进（GP+EI）自动寻优 Detection 阈值、规则权重、裁决边界 → 热重载生效，无需重启 Pipeline。熔断机制：若调优后 NG 率异常，自动回滚至上一次参数。
+**后台自进化闭环：** 每帧检测完成后，结果回调根据 `(surface_id, position_id)` 路由到对应工位的 `CoresetEvolution` 实例 → `AssessAndOffer` 评估帧的正常性（5 路信号共识）和新颖性（覆盖率 < 60%）→ `CandidateBuffer` 累积候选帧 → 后台线程合并 + 贪心 coreset 重选 + 双缓冲热切换 `FeatureBank` → 写入 `KnowledgeGraph` 演化记录。单工位和 Multi-Position 模式均支持。
+
+**后台调优闭环（离线）：** `TuningScheduler` 周期性从 `KnowledgeGraph` 读取历史检测记录 → 用高斯过程 + 预期改进（GP+EI）在 `TuningSpace` 中寻优 → 产出最优参数向量。参数热重载接口（`ParameterApplier`）已预留但尚未与 detection 参数联动。
 
 ---
 
@@ -132,7 +135,15 @@ graph TB
 - **PcaDetector**：PCA 子空间建模，4 种评分（重建误差 / 马氏 / 余弦 / 欧几里得）
 - **后处理**：高斯平滑、双线性上采样、4-连通分量标记、区域提案排序
 - **镜面反射过滤**：四线索融合（亮度/去饱和度/LoG曲率/过曝剪切），抑制光泽表面伪影
-- **多信号共识**：正态性评估 + 检测分数 + 规则匹配 + 推理裁决，联合判否
+- **多信号共识**：正态性评估 + 检测分数 + 规则匹配 + 推理裁决 + PCA 子空间，5 路联合判否
+
+### 多 SKU & 在线自进化
+- **BankKey 路由**：`(surface_id, position_id)` 键值路由，每个产品/工位独立 PatchCore 实例 + FeatureBank
+- **CoresetEvolution**：后台线程周期性评估每帧正常性/新颖性，双缓冲热更新 FeatureBank
+- **NoveltyFilter**：覆盖率阈值判定（< 60% 为新类型），触发 coreset 扩展
+- **CandidateBuffer**：有界缓冲累积候选帧（max 50 帧 / 50000 patch），双触发条件（20 帧或 20000 patch）
+- **NormalityScorer**：基于 FeatureBank 自查询的 P50/P95/P99/均值/标准差统计量
+- **安全门控**：正常性分数 < 0.80 时跳过进化，防止缺陷帧污染 coreset
 
 ### 特征提取
 - **DINOv3**（ViT 补丁特征）、**CLIP**（全局 [CLS] 特征）
@@ -149,28 +160,24 @@ graph TB
 
 ### 规则 & 决策
 - **AST 表达式引擎**：字面量 / 字段引用 / 二元 & 一元运算 / 内置函数 / 图路径表达式
-- **YAML 规则存储**：优先级 + 条件 + 动作 + 覆盖层次，inotify 热重载
+- **YAML 规则存储**：优先级 + 条件 + 动作 + 覆盖层次
 - **决策树**：分支节点（数值范围分派）+ 叶子节点（加权 Sigmoid 公式）
 - **全链路溯源**：TraceRecorder 记录每一步（表达式→规则→树分支→评分），EvidenceCollector 汇总证据
 - **FactBuilder**：自动从 DetectionResult + KnowledgeGraph + VectorPath 构建事实库
-- **SAM2Segmenter**（可选）：对异常区域做边界精细化掩膜，默认禁用
-
-### 在线自进化
-- **CoresetEvolution**：后台线程周期性评估每帧正常性/新颖性，双缓冲热更新 FeatureBank
-- **NoveltyFilter**：CandidateBuffer 累积候选帧，达到触发阈值后全量重建 coreset
-- **NormalityScorer**：基于 FeatureBank 自查询的 P50/P95/P99/均值/标准差统计量
+- **SAM2Segmenter**（可选）：对异常区域做边界精细化掩膜，默认禁用（预留，未激活）
 
 ### 贝叶斯自动调优
 - **TuningSpace**：连续/离散参数空间，线性约束，YAML 定义
 - **BayesianOptimizer**：GP 代理 + EI 采集函数，RBF 核 + Cholesky 分解 + L-BFGS-B
 - **KnowledgeGraphObjective**：从历史检测记录计算 FP/FN 代价，支持仿真模式
 - **TuningScheduler**：后台周期调度，监控窗口 + NG 率异常检测 + 熔断自动回滚
+- **待完成**：`ParameterApplier` 回调接口已定义，但尚未绑定到 PatchCore/DecisionTree 的运行时参数热更新
 
 ### 流水线 & 调度
 - **7-Stage Pipeline**：Capture → Preprocess → Inference → Detect → RuleEval → Reason → Export
 - **YAML 驱动**：拓扑声明 + 依赖解析（Kahn 算法）+ 类型兼容性校验
 - **StageQueue\<T\>**：有界 SPSC 无锁环形缓冲区，三种背压策略（阻塞/丢旧/降级）
-- **Scheduler**：StageType → WorkerPool 固定映射，队列深度/P99延迟/丢帧指标采集
+- **Scheduler**：StageType → WorkerPool 固定映射，队列深度/P99延迟/丢帧指标采集（已合并入 pipeline 模块）
 
 ### 可视化
 - **4 屏工业 UI**：Pipeline 状态 / 检测详情 / 产量仪表板 / YAML 配置编辑器
@@ -180,7 +187,6 @@ graph TB
 ### 工业接口
 - **GenICam / GigE Vision** 相机采集，**OPC UA** PLC 通信
 - **FakeCamera**：合成帧生成器（正弦纹理 + Perlin 噪声），无硬件可跑全链路
-- **inotify** 配置热重载，YAML 启动时全量校验（fail-fast）
 - **spdlog** 异步日志，双级溢出策略（Trace/Debug 丢弃，Warning+ 阻塞）
 
 ---
@@ -204,7 +210,7 @@ docker compose build
 # 2. 训练 Coreset（使用正常样本构建特征库）
 docker compose --profile train run seat_aoi_train
 
-# 3. 运行检测
+# 3. 批量检测
 docker compose --profile detect up seat_aoi_detect
 ```
 
@@ -218,28 +224,26 @@ docker compose --profile detect up seat_aoi_detect
     --coreset-max-samples 10000 \
     --coreset-output /app/resources/coresets/default.bin
 
-# 检测模式：批量处理待检图像目录，输出 JSON 报告
-./seat_aoi detect \
-    --image-dir /data/samples/ \
+# 批量检测模式（Headless）：处理待检图像目录，输出 JSON 报告
+./seat_aoi --image-dir /data/samples/ \
     --coreset /app/resources/coresets/default.bin \
     --output-dir /data/results/
 
-# 守护模式：连接工业相机 + OPC UA，连续在线检测
-./seat_aoi daemon \
-    --coreset /app/resources/coresets/default.bin \
-    --output-dir /data/results/ \
-    --opcua-server opc.tcp://192.168.1.100:4840
+# GUI 实时模式：FakeCamera 模拟帧源，全链路可视化
+./seat_aoi
+
+# Review 模式：回顾历史检测结果（读取 review_index.json）
+./seat_aoi --review-dir /data/results/
 ```
 
 ### Docker 服务说明
 
-`docker-compose.yml` 定义了三个服务，均使用 `nvidia` runtime：
+`docker-compose.yml` 定义了两个活跃服务，均使用 `nvidia` runtime：
 
 | 服务 | Profile | 用途 |
 |------|---------|------|
 | `seat_aoi_train` | `--profile train` | 一次性训练，生成 coreset 文件 |
 | `seat_aoi_detect` | `--profile detect` | 批量检测，处理完退出 |
-| `seat_aoi_daemon` | `--profile daemon` | 连续在线检测，连接相机 + PLC，`restart: unless-stopped` |
 
 ```bash
 # 训练
@@ -247,9 +251,6 @@ docker compose --profile train run seat_aoi_train
 
 # 批量检测
 docker compose --profile detect up seat_aoi_detect
-
-# 生产环境守护进程（自动重启）
-docker compose --profile daemon up -d seat_aoi_daemon
 ```
 
 ---
@@ -279,7 +280,7 @@ export VCPKG_ROOT=~/vcpkg
 ```bash
 cmake --preset linux           # 配置
 cmake --build --preset linux   # 构建
-ctest --preset linux           # 运行全部 621 个测试
+ctest --preset linux           # 运行全部测试
 
 # 按名称过滤
 ctest --preset linux -R "tuning"
@@ -321,15 +322,15 @@ cd build/linux && ./tests/detection/sai_detection_test --gtest_filter="PatchCore
 
 | # | 模块 | 核心职责 |
 |---|------|---------|
-| 1 | `core` | Object/Resource 基类、TypeRegistry、Factory、Context（DI 容器）、生命周期状态机 |
+| 1 | `core` | Object/Resource 基类、TypeRegistry、Context（DI 容器）、生命周期状态机 |
 | 2 | `memory` | ArenaAllocator、GpuPool（CUDA）、PinnedPool（CUDA）、PooledPtr 智能池化指针 |
-| 3 | `plugin` | PluginManager、Manifest 解析、Capability/License/Version 管理器 |
+| 3 | `plugin` | PluginManager、Manifest 解析（Capability/License/Version 已合并） |
 | 4 | `runtime` | `Task<T>` C++20 协程、WorkerPool、TaskGraph、PipelineExecutor、GpuStreamQueue（CUDA） |
 | 5 | `infra` | Logger（spdlog 封装）、ConfigSchema/ConfigStore（yaml-cpp）、inotify 热重载 |
 | 6 | `device` | IDevice/ICamera/ILightController 硬件抽象、RingBuffer、FakeCamera |
 | 7 | `image` | Image/RawImage/SurfaceImage/GpuImage 类型体系、ROI、预处理链 |
 | 8 | `io` | IImporter/BasicImporter、IExporter/JsonExporter |
-| 9 | `inference` | IInferenceEngine（TensorRT/ONNX/Mock）、DINOv3/CLIP/SAM2 适配器、多层特征聚合 |
+| 9 | `inference` | IInferenceEngine（TensorRT/Mock）、DINOv3/CLIP/SAM2 适配器、多层特征聚合 |
 | 10 | `embedding` | Embedding（double 存储）、PatchEmbedder/GlobalEmbedder、DimensionReducer/PCA、FeatureCache |
 | 11 | `detection` | PatchCore、PcaDetector、FeatureBank（FAISS）、CoresetEvolution、MultiSignalConsensus、SpecularFilter |
 | 12 | `knowledge` | KnowledgeGraph（SQLite 属性图）、KnowledgeEvolution、KnowledgeSnapshot、KnowledgeStore |
@@ -337,9 +338,10 @@ cd build/linux && ./tests/detection/sai_detection_test --gtest_filter="PatchCore
 | 14 | `rule` | RuleEngine（AST 表达式 + YAML 规则）、FactBase/ConflictResolver、FactBuilder |
 | 15 | `reasoner` | DecisionTree、IReasoner/DefaultReasoner（Sigmoid 评分 + 全链路溯源）、EvidenceCollector |
 | 16 | `tuning` | TuningSpace、BayesianOptimizer（GP+EI）、KnowledgeGraphObjective、TuningScheduler |
-| 17 | `pipeline` | Pipeline（YAML 驱动 7-Stage）、PipelineBuilder、StageQueue\<T\>（SPSC 无锁） |
-| 18 | `scheduler` | StageType → WorkerPool 映射、队列分配（仅内部头文件） |
-| 19 | `visualization` | PipelineViewModel、InspectionViewModel、DashboardViewModel、FrameProvider、QML 4 屏 UI |
+| 17 | `pipeline` | Pipeline（YAML 驱动 7-Stage）、PipelineBuilder、StageQueue\<T\>（SPSC 无锁）、Scheduler |
+| 18 | `visualization` | PipelineViewModel、InspectionViewModel、DashboardViewModel、FrameProvider、QML 4 屏 UI |
+
+> 注：原独立的 `scheduler` 模块（#18）已合并入 `pipeline` 模块。模块总数 18 个。
 
 ---
 
@@ -351,7 +353,7 @@ surface-ai/
 ├── vcpkg.json                              # vcpkg 清单
 ├── vcpkg-overlays/                         # 自定义 vcpkg ports（FAISS w/ GPU）
 ├── Dockerfile                              # 生产镜像
-├── docker-compose.yml                      # 多服务编排（train / detect / daemon）
+├── docker-compose.yml                      # 多服务编排（train / detect）
 │
 ├── docs/
 │   ├── superpowers/specs/                  # 阶段设计 spec（Approved）
@@ -370,7 +372,7 @@ surface-ai/
 │       ├── trees/                          # 决策树 YAML
 │       └── tuning/                         # 贝叶斯调优 YAML
 │
-├── include/sai/                            # 公开头文件（19 个模块）
+├── include/sai/                            # 公开头文件（18 个模块）
 ├── src/                                    # 实现文件 + per-module CMakeLists.txt
 └── tests/                                  # GoogleTest 套件（模块测试 + 集成测试）
 ```
