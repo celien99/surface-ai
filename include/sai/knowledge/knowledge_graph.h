@@ -41,6 +41,12 @@ public:
 
     [[nodiscard]] auto InsertNode(std::string type, KnowledgeRecord properties) noexcept
         -> Result<NodeId>;
+    // Batch insert: wraps N InsertNode calls in a single SQLite transaction.
+    // Returns all inserted node IDs on success; on failure the transaction is
+    // rolled back and no partial inserts are visible.
+    [[nodiscard]] auto InsertNodesBatch(
+        std::vector<std::pair<std::string, KnowledgeRecord>> entries) noexcept
+        -> Result<std::vector<NodeId>>;
     [[nodiscard]] auto UpdateNode(NodeId id, KnowledgeRecord properties) noexcept -> Result<void>;
     [[nodiscard]] auto DeleteNode(NodeId id) noexcept -> Result<void>;
     [[nodiscard]] auto GetNode(NodeId id) const noexcept -> Result<KnowledgeNode>;

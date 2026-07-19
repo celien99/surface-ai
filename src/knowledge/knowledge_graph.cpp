@@ -35,6 +35,71 @@ auto KnowledgeGraph::InsertNode(std::string type, KnowledgeRecord properties) no
     return id;
 }
 
+auto KnowledgeGraph::InsertNodesBatch(
+    std::vector<std::pair<std::string, KnowledgeRecord>> entries) noexcept
+    -> Result<std::vector<NodeId>> {
+    if (entries.empty()) return std::vector<NodeId>{};
+
+    // BEGIN TRANSACTION
+    char* err_msg = nullptr;
+    if (sqlite3_exec(db_, "BEGIN IMMEDIATE", nullptr, nullptr, &err_msg) != SQLITE_OK) {
+        std::string msg = err_msg ? err_msg : "unknown";
+        sqlite3_free(err_msg);
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            "BEGIN IMMEDIATE failed: " + msg,
+            std::source_location::current(),
+        });
+    }
+
+    const char* sql = "INSERT INTO nodes (type, properties_json) VALUES (?, ?)";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        sqlite3_exec(db_, "ROLLBACK", nullptr, nullptr, nullptr);
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            std::string("prepare batch insert: ") + sqlite3_errmsg(db_),
+            std::source_location::current(),
+        });
+    }
+
+    std::vector<NodeId> ids;
+    ids.reserve(entries.size());
+
+    for (auto& [type, props] : entries) {
+        auto json_str = RecordToJson(props).dump();
+        sqlite3_reset(stmt);
+        sqlite3_clear_bindings(stmt);
+        sqlite3_bind_text(stmt, 1, type.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, json_str.c_str(), -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(stmt) != SQLITE_DONE) {
+            sqlite3_finalize(stmt);
+            sqlite3_exec(db_, "ROLLBACK", nullptr, nullptr, nullptr);
+            return tl::make_unexpected(ErrorInfo{
+                ErrorCode::Knowledge_DbOpenFailed,
+                std::string("batch insert row: ") + sqlite3_errmsg(db_),
+                std::source_location::current(),
+            });
+        }
+        ids.push_back(static_cast<NodeId>(sqlite3_last_insert_rowid(db_)));
+    }
+    sqlite3_finalize(stmt);
+
+    // COMMIT
+    if (sqlite3_exec(db_, "COMMIT", nullptr, nullptr, &err_msg) != SQLITE_OK) {
+        std::string msg = err_msg ? err_msg : "unknown";
+        sqlite3_free(err_msg);
+        sqlite3_exec(db_, "ROLLBACK", nullptr, nullptr, nullptr);
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Knowledge_DbOpenFailed,
+            "COMMIT failed: " + msg,
+            std::source_location::current(),
+        });
+    }
+
+    return ids;
+}
+
 auto KnowledgeGraph::UpdateNode(NodeId id, KnowledgeRecord properties) noexcept -> Result<void> {
     auto json_str = RecordToJson(properties).dump();
     const char* sql = "UPDATE nodes SET properties_json = ?, updated_at = datetime('now') WHERE id = ?";

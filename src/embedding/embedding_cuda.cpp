@@ -4,13 +4,13 @@
 // 实现 Embedding::ToCpuAsync：
 //   1. 校验当前数据在 GPU 上（on_gpu_ == true）
 //   2. 从 PinnedPool 分配 host 端 staging buffer
-//   3. cudaMemcpy DeviceToHost 将 GPU 特征数据搬移到 pinned buffer
+//   3. cudaMemcpyAsync DeviceToHost 将 GPU 特征数据搬移到 pinned buffer
+//      （使用独立 CUDA stream，避免默认流隐式串行化）
 //   4. 将 pinned buffer 数据拷贝到 cpu_data_ vector
 //   5. 释放 GPU device buffer，设置 on_gpu_ = false
 //
-// 当前使用同步 cudaMemcpy（非真正异步）；co_return 后调用者通过
-// coroutine_handle::resume() 获取结果。未来可升级为
-// GpuStreamQueue::EnqueueAsyncCopy + co_await 的零拷贝异步路径。
+// Batch T3: 将同步 cudaMemcpy 替换为 cudaMemcpyAsync + 独立 stream，
+// 消除默认 CUDA stream 的隐式全局同步，允许多线程 GPU 操作并发执行。
 
 #include <sai/embedding/embedding.h>
 
@@ -52,17 +52,42 @@ auto Embedding::ToCpuAsync(sai::runtime::GpuStreamQueue& /*queue*/,
     }
     auto pinned_buf = std::move(*pinned_buf_result);
 
-    // 同步 D2H memcpy（非真正异步；未来升级为 EnqueueAsyncCopy + co_await）
-    cudaError_t err = cudaMemcpy(
-        pinned_buf.Get(), device_buffer_.Get(), bytes,
-        cudaMemcpyDeviceToHost);
-
-    if (err != cudaSuccess) {
-        // pinned_buf 将在函数结束时通过 RAII 自动归还 PinnedPool
+    // Async D2H memcpy on an independent CUDA stream — avoids default-stream
+    // implicit serialization so that other GPU ops (inference, D2D copies on
+    // other streams) can execute concurrently with this transfer.
+    cudaStream_t d2h_stream = nullptr;
+    cudaError_t stream_err = cudaStreamCreate(&d2h_stream);
+    if (stream_err != cudaSuccess) {
         co_return tl::make_unexpected(ErrorInfo{
             ErrorCode::Runtime_GpuError,
-            std::string("cudaMemcpy DeviceToHost failed in ToCpuAsync: ") +
+            std::string("cudaStreamCreate failed in ToCpuAsync: ") +
+                cudaGetErrorString(stream_err),
+            std::source_location::current(),
+        });
+    }
+
+    cudaError_t err = cudaMemcpyAsync(
+        pinned_buf.Get(), device_buffer_.Get(), bytes,
+        cudaMemcpyDeviceToHost, d2h_stream);
+
+    if (err != cudaSuccess) {
+        cudaStreamDestroy(d2h_stream);
+        co_return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Runtime_GpuError,
+            std::string("cudaMemcpyAsync DeviceToHost failed in ToCpuAsync: ") +
                 cudaGetErrorString(err),
+            std::source_location::current(),
+        });
+    }
+
+    cudaError_t sync_err = cudaStreamSynchronize(d2h_stream);
+    cudaStreamDestroy(d2h_stream);
+
+    if (sync_err != cudaSuccess) {
+        co_return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Runtime_GpuError,
+            std::string("cudaStreamSynchronize failed in ToCpuAsync: ") +
+                cudaGetErrorString(sync_err),
             std::source_location::current(),
         });
     }

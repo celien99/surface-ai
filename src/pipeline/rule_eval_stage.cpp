@@ -141,7 +141,7 @@ auto RuleEvalStage::Process(StageInput input) -> Result<StageOutput> {
                     std::chrono::microseconds>(
                     std::chrono::system_clock::now().time_since_epoch())
                     .count();
-                (void)recorder_->WriteRecord(
+                recorder_->WriteRecord(
                     static_cast<double>(det->image_level_score),
                     machine_verdict, surface_id, now_us);
             }
