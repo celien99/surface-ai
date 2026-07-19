@@ -48,6 +48,8 @@ public:
         std::vector<std::pair<std::string, KnowledgeRecord>> entries) noexcept
         -> Result<std::vector<NodeId>>;
     [[nodiscard]] auto UpdateNode(NodeId id, KnowledgeRecord properties) noexcept -> Result<void>;
+    // Set a single field on a node (read-modify-write of the properties JSON).
+    [[nodiscard]] auto SetNodeField(NodeId id, std::string key, FieldValue value) noexcept -> Result<void>;
     [[nodiscard]] auto DeleteNode(NodeId id) noexcept -> Result<void>;
     [[nodiscard]] auto GetNode(NodeId id) const noexcept -> Result<KnowledgeNode>;
     [[nodiscard]] auto FindNodesByType(std::string_view type) const noexcept

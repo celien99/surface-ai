@@ -130,6 +130,16 @@ auto KnowledgeGraph::UpdateNode(NodeId id, KnowledgeRecord properties) noexcept 
     return {};
 }
 
+auto KnowledgeGraph::SetNodeField(NodeId id, std::string key, FieldValue value) noexcept -> Result<void> {
+    // Read existing properties, update one field, write back
+    auto node_result = GetNode(id);
+    if (!node_result.has_value()) {
+        return tl::make_unexpected(node_result.error());
+    }
+    node_result->properties.fields[std::move(key)] = std::move(value);
+    return UpdateNode(id, std::move(node_result->properties));
+}
+
 auto KnowledgeGraph::DeleteNode(NodeId id) noexcept -> Result<void> {
     const char* sql = "DELETE FROM nodes WHERE id = ?";
     sqlite3_stmt* stmt = nullptr;

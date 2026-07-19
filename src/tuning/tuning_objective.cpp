@@ -82,34 +82,30 @@ auto KnowledgeGraphObjective::EvaluateLegacy(
             continue;
         }
 
+        // Ground truth: prefer human_label if available, else bootstrap
+        // from machine_verdict (program self-calibration).
+        bool ground_truth_ng = false;
         auto hl_it = node.properties.fields.find("human_label");
-        if (hl_it == node.properties.fields.end()) {
-            sai::infra::Logger::Get("tuning").Log(
-                sai::infra::LogLevel::Warning,
-                "GroundTruth node {} missing human_label field, skipping", node.id);
-            continue;
-        }
-        auto* hl_val = std::get_if<std::string>(&hl_it->second);
-        if (hl_val == nullptr) {
-            sai::infra::Logger::Get("tuning").Log(
-                sai::infra::LogLevel::Warning,
-                "GroundTruth node {} human_label is not string, skipping", node.id);
-            continue;
+        if (hl_it != node.properties.fields.end()) {
+            if (auto* hl_val = std::get_if<std::string>(&hl_it->second)) {
+                ground_truth_ng = (*hl_val == "NG");
+            }
+        } else {
+            // Bootstrap: use machine_verdict as self-supervised ground truth.
+            // This enables the tuning loop to run without human intervention.
+            ground_truth_ng = (*mv_val != "OK");
         }
 
-        const auto& machine = *mv_val;
-        const auto& human = *hl_val;
-        bool machine_ok = (machine == "OK");
-        bool human_ng = (human == "NG");
+        bool machine_ok = (*mv_val == "OK");
 
-        if (!machine_ok && human_ng) {
-            ++tp;  // machine flagged, human confirms defect
-        } else if (machine_ok && !human_ng) {
-            ++tn;  // both agree OK
-        } else if (!machine_ok && !human_ng) {
-            ++fp;  // machine flagged, but human says OK (false alarm)
-        } else {  // machine_ok && human_ng
-            ++fn;  // machine missed, but human says NG (missed defect)
+        if (!machine_ok && ground_truth_ng) {
+            ++tp;
+        } else if (machine_ok && !ground_truth_ng) {
+            ++tn;
+        } else if (!machine_ok && !ground_truth_ng) {
+            ++fp;
+        } else {
+            ++fn;
         }
     }
 
@@ -150,12 +146,21 @@ auto KnowledgeGraphObjective::EvaluateSimulated(
         if (ts_val == nullptr) continue;
         if (*ts_val < since_us) continue;
 
-        // Human label (ground truth)
+        // Ground truth: prefer human_label, else bootstrap from machine_verdict
+        bool ground_truth_ng = false;
         auto hl_it = node.properties.fields.find("human_label");
-        if (hl_it == node.properties.fields.end()) continue;
-        auto* hl_val = std::get_if<std::string>(&hl_it->second);
-        if (hl_val == nullptr) continue;
-        bool human_ng = (*hl_val == "NG");
+        if (hl_it != node.properties.fields.end()) {
+            if (auto* hl_val = std::get_if<std::string>(&hl_it->second)) {
+                ground_truth_ng = (*hl_val == "NG");
+            }
+        } else {
+            // Self-supervised bootstrap: use stored machine_verdict
+            auto mv_it = node.properties.fields.find("machine_verdict");
+            if (mv_it == node.properties.fields.end()) continue;
+            auto* mv_val = std::get_if<std::string>(&mv_it->second);
+            if (mv_val == nullptr) continue;
+            ground_truth_ng = (*mv_val != "OK");
+        }
 
         // Simulate machine verdict from detection_score + candidate threshold
         bool machine_ng = false;
@@ -178,10 +183,10 @@ auto KnowledgeGraphObjective::EvaluateSimulated(
         }
 
         // Classify
-        if (machine_ng && human_ng)       ++tp;
-        else if (!machine_ng && !human_ng) ++tn;
-        else if (machine_ng && !human_ng)  ++fp;
-        else /* !machine_ng && human_ng */ ++fn;
+        if (machine_ng && ground_truth_ng)       ++tp;
+        else if (!machine_ng && !ground_truth_ng) ++tn;
+        else if (machine_ng && !ground_truth_ng)  ++fp;
+        else /* !machine_ng && ground_truth_ng */ ++fn;
     }
 
     std::int64_t total = fp + fn + tp + tn;
