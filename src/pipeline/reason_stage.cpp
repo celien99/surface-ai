@@ -35,6 +35,10 @@ auto ReasonStage::Process(StageInput input) -> Result<StageOutput> {
             result = std::move(*reason_result);
         }
 
+        // Propagate surface routing metadata (multi-SKU / multi-position evolution)
+        result.surface_id = eval_output->surface_id;
+        result.position_id = eval_output->position_id;
+
         // SAM2 region refinement: if segmenter is available and detection
         // result contains anomaly regions, refine their boundaries.
         // M5 will extend this with point/box prompt types and spatial

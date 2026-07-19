@@ -15,6 +15,8 @@ namespace sai::pipeline {
 struct RuleEvalOutput {
     sai::rule::FactBase facts;
     std::vector<sai::rule::ResolvedRule> rules;
+    std::string surface_id;          // propagated from DetectionResult (multi-SKU routing)
+    std::uint16_t position_id = 0;   // propagated from DetectionResult (multi-position routing)
 };
 
 }  // namespace sai::pipeline

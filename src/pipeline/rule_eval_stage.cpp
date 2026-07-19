@@ -147,11 +147,17 @@ auto RuleEvalStage::Process(StageInput input) -> Result<StageOutput> {
                     machine_verdict, surface_id, now_us);
             }
 
-            return StageOutput::Make(RuleEvalOutput{std::move(fb), std::move(resolved)});
+            RuleEvalOutput output{std::move(fb), std::move(resolved)};
+            output.surface_id = det->surface_id;
+            output.position_id = det->position_id;
+            return StageOutput::Make(std::move(output));
         }
 
-        // Stub: return empty RuleEvalOutput
-        return StageOutput::Make(RuleEvalOutput{std::move(fb), {}});
+        // Stub: return empty RuleEvalOutput (but preserve surface routing metadata)
+        RuleEvalOutput stub_output{std::move(fb), {}};
+        stub_output.surface_id = det->surface_id;
+        stub_output.position_id = det->position_id;
+        return StageOutput::Make(std::move(stub_output));
     }
     return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_StageTypeMismatch,
         "RuleEval expects DetectionResult input"});
