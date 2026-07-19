@@ -18,12 +18,9 @@ ExportStage::ExportStage(std::string id, YAML::Node config, Pipeline* pipeline)
 auto ExportStage::GetType() const noexcept -> StageType { return StageType::Export; }
 auto ExportStage::GetId() const -> std::string_view { return id_; }
 
-auto ExportStage::OnInitialize(Context& ctx) -> Result<void> {
-    auto exporter = ctx.Resolve<io::IExporter>();
-    if (exporter) {
-        exporter_ = *exporter;
-        stub_ = false;
-    }
+auto ExportStage::OnInitialize(Context& /*ctx*/) -> Result<void> {
+    // IExporter is injected via SetExporter() before Start().
+    if (exporter_) stub_ = false;
     return {};
 }
 

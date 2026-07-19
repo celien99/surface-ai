@@ -15,12 +15,9 @@ ReasonStage::ReasonStage(std::string id, YAML::Node config)
 auto ReasonStage::GetType() const noexcept -> StageType { return StageType::Reason; }
 auto ReasonStage::GetId() const -> std::string_view { return id_; }
 
-auto ReasonStage::OnInitialize(Context& ctx) -> Result<void> {
-    auto reasoner = ctx.Resolve<reasoner::IReasoner>();
-    if (reasoner) {
-        reasoner_ = *reasoner;
-        stub_ = false;
-    }
+auto ReasonStage::OnInitialize(Context& /*ctx*/) -> Result<void> {
+    // IReasoner is injected via SetReasoner() before Start().
+    if (reasoner_) stub_ = false;
     return {};
 }
 

@@ -8,7 +8,6 @@
 #include <vector>
 
 #include <sai/core/error.h>
-#include <sai/core/service.h>
 #include <sai/core/rect.h>
 #include <sai/image/surface_image.h>
 #include <sai/plugin/plugin.h>
@@ -33,7 +32,7 @@ struct InspectionResult {
     std::string verdict;         // "PASS" | "FAIL" | "RECHECK"
 };
 
-class IExporter : public IPlugin, public IService {
+class IExporter : public IPlugin {
 public:
     SAI_DECLARE_TYPE_ID(sai.io.exporter)
 

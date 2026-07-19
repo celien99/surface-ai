@@ -6,8 +6,6 @@
 #include <vector>
 
 #include "sai/core/error.h"
-#include "sai/core/service.h"
-#include "sai/core/type_id.h"
 #include "sai/reasoner/decision_tree.h"
 #include "sai/reasoner/evidence_collector.h"
 #include "sai/rule/fact_base.h"
@@ -34,9 +32,8 @@ struct ReasoningResult {
 // -----------------------------------------------------------------------
 // IReasoner — service interface for rule-based reasoning
 // -----------------------------------------------------------------------
-class IReasoner : public sai::IService {
+class IReasoner : public sai::Object {
 public:
-    SAI_DECLARE_TYPE_ID(sai::reasoner::IReasoner)
     /// Evaluate facts through the decision tree, merge rule results, and
     /// produce a complete ReasoningResult (verdict, severity, trace,
     /// evidence, triggered/overridden rule lists).
@@ -58,8 +55,6 @@ class DefaultReasoner final : public IReasoner {
 public:
     explicit DefaultReasoner(std::unique_ptr<DecisionTree> tree);
     ~DefaultReasoner() override = default;
-
-    SAI_DECLARE_TYPE_ID(sai::reasoner::DefaultReasoner)
 
     auto Reason(const rule::FactBase& facts,
                 const std::vector<rule::ResolvedRule>& rules)
