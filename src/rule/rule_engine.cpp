@@ -12,8 +12,7 @@
 
 #include "sai/infra/logger.h"
 #include "conflict_resolver.h"
-#include "lexer.h"
-#include "parser.h"
+#include "condition_builder.h"
 
 namespace sai::rule {
 
@@ -64,28 +63,20 @@ auto RuleEngine::LoadFromYAML(std::filesystem::path path) -> Result<void> {
                 rule.priority = rn["priority"].as<uint32_t>(0);
                 rule.rule_set = set_name;
 
-                // --- Parse condition string via Lexer + Parser ---
-                auto cond_str = rn["condition"].as<std::string>("");
-                if (!cond_str.empty()) {
-                    Lexer lexer(cond_str);
-                    auto tokens = lexer.Tokenize();
-                    if (!tokens) {
-                        return tl::make_unexpected(ErrorInfo{
-                            ErrorCode::Rule_ParseError,
-                            "lexer error for rule '" + rule.name + "': " + tokens.error().message,
-                            std::source_location::current()});
-                    }
-
-                    Parser parser(std::move(*tokens));
-                    auto expr = parser.Parse();
+                // --- Build condition AST from structured YAML ---
+                auto cond_node = rn["condition"];
+                if (cond_node.IsDefined() && !cond_node.IsNull()) {
+                    auto expr = BuildExpressionFromYAML(cond_node);
                     if (!expr) {
                         return tl::make_unexpected(ErrorInfo{
                             ErrorCode::Rule_ParseError,
-                            "parser error for rule '" + rule.name + "': " + expr.error().message,
+                            "condition error for rule '" + rule.name + "': " +
+                                expr.error().message,
                             std::source_location::current()});
                     }
-
-                    rule.condition = std::move(*expr);
+                    if (*expr) {
+                        rule.condition = std::move(*expr);
+                    }
                 }
 
                 // --- Action ---

@@ -2,13 +2,12 @@ find_package(yaml-cpp CONFIG REQUIRED)
 
 set(SAI_RULE_SOURCES
     value.cpp
-    lexer.cpp
-    parser.cpp
     expression.cpp
     fact_base.cpp
     fact_builder.cpp
     rule_engine.cpp
     conflict_resolver.cpp
+    condition_builder.cpp
 )
 
 add_library(sai_rule STATIC ${SAI_RULE_SOURCES})

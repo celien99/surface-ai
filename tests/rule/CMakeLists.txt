@@ -2,8 +2,6 @@ find_package(GTest CONFIG REQUIRED)
 
 set(SAI_RULE_TEST_SOURCES
     value_test.cpp
-    lexer_test.cpp
-    parser_test.cpp
     expression_test.cpp
     fact_base_test.cpp
     fact_builder_test.cpp

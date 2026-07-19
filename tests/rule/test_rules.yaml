@@ -2,7 +2,10 @@ rule_sets:
   quality_check:
     - name: "high_temp_reject"
       priority: 100
-      condition: "temperature > 85.0"
+      condition:
+        field: temperature
+        op: gt
+        value: 85.0
       action:
         label: "REJECT"
         base_severity: 0.8
@@ -11,7 +14,10 @@ rule_sets:
       overridden_by: []
     - name: "warpage_warning"
       priority: 50
-      condition: "warpage > 2.5"
+      condition:
+        field: warpage
+        op: gt
+        value: 2.5
       action:
         label: "WARN"
         base_severity: 0.3
@@ -22,7 +28,14 @@ rule_sets:
   surface_inspection:
     - name: "scratch_reject"
       priority: 200
-      condition: "scratch_count > 5 AND scratch_depth > 0.5"
+      condition:
+        and:
+          - field: scratch_count
+            op: gt
+            value: 5
+          - field: scratch_depth
+            op: gt
+            value: 0.5
       action:
         label: "REJECT"
         base_severity: 0.9
@@ -33,7 +46,10 @@ rule_sets:
   overlap_test:
     - name: "high_temp_check"
       priority: 100
-      condition: "temperature > 80.0"
+      condition:
+        field: temperature
+        op: gt
+        value: 80.0
       action:
         label: "WARN"
         base_severity: 0.2
@@ -42,7 +58,10 @@ rule_sets:
       overridden_by: []
     - name: "low_temp_check"
       priority: 50
-      condition: "temperature < 30.0"
+      condition:
+        field: temperature
+        op: lt
+        value: 30.0
       action:
         label: "OK"
         base_severity: 0.0

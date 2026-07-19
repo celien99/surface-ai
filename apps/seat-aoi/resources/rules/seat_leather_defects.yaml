@@ -1,17 +1,23 @@
 # Seat Leather Defect Rules
-# Each rule defines a defect detection condition evaluated by the RuleEngine.
-# Condition expressions use the string DSL parsed by Lexer+Parser.
-# FactBase keys are populated by FactBuilder::MapDetection from DetectionResult.
-#
-# NOTE: Dotted field paths cannot contain numeric segments (e.g. region.0.area).
-# The parser only accepts Identifier tokens after '.', not Number tokens.
-# Use facts without indexed segments: anomaly_map.max_score, region_count, etc.
+# Conditions use structured YAML format (Batch T3):
+#   Simple:  {field: "detection.score", op: "gt", value: 0.8}
+#   AND:     {and: [{field: a, op: gt, value: 0.5}, ...]}
+#   OR:      {or: [...]}
+#   NOT:     {not: {field: a, op: eq, value: 0}}
+# Supported ops: gt, ge, lt, le, eq, neq, and, or, add, sub, mul, div, in
 
 rule_sets:
   seat_leather_inspection:
     - name: "crack_detection"
       priority: 120
-      condition: 'detection.anomaly_map.max_score > 0.8 AND detection.region_count > 0'
+      condition:
+        and:
+          - field: detection.anomaly_map.max_score
+            op: gt
+            value: 0.8
+          - field: detection.region_count
+            op: gt
+            value: 0
       action:
         label: "NG"
         base_severity: 0.95
@@ -21,7 +27,14 @@ rule_sets:
 
     - name: "scratch_major"
       priority: 100
-      condition: 'detection.anomaly_map.max_score > 0.7 AND detection.region_count > 0'
+      condition:
+        and:
+          - field: detection.anomaly_map.max_score
+            op: gt
+            value: 0.7
+          - field: detection.region_count
+            op: gt
+            value: 0
       action:
         label: "NG"
         base_severity: 0.80
@@ -31,7 +44,14 @@ rule_sets:
 
     - name: "dent_detection"
       priority: 80
-      condition: 'detection.anomaly_map.max_score > 0.5 AND detection.image_level_score > 0.4'
+      condition:
+        and:
+          - field: detection.anomaly_map.max_score
+            op: gt
+            value: 0.5
+          - field: detection.image_level_score
+            op: gt
+            value: 0.4
       action:
         label: "WARN"
         base_severity: 0.35
@@ -41,7 +61,14 @@ rule_sets:
 
     - name: "stain_detection"
       priority: 60
-      condition: 'detection.anomaly_map.max_score > 0.6 AND detection.image_level_score > 0.5'
+      condition:
+        and:
+          - field: detection.anomaly_map.max_score
+            op: gt
+            value: 0.6
+          - field: detection.image_level_score
+            op: gt
+            value: 0.5
       action:
         label: "WARN"
         base_severity: 0.25
@@ -51,7 +78,14 @@ rule_sets:
 
     - name: "scratch_minor"
       priority: 50
-      condition: 'detection.anomaly_map.max_score > 0.45 AND detection.image_level_score > 0.35'
+      condition:
+        and:
+          - field: detection.anomaly_map.max_score
+            op: gt
+            value: 0.45
+          - field: detection.image_level_score
+            op: gt
+            value: 0.35
       action:
         label: "WARN"
         base_severity: 0.20
@@ -62,7 +96,14 @@ rule_sets:
   material_rules:
     - name: "batch_reject_check"
       priority: 150
-      condition: 'detection.image_level_score > 0.7 AND detection.region_count > 2'
+      condition:
+        and:
+          - field: detection.image_level_score
+            op: gt
+            value: 0.7
+          - field: detection.region_count
+            op: gt
+            value: 2
       action:
         label: "NG"
         base_severity: 0.90
