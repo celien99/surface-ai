@@ -1,5 +1,6 @@
 // knowledge_graph.h — 批次 4.1 SQLite 属性图存储
 #pragma once
+#include <chrono>
 #include <cstdint>
 #include <string>
 #include <unordered_set>
@@ -70,6 +71,29 @@ public:
 
     [[nodiscard]] auto NodeCount() const noexcept -> std::size_t;
     [[nodiscard]] auto EdgeCount() const noexcept -> std::size_t;
+
+    // ── Evolution (formerly KnowledgeEvolution, merged Batch T3) ──────────
+    enum class EvolutionOp : std::uint8_t { Insert, Update, Delete };
+    struct EvolutionEntry {
+        std::int64_t entry_id = 0;
+        std::string entity_type;
+        std::int64_t entity_id;
+        EvolutionOp operation;
+        std::int64_t version = 0;
+        std::chrono::system_clock::time_point timestamp;
+        std::string changed_by;
+        KnowledgeRecord before_image;
+    };
+
+    [[nodiscard]] auto AppendEvolution(std::string entity_type, std::int64_t entity_id,
+                                        EvolutionOp op, KnowledgeRecord before_image,
+                                        std::string changed_by = "system") noexcept -> Result<void>;
+    [[nodiscard]] auto GetEvolutionHistory(std::string_view entity_type,
+                                            std::int64_t entity_id) const noexcept
+        -> Result<std::vector<EvolutionEntry>>;
+    [[nodiscard]] auto GetEvolutionSince(
+        std::chrono::system_clock::time_point since) const noexcept
+        -> Result<std::vector<EvolutionEntry>>;
 
     KnowledgeGraph(const KnowledgeGraph&) = delete;
     auto operator=(const KnowledgeGraph&) -> KnowledgeGraph& = delete;
