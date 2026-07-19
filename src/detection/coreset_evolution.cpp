@@ -135,6 +135,17 @@ auto EvolutionConfig::FromYaml(const YAML::Node& node) -> Result<EvolutionConfig
             cfg.backup_old_bank = p["backup_old_bank"].as<bool>(true);
             cfg.max_backups = p["max_backups"].as<std::size_t>(3);
         }
+
+        if (auto m = se["maintenance"]; m.IsDefined()) {
+            cfg.coverage_saturation_threshold =
+                m["coverage_saturation_threshold"].as<float>(0.95F);
+            cfg.saturation_window =
+                m["saturation_window"].as<std::size_t>(10);
+            cfg.max_incremental_updates =
+                m["max_incremental_updates"].as<std::size_t>(100);
+            cfg.drift_auto_rebuild =
+                m["drift_auto_rebuild"].as<bool>(false);
+        }
     } catch (const YAML::Exception& e) {
         return tl::make_unexpected(ErrorInfo{
             ErrorCode::Pipeline_InvalidConfig,
@@ -167,6 +178,11 @@ struct CoresetEvolution::Impl {
     // Sliding window for drift detection
     std::vector<float> displacement_history;
 
+    // Long-term maintenance counters
+    std::size_t consecutive_saturation_count = 0;   // coverage stayed above threshold
+    std::size_t incremental_update_count = 0;        // number of incremental updates since last full rebuild
+    bool evolution_paused = false;                   // bank is mature, skip incremental updates
+
     auto CheckDrift(float new_displacement) -> void {
         displacement_history.push_back(new_displacement);
         if (displacement_history.size() > kDriftHistoryWindowSize) {
@@ -194,9 +210,23 @@ struct CoresetEvolution::Impl {
                 && displacement_history[n-3] > threshold) {
                 sai::infra::Logger::Get("detection").Log(sai::infra::LogLevel::Warning,
                     "[CoresetEvolution] Potential concept drift: "
-                    "mean_displacement={} exceeds 2σ threshold={}. "
-                    "Self-evolution continues.",
+                    "mean_displacement={} exceeds 2σ threshold={}. ",
                     new_displacement, threshold);
+
+                // Reset saturation — drifted data may need new patches
+                consecutive_saturation_count = 0;
+                evolution_paused = false;
+
+                if (cfg.drift_auto_rebuild) {
+                    sai::infra::Logger::Get("detection").Log(
+                        sai::infra::LogLevel::Warning,
+                        "[CoresetEvolution] drift_auto_rebuild enabled — "
+                        "forcing full rebuild on next cycle");
+                    // Signal the background thread to do a full rebuild
+                    // by clearing the standby bank so the next update merges
+                    // from scratch (standby_bank = empty).
+                    standby_bank.reset();
+                }
             }
         }
     }
@@ -294,6 +324,28 @@ auto CoresetEvolution::AssessAndOffer(
             distances, query_count, impl_->active_profile, impl_->cfg.coverage_threshold);
 
         if (!novelty.is_novel) return;
+
+        // ── Long-term maintenance: coverage saturation ──
+        // When the bank covers nearly all incoming normal frames, it's "mature."
+        // Auto-pause incremental evolution to avoid unnecessary CPU/disk churn.
+        // Reset on drift (CheckDrift) or when a truly novel frame appears.
+        if (novelty.coverage_ratio >= impl_->cfg.coverage_saturation_threshold) {
+            ++impl_->consecutive_saturation_count;
+            if (impl_->consecutive_saturation_count >= impl_->cfg.saturation_window) {
+                if (!impl_->evolution_paused) {
+                    impl_->evolution_paused = true;
+                    sai::infra::Logger::Get("detection").Log(
+                        sai::infra::LogLevel::Info,
+                        "CoresetEvolution: bank mature — coverage {:.3f} sustained "
+                        "for {} frames, auto-pausing incremental updates",
+                        novelty.coverage_ratio, impl_->consecutive_saturation_count);
+                }
+                return;
+            }
+        } else {
+            impl_->consecutive_saturation_count = 0;
+            impl_->evolution_paused = false;
+        }
 
         // 4. Append to buffer — zero-copy: reuse the shared_ptr from Detect().
         EvolutionCandidate candidate;
@@ -424,6 +476,16 @@ auto CoresetEvolution::Start(std::stop_token token) noexcept -> void {
                 impl_->active_profile = NormalityProfile::ComputeFast(
                     *impl_->standby_bank, impl_->cfg.normality_k,
                     100, impl_->cfg.tail_ratio_max);
+            }
+
+            // ── Long-term maintenance: periodic full rebuild ──
+            ++impl_->incremental_update_count;
+            if (impl_->incremental_update_count >= impl_->cfg.max_incremental_updates) {
+                sai::infra::Logger::Get("detection").Log(
+                    sai::infra::LogLevel::Info,
+                    "CoresetEvolution: reached {} incremental updates — "
+                    "next Stop/FullRebuild will refresh coreset quality",
+                    impl_->incremental_update_count);
             }
 
             // Record stats
@@ -618,6 +680,11 @@ auto CoresetEvolution::FullRebuild(const std::filesystem::path& save_path) noexc
 
     // Concept drift check
     impl_->CheckDrift(mean_displacement);
+
+    // Reset maintenance counters after full rebuild
+    impl_->incremental_update_count = 0;
+    impl_->consecutive_saturation_count = 0;
+    impl_->evolution_paused = false;
 
     return {};
 }

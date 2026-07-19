@@ -172,6 +172,22 @@ struct EvolutionConfig {
     bool save_on_stop = true;
     bool backup_old_bank = true;
     std::size_t max_backups = 3;
+
+    // ── Long-term maintenance ──
+    // Coverage saturation: when coverage_ratio stays above this threshold for
+    // saturation_window consecutive evolutions, the bank is considered "mature"
+    // and evolution auto-pauses to avoid unnecessary CPU/disk churn.
+    float coverage_saturation_threshold = 0.95F;
+    std::size_t saturation_window = 10;
+
+    // After this many incremental updates, trigger a full greedy rebuild
+    // (instead of incremental merge) to refresh coreset quality.
+    std::size_t max_incremental_updates = 100;
+
+    // When concept drift is detected, automatically trigger a full rebuild
+    // to replace stale patches with fresh ones. Disabled by default to avoid
+    // unexpected rebuilds during production.
+    bool drift_auto_rebuild = false;
 };
 
 // ── 更新统计 ──

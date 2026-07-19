@@ -58,6 +58,11 @@ pipeline:
             save_on_stop: true
             backup_old_bank: true
             max_backups: 3
+          maintenance:
+            coverage_saturation_threshold: 0.95
+            saturation_window: 10
+            max_incremental_updates: 100
+            drift_auto_rebuild: false
 
     - id: rule_eval
       type: RuleEval
