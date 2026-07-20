@@ -66,16 +66,29 @@ TEST(PipelineBuilderTest, ValidateAcceptsLinearTopology) {
     std::string yaml = R"(
 pipeline:
   name: "linear"
+  version: "1.0"
   stages:
     - id: "capture"
       type: "Capture"
       depends_on: []
+    - id: "preprocess"
+      type: "Preprocess"
+      depends_on: ["capture"]
     - id: "inference"
       type: "Inference"
-      depends_on: ["capture"]
+      depends_on: ["preprocess"]
+    - id: "detect"
+      type: "Detect"
+      depends_on: ["inference"]
+    - id: "rule_eval"
+      type: "RuleEval"
+      depends_on: ["detect"]
+    - id: "reason"
+      type: "Reason"
+      depends_on: ["rule_eval"]
     - id: "export"
       type: "Export"
-      depends_on: ["inference"]
+      depends_on: ["reason"]
 )";
     auto path = WriteTempYaml(yaml);
     auto config = PipelineBuilder::ParseFromYAML(path);
@@ -90,6 +103,7 @@ TEST(PipelineBuilderTest, ValidateRejectsCyclicDependency) {
     std::string yaml = R"(
 pipeline:
   name: "cyclic"
+  version: "1.0"
   stages:
     - id: "a"
       type: "Capture"
@@ -114,6 +128,7 @@ TEST(PipelineBuilderTest, ValidateRejectsMissingEntryStage) {
     std::string yaml = R"(
 pipeline:
   name: "no_entry"
+  version: "1.0"
   stages:
     - id: "a"
       type: "Preprocess"

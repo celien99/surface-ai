@@ -57,7 +57,14 @@ rule_sets:
   seat_leather_inspection:
     - name: "scratch_major"
       priority: 100
-      condition: 'defect.type == "scratch" AND defect.area_mm2 > 10'
+      condition:
+        and:
+          - field: defect.type
+            op: eq
+            value: "scratch"
+          - field: defect.area_mm2
+            op: gt
+            value: 10
       action:
         label: "NG"
         base_severity: 0.8
@@ -66,7 +73,14 @@ rule_sets:
       overridden_by: []
     - name: "scratch_minor"
       priority: 50
-      condition: 'defect.type == "scratch" AND defect.area_mm2 > 2'
+      condition:
+        and:
+          - field: defect.type
+            op: eq
+            value: "scratch"
+          - field: defect.area_mm2
+            op: gt
+            value: 2
       action:
         label: "WARN"
         base_severity: 0.3

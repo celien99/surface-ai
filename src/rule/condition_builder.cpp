@@ -123,15 +123,23 @@ auto BuildComparison(const YAML::Node& node, std::string_view source_hint)
         return tl::make_unexpected(value_result.error());
     }
 
+    // Compose a unique source text for memoization: "field op value"
+    auto& lit = static_cast<LiteralExpr&>(**value_result);
+    auto source = lhs_source + " " + op_node.as<std::string>() + " "
+        + std::string(lit.SourceText());
+
     return std::make_unique<BinaryExpr>(
-        *op, std::move(lhs), std::move(*value_result), lhs_source);
+        *op, std::move(lhs), std::move(*value_result), source);
 }
 
 }  // anonymous namespace
 
 // ── Public entry point ────────────────────────────────────────────────────
 
-auto BuildExpressionFromYAML(const YAML::Node& node) -> Result<std::unique_ptr<IExpression>> {
+auto BuildExpressionFromYAML(const YAML::Node& const_node) -> Result<std::unique_ptr<IExpression>> {
+    // yaml-cpp const operator[] throws for missing keys, so work on a copy.
+    YAML::Node node = const_node;
+
     if (!node.IsDefined() || node.IsNull()) {
         return std::unique_ptr<IExpression>(nullptr);
     }
@@ -167,8 +175,10 @@ auto BuildExpressionFromYAML(const YAML::Node& node) -> Result<std::unique_ptr<I
         for (std::size_t i = 1; i < seq.size(); ++i) {
             auto right = BuildExpressionFromYAML(seq[i]);
             if (!right.has_value()) return tl::make_unexpected(right.error());
+            auto source = "(" + std::string((*left)->SourceText())
+                + " and " + std::string((*right)->SourceText()) + ")";
             left = std::make_unique<BinaryExpr>(
-                BinaryOp::And, std::move(*left), std::move(*right), "and");
+                BinaryOp::And, std::move(*left), std::move(*right), source);
         }
         return left;
     }
@@ -187,8 +197,10 @@ auto BuildExpressionFromYAML(const YAML::Node& node) -> Result<std::unique_ptr<I
         for (std::size_t i = 1; i < seq.size(); ++i) {
             auto right = BuildExpressionFromYAML(seq[i]);
             if (!right.has_value()) return tl::make_unexpected(right.error());
+            auto source = "(" + std::string((*left)->SourceText())
+                + " or " + std::string((*right)->SourceText()) + ")";
             left = std::make_unique<BinaryExpr>(
-                BinaryOp::Or, std::move(*left), std::move(*right), "or");
+                BinaryOp::Or, std::move(*left), std::move(*right), source);
         }
         return left;
     }

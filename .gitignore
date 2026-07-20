@@ -4,6 +4,17 @@ Testing/
 CLAUDE.md
 __pycache__/
 .vscode/
-datasets/
 third_party/
 compile_commands.json
+
+# Model files (generated, not tracked)
+*.engine
+*.onnx
+
+# Datasets — track templates/README, ignore generated manifests + images + binaries
+datasets/*/
+!datasets/car/
+datasets/car/images/
+datasets/car/*.bin
+datasets/car/*.yaml
+!datasets/car/template.yaml

@@ -81,7 +81,10 @@ TEST(RuleEngineTest, LoadFromYAML_InvalidCondition) {
 rule_sets:
   test_set:
     - name: "bad_rule"
-      condition: "x @@@ y"
+      condition:
+        field: x
+        op: "@@@"
+        value: y
       action:
         label: "A"
 )");
@@ -178,15 +181,24 @@ TEST(RuleEngineTest, EvaluateAll_SingleRuleFailureSkips) {
 rule_sets:
   test_set:
     - name: "good_rule"
-      condition: "x > 0"
+      condition:
+        field: x
+        op: gt
+        value: 0
       action:
         label: "OK"
     - name: "bad_rule"
-      condition: "nonexistent > 1.0"
+      condition:
+        field: nonexistent
+        op: gt
+        value: 1.0
       action:
         label: "ERROR"
     - name: "another_good"
-      condition: "x < 10"
+      condition:
+        field: x
+        op: lt
+        value: 10
       action:
         label: "OK"
 )");
@@ -283,13 +295,19 @@ TEST(RuleEngineTest, ResolveConflicts_Nominal) {
 rule_sets:
   checks:
     - name: "rule_a"
-      condition: "x > 5"
+      condition:
+        field: x
+        op: gt
+        value: 5
       action:
         label: "A"
       overrides: []
       overridden_by: []
     - name: "rule_b"
-      condition: "x > 3"
+      condition:
+        field: x
+        op: gt
+        value: 3
       action:
         label: "B"
       overrides: []

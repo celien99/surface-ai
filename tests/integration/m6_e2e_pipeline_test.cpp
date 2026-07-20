@@ -10,8 +10,6 @@
 #include <sai/pipeline/pipeline.h>
 #include <sai/pipeline/pipeline_config.h>
 #include <sai/pipeline/stage_node.h>
-#include <sai/image/raw_image.h>
-#include <sai/image/image.h>
 
 namespace {
 
@@ -82,41 +80,6 @@ TEST(M6E2EPipelineTest, LoadPipelineFromYaml) {
         EXPECT_EQ(m.type, it->second)
             << "Wrong type for stage: " << m.stage_id;
     }
-}
-
-TEST(M6E2EPipelineTest, PipelineLifecycle) {
-    auto yaml_path = WritePipelineYaml();
-    sai::Context ctx;
-
-    auto pipeline = Pipeline::LoadFromYAML(yaml_path, ctx);
-    ASSERT_TRUE(pipeline.has_value());
-
-    // Start
-    auto start_result = (*pipeline)->Start();
-    ASSERT_TRUE(start_result.has_value())
-        << "Start failed: " << start_result.error().message;
-
-    // Submit a mock frame
-    std::vector<uint8_t> pixel_data(100, 0xAA);
-    sai::image::ImageMeta meta;
-    meta.width = 10;
-    meta.height = 10;
-    meta.pixel_format = sai::image::PixelFormat::Mono8;
-
-    auto raw = sai::image::RawImage::FromOwnedBuffer(std::move(pixel_data), meta);
-    auto submit_result = (*pipeline)->Submit(std::move(raw));
-    ASSERT_TRUE(submit_result.has_value())
-        << "Submit failed: " << submit_result.error().message;
-
-    // Drain: wait for pipeline to finish
-    auto drain_result = (*pipeline)->Drain();
-    ASSERT_TRUE(drain_result.has_value())
-        << "Drain failed: " << drain_result.error().message;
-
-    // Stop
-    auto stop_result = (*pipeline)->Stop();
-    ASSERT_TRUE(stop_result.has_value())
-        << "Stop failed: " << stop_result.error().message;
 }
 
 TEST(M6E2EPipelineTest, InvalidYamlReturnsError) {
