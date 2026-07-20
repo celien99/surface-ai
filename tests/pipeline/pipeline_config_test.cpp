@@ -9,7 +9,7 @@ namespace sai::pipeline {
 namespace {
 
 // Helper: write a YAML string to a temp file
-std::filesystem::path WriteTempYaml(const std::string& content) {
+[[maybe_unused]] std::filesystem::path WriteTempYaml(const std::string& content) {
     auto path = std::filesystem::temp_directory_path() / "test_pipeline.yaml";
     std::ofstream ofs(path);
     ofs << content;

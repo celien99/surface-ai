@@ -304,20 +304,18 @@ auto SimplePatchEmbedder::Extract(const sai::image::Image& image) noexcept
     // Validate dimensions
     if (meta.width != cfg_.image_width || meta.height != cfg_.image_height) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Embedding_DimensionMismatch,
-            .message = "SimplePatchEmbedder: image size mismatch (expected "
-                       + std::to_string(cfg_.image_width) + "x" + std::to_string(cfg_.image_height)
-                       + ", got " + std::to_string(meta.width) + "x" + std::to_string(meta.height) + ")",
-            .source_location = std::source_location::current(),
+            ErrorCode::Embedding_DimensionMismatch,
+            "SimplePatchEmbedder: image size mismatch (expected "
+                + std::to_string(cfg_.image_width) + "x" + std::to_string(cfg_.image_height)
+                + ", got " + std::to_string(meta.width) + "x" + std::to_string(meta.height) + ")",
         });
     }
 
     if (meta.channels != 3) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Embedding_DimensionMismatch,
-            .message = "SimplePatchEmbedder: expected 3-channel RGB8 image, got "
-                       + std::to_string(meta.channels) + " channels",
-            .source_location = std::source_location::current(),
+            ErrorCode::Embedding_DimensionMismatch,
+            "SimplePatchEmbedder: expected 3-channel RGB8 image, got "
+                + std::to_string(meta.channels) + " channels",
         });
     }
 
@@ -396,9 +394,8 @@ auto SimplePatchEmbedder::ExtractBatch(
     for (const auto* img : images) {
         if (img == nullptr) {
             return tl::make_unexpected(ErrorInfo{
-                .code = ErrorCode::Embedding_DimensionMismatch,
-                .message = "SimplePatchEmbedder::ExtractBatch: null image pointer",
-                .source_location = std::source_location::current(),
+                ErrorCode::Embedding_DimensionMismatch,
+                "SimplePatchEmbedder::ExtractBatch: null image pointer",
             });
         }
         auto result = Extract(*img);

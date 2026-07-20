@@ -37,17 +37,15 @@ auto ClipAdapter::Infer(const sai::image::GpuImage& image) noexcept -> Result<Gl
 
     if (features_binding == nullptr) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_InvalidBinding,
-            .message = "ClipAdapter: output binding 'image_features' not found",
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_InvalidBinding,
+            "ClipAdapter: output binding 'image_features' not found",
         });
     }
 
     if (features_binding->device_ptr == nullptr) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_InvalidBinding,
-            .message = "ClipAdapter: output binding 'image_features' has null device_ptr",
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_InvalidBinding,
+            "ClipAdapter: output binding 'image_features' has null device_ptr",
         });
     }
 
@@ -55,11 +53,10 @@ auto ClipAdapter::Infer(const sai::image::GpuImage& image) noexcept -> Result<Gl
     std::size_t expected_bytes = cfg_.embed_dim * sizeof(float);
     if (features_binding->size_bytes < expected_bytes) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_ModelConfigMismatch,
-            .message = "ClipAdapter: output size mismatch (expected " +
+            ErrorCode::Inference_ModelConfigMismatch,
+            "ClipAdapter: output size mismatch (expected " +
                        std::to_string(expected_bytes) + " bytes, got " +
                        std::to_string(features_binding->size_bytes) + ")",
-            .source_location = std::source_location::current(),
         });
     }
 
@@ -97,17 +94,15 @@ auto ClipAdapter::InferAsync(const sai::image::GpuImage& image,
 
     if (features_binding == nullptr) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_InvalidBinding,
-            .message = "ClipAdapter: output binding 'image_features' not found",
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_InvalidBinding,
+            "ClipAdapter: output binding 'image_features' not found",
         });
     }
 
     if (features_binding->device_ptr == nullptr) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_InvalidBinding,
-            .message = "ClipAdapter: output binding 'image_features' has null device_ptr",
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_InvalidBinding,
+            "ClipAdapter: output binding 'image_features' has null device_ptr",
         });
     }
 
@@ -115,11 +110,10 @@ auto ClipAdapter::InferAsync(const sai::image::GpuImage& image,
     std::size_t expected_bytes = cfg_.embed_dim * sizeof(float);
     if (features_binding->size_bytes < expected_bytes) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_ModelConfigMismatch,
-            .message = "ClipAdapter: output size mismatch (expected " +
+            ErrorCode::Inference_ModelConfigMismatch,
+            "ClipAdapter: output size mismatch (expected " +
                        std::to_string(expected_bytes) + " bytes, got " +
                        std::to_string(features_binding->size_bytes) + ")",
-            .source_location = std::source_location::current(),
         });
     }
 

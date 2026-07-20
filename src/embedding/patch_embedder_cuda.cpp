@@ -45,17 +45,15 @@ auto PatchEmbedder::ExtractGpu(const sai::image::Image& image) noexcept
     -> Result<Embedding> {
     if (!has_adapter_) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_EngineExecutionFailed,
-            .message = "PatchEmbedder::ExtractGpu: adapter has been moved away",
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_EngineExecutionFailed,
+            "PatchEmbedder::ExtractGpu: adapter has been moved away",
         });
     }
 
     if (!image.IsGpuImage()) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Embedding_NotGpuImage,
-            .message = "PatchEmbedder::ExtractGpu requires a GpuImage",
-            .source_location = std::source_location::current(),
+            ErrorCode::Embedding_NotGpuImage,
+            "PatchEmbedder::ExtractGpu requires a GpuImage",
         });
     }
 
@@ -63,10 +61,9 @@ auto PatchEmbedder::ExtractGpu(const sai::image::Image& image) noexcept
     cudaError_t stream_err = EnsureStream(cuda_stream_);
     if (stream_err != cudaSuccess) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_EngineExecutionFailed,
-            .message = std::string("PatchEmbedder: failed to create CUDA stream: ")
-                       + cudaGetErrorString(stream_err),
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_EngineExecutionFailed,
+            std::string("PatchEmbedder: failed to create CUDA stream: ")
+                + cudaGetErrorString(stream_err),
         });
     }
     auto* stream = reinterpret_cast<cudaStream_t>(cuda_stream_);
@@ -111,10 +108,9 @@ auto PatchEmbedder::ExtractGpu(const sai::image::Image& image) noexcept
                     std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
                 if (sync_err != cudaSuccess) {
                     return tl::make_unexpected(ErrorInfo{
-                        .code = ErrorCode::Inference_EngineExecutionFailed,
-                        .message = std::string("PatchEmbedder: stream sync failed: ")
-                                   + cudaGetErrorString(sync_err),
-                        .source_location = std::source_location::current(),
+                        ErrorCode::Inference_EngineExecutionFailed,
+                        std::string("PatchEmbedder: stream sync failed: ")
+                            + cudaGetErrorString(sync_err),
                     });
                 }
                 return Embedding::FromGpu(std::move(slab), std::move(meta));
@@ -131,10 +127,9 @@ auto PatchEmbedder::ExtractGpu(const sai::image::Image& image) noexcept
         cpu_features.size() * sizeof(float), cudaMemcpyDeviceToHost, stream);
     if (d2h_err != cudaSuccess) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_EngineExecutionFailed,
-            .message = std::string("PatchEmbedder: D2H copy failed: ")
-                       + cudaGetErrorString(d2h_err),
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_EngineExecutionFailed,
+            std::string("PatchEmbedder: D2H copy failed: ")
+                + cudaGetErrorString(d2h_err),
         });
     }
 
@@ -144,10 +139,9 @@ auto PatchEmbedder::ExtractGpu(const sai::image::Image& image) noexcept
         std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
     if (sync_err != cudaSuccess) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_EngineExecutionFailed,
-            .message = std::string("PatchEmbedder: stream sync failed: ")
-                       + cudaGetErrorString(sync_err),
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_EngineExecutionFailed,
+            std::string("PatchEmbedder: stream sync failed: ")
+                + cudaGetErrorString(sync_err),
         });
     }
 

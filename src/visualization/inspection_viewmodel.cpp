@@ -5,9 +5,13 @@
 #include "sai/detection/detection_result.h"
 #include "sai/rule/value.h"
 
+#include <QMetaType>
 #include <cmath>
 #include <mutex>
 #include <shared_mutex>
+
+// Register EvidenceItem vector for queued QMetaMethod invocation
+Q_DECLARE_METATYPE(std::vector<sai::reasoner::EvidenceItem>)
 
 namespace sai::visualization {
 
@@ -146,7 +150,9 @@ void EvidenceModel::UpdateEvidence(const std::vector<sai::reasoner::EvidenceItem
 InspectionViewModel::InspectionViewModel(QObject* parent)
     : QObject(parent)
     , defect_model_(new DefectModel(this))
-    , evidence_model_(new EvidenceModel(this)) {}
+    , evidence_model_(new EvidenceModel(this)) {
+    qRegisterMetaType<std::vector<sai::reasoner::EvidenceItem>>();
+}
 
 QString InspectionViewModel::verdict() const {
     std::shared_lock lock(data_mutex_);

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <source_location>
 #include <string>
+#include <utility>
 
 #include <tl/expected.hpp>
 
@@ -103,9 +104,13 @@ enum class ErrorCode : std::uint32_t {
 };
 
 struct ErrorInfo {
-    ErrorCode code;
+    ErrorCode code = ErrorCode::Core_Unknown;
     std::string message;
     std::source_location source_location;
+
+    ErrorInfo(ErrorCode c, std::string msg,
+              std::source_location loc = std::source_location::current())
+        : code(c), message(std::move(msg)), source_location(loc) {}
 };
 
 template <typename T>

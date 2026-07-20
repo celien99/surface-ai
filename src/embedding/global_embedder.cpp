@@ -38,18 +38,16 @@ auto GlobalEmbedder::Create(sai::inference::ClipAdapter adapter) noexcept
 auto GlobalEmbedder::Extract(const sai::image::Image& image) noexcept -> Result<Embedding> {
     if (!has_adapter_) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_EngineExecutionFailed,
-            .message = "GlobalEmbedder::Extract: adapter has been moved away",
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_EngineExecutionFailed,
+            "GlobalEmbedder::Extract: adapter has been moved away",
         });
     }
 
     if (!image.IsGpuImage()) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Embedding_NotGpuImage,
-            .message = "GlobalEmbedder::Extract requires a GpuImage, "
-                       "but received a CPU-backed image",
-            .source_location = std::source_location::current(),
+            ErrorCode::Embedding_NotGpuImage,
+            "GlobalEmbedder::Extract requires a GpuImage, "
+            "but received a CPU-backed image",
         });
     }
 
@@ -62,27 +60,24 @@ auto GlobalEmbedder::ExtractBatch(
     -> Result<std::vector<Embedding>> {
     if (!has_adapter_) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_EngineExecutionFailed,
-            .message = "GlobalEmbedder::ExtractBatch: adapter has been moved away",
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_EngineExecutionFailed,
+            "GlobalEmbedder::ExtractBatch: adapter has been moved away",
         });
     }
 
     for (const auto* image_ptr : images) {
         if (!image_ptr || !image_ptr->IsGpuImage()) {
             return tl::make_unexpected(ErrorInfo{
-                .code = ErrorCode::Embedding_NotGpuImage,
-                .message = "GlobalEmbedder::ExtractBatch requires all images to be GpuImage",
-                .source_location = std::source_location::current(),
+                ErrorCode::Embedding_NotGpuImage,
+                "GlobalEmbedder::ExtractBatch requires all images to be GpuImage",
             });
         }
     }
 
     // GPU 推理路径：定义在 global_embedder_cuda.cpp（CUDA 门控）。
     return tl::make_unexpected(ErrorInfo{
-        .code = ErrorCode::Inference_EngineExecutionFailed,
-        .message = "GlobalEmbedder::ExtractBatch: GPU inference not available on this platform",
-        .source_location = std::source_location::current(),
+        ErrorCode::Inference_EngineExecutionFailed,
+        "GlobalEmbedder::ExtractBatch: GPU inference not available on this platform",
     });
 }
 
@@ -92,9 +87,8 @@ auto GlobalEmbedder::ExtractBatch(
 auto GlobalEmbedder::ExtractGpu(const sai::image::Image& /*image*/) noexcept
     -> Result<Embedding> {
     return tl::make_unexpected(ErrorInfo{
-        .code = ErrorCode::Inference_EngineExecutionFailed,
-        .message = "GlobalEmbedder::ExtractGpu: GPU inference not available on this platform",
-        .source_location = std::source_location::current(),
+        ErrorCode::Inference_EngineExecutionFailed,
+        "GlobalEmbedder::ExtractGpu: GPU inference not available on this platform",
     });
 }
 

@@ -53,11 +53,7 @@ inline auto ClipAdapter::Create(IInferenceEngine& engine,
                                  const ClipConfig& cfg) noexcept -> Result<ClipAdapter> {
     const auto& outputs = engine.OutputBindings();
     if (outputs.empty()) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_ModelConfigMismatch,
-            .message = "ClipAdapter: engine has no output bindings",
-            .source_location = std::source_location::current(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Inference_ModelConfigMismatch, "ClipAdapter: engine has no output bindings"});
     }
 
     // 查找 "features" 输出 binding
@@ -69,30 +65,19 @@ inline auto ClipAdapter::Create(IInferenceEngine& engine,
         }
     }
     if (features_binding == nullptr) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_ModelConfigMismatch,
-            .message = "ClipAdapter: engine missing 'features' output binding",
-            .source_location = std::source_location::current(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Inference_ModelConfigMismatch, "ClipAdapter: engine missing 'features' output binding"});
     }
 
     // 校验 embed_dim（取 shape 最后一维）
     if (features_binding->shape.empty()) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_ModelConfigMismatch,
-            .message = "ClipAdapter: 'features' binding has empty shape",
-            .source_location = std::source_location::current(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Inference_ModelConfigMismatch, "ClipAdapter: 'features' binding has empty shape"});
     }
     auto binding_embed_dim = static_cast<std::size_t>(features_binding->shape.back());
     if (binding_embed_dim != cfg.embed_dim) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_ModelConfigMismatch,
-            .message = "ClipAdapter: embed_dim mismatch (config=" +
-                       std::to_string(cfg.embed_dim) +
-                       ", engine=" + std::to_string(binding_embed_dim) + ")",
-            .source_location = std::source_location::current(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Inference_ModelConfigMismatch,
+                                   "ClipAdapter: embed_dim mismatch (config=" +
+                                   std::to_string(cfg.embed_dim) +
+                                   ", engine=" + std::to_string(binding_embed_dim) + ")"});
     }
 
     return ClipAdapter{&engine, cfg};

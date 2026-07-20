@@ -375,7 +375,7 @@ auto CoresetEvolution::AssessAndOffer(
     }
 }
 
-auto CoresetEvolution::Start(std::stop_token token) noexcept -> void {
+auto CoresetEvolution::Start(std::stop_token /*token*/) noexcept -> void {
     if (!impl_->cfg.enabled) return;
 
     impl_->update_thread = std::jthread([this](std::stop_token tok) {

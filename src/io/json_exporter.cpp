@@ -16,10 +16,7 @@ auto JsonExporter::Export(const InspectionResult& result,
     std::error_code ec;
     std::filesystem::create_directories(export_path, ec);
     if (ec) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Io_ExportPathCreateFailed,
-            .message = "Failed to create export directory: " + export_path.string(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Io_ExportPathCreateFailed, "Failed to create export directory: " + export_path.string()});
     }
 
     // 2. Build JSON from InspectionResult
@@ -50,17 +47,11 @@ auto JsonExporter::Export(const InspectionResult& result,
     auto json_path = export_path / "result.json";
     std::ofstream ofs(json_path);
     if (!ofs) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Io_SerializationFailed,
-            .message = "Failed to open file for writing: " + json_path.string(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Io_SerializationFailed, "Failed to open file for writing: " + json_path.string()});
     }
     ofs << j.dump(2);
     if (!ofs) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Io_SerializationFailed,
-            .message = "Failed to write JSON to: " + json_path.string(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Io_SerializationFailed, "Failed to write JSON to: " + json_path.string()});
     }
 
     // 4. If annotated image provided, write PPM placeholder
@@ -69,10 +60,7 @@ auto JsonExporter::Export(const InspectionResult& result,
         auto ppm_path = export_path / "annotated.ppm";
         std::ofstream ppm(ppm_path, std::ios::binary);
         if (!ppm) {
-            return tl::make_unexpected(ErrorInfo{
-                .code = ErrorCode::Io_SerializationFailed,
-                .message = "Failed to open PPM file for writing: " + ppm_path.string(),
-            });
+            return tl::make_unexpected(ErrorInfo{ErrorCode::Io_SerializationFailed, "Failed to open PPM file for writing: " + ppm_path.string()});
         }
 
         const auto& meta = annotated_image->Meta();
@@ -84,10 +72,7 @@ auto JsonExporter::Export(const InspectionResult& result,
         ppm.write(reinterpret_cast<const char*>(pixels),
                   static_cast<std::streamsize>(size_bytes));
         if (!ppm) {
-            return tl::make_unexpected(ErrorInfo{
-                .code = ErrorCode::Io_SerializationFailed,
-                .message = "Failed to write PPM data to: " + ppm_path.string(),
-            });
+            return tl::make_unexpected(ErrorInfo{ErrorCode::Io_SerializationFailed, "Failed to write PPM data to: " + ppm_path.string()});
         }
     }
 

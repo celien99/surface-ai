@@ -49,9 +49,9 @@ TEST_F(KnowledgeEvolutionTest, AppendAndGetHistory) {
 
 TEST_F(KnowledgeEvolutionTest, VersionIncrements) {
     KnowledgeRecord empty;
-    evolution_.Append("Node", 1, EvolutionOp::Insert, empty, "test");
-    evolution_.Append("Node", 1, EvolutionOp::Update, empty, "test");
-    evolution_.Append("Node", 1, EvolutionOp::Delete, empty, "test");
+    (void)evolution_.Append("Node", 1, EvolutionOp::Insert, empty, "test");
+    (void)evolution_.Append("Node", 1, EvolutionOp::Update, empty, "test");
+    (void)evolution_.Append("Node", 1, EvolutionOp::Delete, empty, "test");
 
     auto history = evolution_.GetHistory("Node", 1);
     ASSERT_TRUE(history.has_value());
@@ -63,9 +63,9 @@ TEST_F(KnowledgeEvolutionTest, VersionIncrements) {
 
 TEST_F(KnowledgeEvolutionTest, GetChangesSince) {
     KnowledgeRecord empty;
-    evolution_.Append("Node", 1, EvolutionOp::Insert, empty, "test");
+    (void)evolution_.Append("Node", 1, EvolutionOp::Insert, empty, "test");
     auto after_first = std::chrono::system_clock::now();
-    evolution_.Append("Node", 2, EvolutionOp::Insert, empty, "test");
+    (void)evolution_.Append("Node", 2, EvolutionOp::Insert, empty, "test");
 
     auto changes = evolution_.GetChangesSince(after_first);
     ASSERT_TRUE(changes.has_value());

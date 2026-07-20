@@ -207,7 +207,6 @@ TEST(Embedding, SelfMoveAssignmentSafe) {
     meta.count = 10;
 
     auto emb = Embedding::FromCpu(std::vector<float>(160, 3.0f), meta);
-    auto& emb_ref = emb;
     // 不推荐的自赋值模式——编译器可能优化，仅测试不崩溃
     // 这里只验证正常的 move-assign 工作
     auto tmp = std::move(emb);

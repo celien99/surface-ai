@@ -49,9 +49,9 @@ TEST_F(KnowledgeGraphTest, NodeNotFound) {
 
 TEST_F(KnowledgeGraphTest, FindNodesByType) {
     KnowledgeRecord props;
-    graph_.InsertNode("Material", props);
-    graph_.InsertNode("Material", props);
-    graph_.InsertNode("Supplier", props);
+    (void)graph_.InsertNode("Material", props);
+    (void)graph_.InsertNode("Material", props);
+    (void)graph_.InsertNode("Supplier", props);
 
     auto materials = graph_.FindNodesByType("Material");
     ASSERT_TRUE(materials.has_value());
@@ -83,7 +83,7 @@ TEST_F(KnowledgeGraphTest, Traverse) {
     ASSERT_TRUE(mat.has_value());
     ASSERT_TRUE(sup.has_value());
 
-    graph_.InsertEdge(*mat, *sup, "supplied_by", props);
+    (void)graph_.InsertEdge(*mat, *sup, "supplied_by", props);
 
     auto paths = graph_.Traverse(*mat, "supplied_by");
     ASSERT_TRUE(paths.has_value());

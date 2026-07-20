@@ -28,8 +28,9 @@ public:
     [[nodiscard]] virtual auto ModelName() const noexcept -> std::string_view = 0;
 };
 
-// PatchEmbedder — DINOv3 adapter → patch feature grid → Embedding。
+// PatchEmbedder — ViT adapter → patch feature grid → Embedding。
 // move-only，持有 DinoV3Adapter。Extract 仅在输入为 GpuImage 时有效。
+// ModelName() 委托给 adapter，适配 DINOv2/v3 等任何 ViT backbone。
 class PatchEmbedder final : public IEmbedder {
 public:
     [[nodiscard]] static auto Create(sai::inference::DinoV3Adapter adapter) noexcept
@@ -40,7 +41,7 @@ public:
     [[nodiscard]] auto ExtractBatch(std::span<const sai::image::Image* const> images) noexcept
         -> Result<std::vector<Embedding>> override;
     [[nodiscard]] auto ModelName() const noexcept -> std::string_view override
-    { return "DINOv3"; }
+    { return adapter_.ModelName(); }
 
     PatchEmbedder(PatchEmbedder&&) noexcept;
     auto operator=(PatchEmbedder&&) noexcept -> PatchEmbedder&;

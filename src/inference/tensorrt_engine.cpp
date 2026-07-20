@@ -57,18 +57,16 @@ private:
     std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_EngineLoadFailed,
-            .message = "TensorRtEngine: failed to open engine file: " + path.string(),
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_EngineLoadFailed,
+            "TensorRtEngine: failed to open engine file: " + path.string(),
         });
     }
 
     auto size = file.tellg();
     if (size <= 0) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_EngineLoadFailed,
-            .message = "TensorRtEngine: engine file is empty: " + path.string(),
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_EngineLoadFailed,
+            "TensorRtEngine: engine file is empty: " + path.string(),
         });
     }
 
@@ -76,9 +74,8 @@ private:
     std::vector<char> buffer(static_cast<std::size_t>(size));
     if (!file.read(buffer.data(), size)) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_EngineLoadFailed,
-            .message = "TensorRtEngine: failed to read engine file: " + path.string(),
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_EngineLoadFailed,
+            "TensorRtEngine: failed to read engine file: " + path.string(),
         });
     }
 
@@ -95,11 +92,10 @@ private:
     auto expected_count = inputs.size() + outputs.size();
     if (static_cast<std::size_t>(num_bindings) != expected_count) {
         return ErrorInfo{
-            .code = ErrorCode::Inference_InvalidBinding,
-            .message = "TensorRtEngine: binding count mismatch (engine=" +
+            ErrorCode::Inference_InvalidBinding,
+            "TensorRtEngine: binding count mismatch (engine=" +
                        std::to_string(num_bindings) +
                        ", provided=" + std::to_string(expected_count) + ")",
-            .source_location = std::source_location::current(),
         };
     }
 
@@ -115,10 +111,9 @@ private:
         auto it = std::find(engine_names.begin(), engine_names.end(), binding.name);
         if (it == engine_names.end()) {
             return ErrorInfo{
-                .code = ErrorCode::Inference_InvalidBinding,
-                .message = "TensorRtEngine: input binding '" + binding.name +
+                ErrorCode::Inference_InvalidBinding,
+                "TensorRtEngine: input binding '" + binding.name +
                            "' not found in engine",
-                .source_location = std::source_location::current(),
             };
         }
     }
@@ -128,10 +123,9 @@ private:
         auto it = std::find(engine_names.begin(), engine_names.end(), binding.name);
         if (it == engine_names.end()) {
             return ErrorInfo{
-                .code = ErrorCode::Inference_InvalidBinding,
-                .message = "TensorRtEngine: output binding '" + binding.name +
+                ErrorCode::Inference_InvalidBinding,
+                "TensorRtEngine: output binding '" + binding.name +
                            "' not found in engine",
-                .source_location = std::source_location::current(),
             };
         }
     }
@@ -146,10 +140,9 @@ private:
     auto err = cudaGetDevice(&current_device);
     if (err != cudaSuccess) {
         return ErrorInfo{
-            .code = ErrorCode::Inference_EngineLoadFailed,
-            .message = "TensorRtEngine: cudaGetDevice failed: " +
+            ErrorCode::Inference_EngineLoadFailed,
+            "TensorRtEngine: cudaGetDevice failed: " +
                        std::string(cudaGetErrorString(err)),
-            .source_location = std::source_location::current(),
         };
     }
 
@@ -158,31 +151,28 @@ private:
         err = cudaGetDeviceCount(&device_count);
         if (err != cudaSuccess) {
             return ErrorInfo{
-                .code = ErrorCode::Inference_EngineLoadFailed,
-                .message = "TensorRtEngine: cudaGetDeviceCount failed: " +
+                ErrorCode::Inference_EngineLoadFailed,
+                "TensorRtEngine: cudaGetDeviceCount failed: " +
                            std::string(cudaGetErrorString(err)),
-                .source_location = std::source_location::current(),
             };
         }
 
         if (static_cast<int>(device_ordinal) >= device_count) {
             return ErrorInfo{
-                .code = ErrorCode::Inference_EngineLoadFailed,
-                .message = "TensorRtEngine: device ordinal " +
+                ErrorCode::Inference_EngineLoadFailed,
+                "TensorRtEngine: device ordinal " +
                            std::to_string(device_ordinal) +
                            " out of range (device count=" +
                            std::to_string(device_count) + ")",
-                .source_location = std::source_location::current(),
             };
         }
 
         err = cudaSetDevice(static_cast<int>(device_ordinal));
         if (err != cudaSuccess) {
             return ErrorInfo{
-                .code = ErrorCode::Inference_EngineLoadFailed,
-                .message = "TensorRtEngine: cudaSetDevice failed: " +
+                ErrorCode::Inference_EngineLoadFailed,
+                "TensorRtEngine: cudaSetDevice failed: " +
                            std::string(cudaGetErrorString(err)),
-                .source_location = std::source_location::current(),
             };
         }
     }
@@ -222,9 +212,8 @@ auto TensorRtEngine::DeserializeAndValidate(
     auto* raw_runtime = nvinfer1::createInferRuntime(TrtLogger::Instance());
     if (raw_runtime == nullptr) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_EngineLoadFailed,
-            .message = "TensorRtEngine: createInferRuntime returned nullptr",
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_EngineLoadFailed,
+            "TensorRtEngine: createInferRuntime returned nullptr",
         });
     }
     auto runtime = std::shared_ptr<nvinfer1::IRuntime>(
@@ -236,10 +225,9 @@ auto TensorRtEngine::DeserializeAndValidate(
         file_data->data(), file_data->size());
     if (raw_engine == nullptr) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_EngineLoadFailed,
-            .message = "TensorRtEngine: deserializeCudaEngine returned nullptr "
+            ErrorCode::Inference_EngineLoadFailed,
+            "TensorRtEngine: deserializeCudaEngine returned nullptr "
                        "(file may be corrupted or from an incompatible TensorRT version)",
-            .source_location = std::source_location::current(),
         });
     }
     auto engine = std::shared_ptr<nvinfer1::ICudaEngine>(
@@ -250,9 +238,8 @@ auto TensorRtEngine::DeserializeAndValidate(
     auto* raw_context = engine->createExecutionContext();
     if (raw_context == nullptr) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_EngineLoadFailed,
-            .message = "TensorRtEngine: createExecutionContext returned nullptr",
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_EngineLoadFailed,
+            "TensorRtEngine: createExecutionContext returned nullptr",
         });
     }
     auto context = std::shared_ptr<nvinfer1::IExecutionContext>(
@@ -270,10 +257,9 @@ auto TensorRtEngine::DeserializeAndValidate(
         if (binding.device_ptr != nullptr) {
             if (!context->setTensorAddress(binding.name.c_str(), binding.device_ptr)) {
                 return tl::make_unexpected(ErrorInfo{
-                    .code = ErrorCode::Inference_InvalidBinding,
-                    .message = "TensorRtEngine: setTensorAddress failed for input '" +
+                    ErrorCode::Inference_InvalidBinding,
+                    "TensorRtEngine: setTensorAddress failed for input '" +
                                binding.name + "'",
-                    .source_location = std::source_location::current(),
                 });
             }
         }
@@ -282,10 +268,9 @@ auto TensorRtEngine::DeserializeAndValidate(
         if (binding.device_ptr != nullptr) {
             if (!context->setTensorAddress(binding.name.c_str(), binding.device_ptr)) {
                 return tl::make_unexpected(ErrorInfo{
-                    .code = ErrorCode::Inference_InvalidBinding,
-                    .message = "TensorRtEngine: setTensorAddress failed for output '" +
+                    ErrorCode::Inference_InvalidBinding,
+                    "TensorRtEngine: setTensorAddress failed for output '" +
                                binding.name + "'",
-                    .source_location = std::source_location::current(),
                 });
             }
         }
@@ -316,9 +301,8 @@ auto TensorRtEngine::Infer() noexcept -> Result<void> {
     auto state = state_.load();
     if (state == nullptr || state->context == nullptr) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_EngineExecutionFailed,
-            .message = "TensorRtEngine: no engine loaded",
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_EngineExecutionFailed,
+            "TensorRtEngine: no engine loaded",
         });
     }
 
@@ -326,10 +310,9 @@ auto TensorRtEngine::Infer() noexcept -> Result<void> {
     for (const auto& output : outputs_) {
         if (output.device_ptr == nullptr) {
             return tl::make_unexpected(ErrorInfo{
-                .code = ErrorCode::Inference_InvalidBinding,
-                .message = "TensorRtEngine: output binding '" + output.name +
+                ErrorCode::Inference_InvalidBinding,
+                "TensorRtEngine: output binding '" + output.name +
                            "' has null device_ptr",
-                .source_location = std::source_location::current(),
             });
         }
     }
@@ -337,19 +320,17 @@ auto TensorRtEngine::Infer() noexcept -> Result<void> {
     // TRT 10 enqueueV3(nullptr) 使用默认 CUDA stream。
     if (!state->context->enqueueV3(nullptr)) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_EngineExecutionFailed,
-            .message = "TensorRtEngine: enqueueV3 failed",
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_EngineExecutionFailed,
+            "TensorRtEngine: enqueueV3 failed",
         });
     }
 
     auto cuda_err = cudaStreamSynchronize(nullptr);
     if (cuda_err != cudaSuccess) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_EngineExecutionFailed,
-            .message = "TensorRtEngine: cudaStreamSynchronize failed: " +
+            ErrorCode::Inference_EngineExecutionFailed,
+            "TensorRtEngine: cudaStreamSynchronize failed: " +
                        std::string(cudaGetErrorString(cuda_err)),
-            .source_location = std::source_location::current(),
         });
     }
 
@@ -360,9 +341,8 @@ auto TensorRtEngine::InferAsync(void* stream) noexcept -> Result<void> {
     auto state = state_.load();
     if (state == nullptr || state->context == nullptr) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_EngineExecutionFailed,
-            .message = "TensorRtEngine: no engine loaded",
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_EngineExecutionFailed,
+            "TensorRtEngine: no engine loaded",
         });
     }
 
@@ -370,10 +350,9 @@ auto TensorRtEngine::InferAsync(void* stream) noexcept -> Result<void> {
     for (const auto& output : outputs_) {
         if (output.device_ptr == nullptr) {
             return tl::make_unexpected(ErrorInfo{
-                .code = ErrorCode::Inference_InvalidBinding,
-                .message = "TensorRtEngine: output binding '" + output.name +
+                ErrorCode::Inference_InvalidBinding,
+                "TensorRtEngine: output binding '" + output.name +
                            "' has null device_ptr",
-                .source_location = std::source_location::current(),
             });
         }
     }
@@ -381,9 +360,8 @@ auto TensorRtEngine::InferAsync(void* stream) noexcept -> Result<void> {
     auto* cuda_stream = static_cast<cudaStream_t>(stream);
     if (!state->context->enqueueV3(cuda_stream)) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_EngineExecutionFailed,
-            .message = "TensorRtEngine: enqueueV3 (async) failed",
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_EngineExecutionFailed,
+            "TensorRtEngine: enqueueV3 (async) failed",
         });
     }
 
@@ -396,10 +374,9 @@ auto TensorRtEngine::Reload(const std::filesystem::path& engine_path) noexcept -
     auto new_state_result = DeserializeAndValidate(engine_path, inputs_, outputs_);
     if (!new_state_result.has_value()) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_ReloadFailed,
-            .message = "TensorRtEngine: Reload failed: " +
+            ErrorCode::Inference_ReloadFailed,
+            "TensorRtEngine: Reload failed: " +
                        new_state_result.error().message,
-            .source_location = std::source_location::current(),
         });
     }
 
@@ -419,10 +396,9 @@ auto TensorRtEngine::SetTensorAddress(const std::string& name,
             if (state != nullptr && state->context != nullptr) {
                 if (!state->context->setTensorAddress(name.c_str(), device_ptr)) {
                     return tl::make_unexpected(ErrorInfo{
-                        .code = ErrorCode::Inference_InvalidBinding,
-                        .message = "TensorRtEngine: setTensorAddress failed for '" +
+                        ErrorCode::Inference_InvalidBinding,
+                        "TensorRtEngine: setTensorAddress failed for '" +
                                    name + "' on TRT context",
-                        .source_location = std::source_location::current(),
                     });
                 }
             }
@@ -438,10 +414,9 @@ auto TensorRtEngine::SetTensorAddress(const std::string& name,
             if (state != nullptr && state->context != nullptr) {
                 if (!state->context->setTensorAddress(name.c_str(), device_ptr)) {
                     return tl::make_unexpected(ErrorInfo{
-                        .code = ErrorCode::Inference_InvalidBinding,
-                        .message = "TensorRtEngine: setTensorAddress failed for '" +
+                        ErrorCode::Inference_InvalidBinding,
+                        "TensorRtEngine: setTensorAddress failed for '" +
                                    name + "' on TRT context",
-                        .source_location = std::source_location::current(),
                     });
                 }
             }
@@ -450,9 +425,8 @@ auto TensorRtEngine::SetTensorAddress(const std::string& name,
     }
 
     return tl::make_unexpected(ErrorInfo{
-        .code = ErrorCode::Inference_InvalidBinding,
-        .message = "TensorRtEngine: binding '" + name + "' not found",
-        .source_location = std::source_location::current(),
+        ErrorCode::Inference_InvalidBinding,
+        "TensorRtEngine: binding '" + name + "' not found",
     });
 }
 

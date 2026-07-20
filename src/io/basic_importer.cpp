@@ -23,36 +23,24 @@ auto BasicImporter::ImportDataset(std::filesystem::path yaml_path) noexcept
     -> Result<std::vector<DatasetEntry>> {
     std::error_code ec;
     if (!std::filesystem::exists(yaml_path, ec) || ec) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Io_ImportFileNotFound,
-            .message = "Dataset manifest not found: " + yaml_path.string(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Io_ImportFileNotFound, "Dataset manifest not found: " + yaml_path.string()});
     }
 
     YAML::Node root;
     try {
         root = YAML::LoadFile(yaml_path.string());
     } catch (const YAML::Exception& e) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Io_ImportParseFailed,
-            .message = std::string("Failed to parse dataset YAML: ") + e.what(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Io_ImportParseFailed, std::string("Failed to parse dataset YAML: ") + e.what()});
     }
 
     if (!root["surface"].IsDefined() || !root["images"].IsDefined()) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Io_ImportParseFailed,
-            .message = "Dataset YAML must contain 'surface' and 'images' keys",
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Io_ImportParseFailed, "Dataset YAML must contain 'surface' and 'images' keys"});
     }
 
     std::string surface_id = root["surface"].as<std::string>();
     auto images_node = root["images"];
     if (!images_node.IsSequence()) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Io_ImportParseFailed,
-            .message = "'images' must be a sequence",
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Io_ImportParseFailed, "'images' must be a sequence"});
     }
 
     auto base_dir = yaml_path.parent_path();
@@ -80,20 +68,14 @@ auto BasicImporter::ImportMetadata(std::filesystem::path path) noexcept
     // 1. Existence check
     std::error_code ec;
     if (!std::filesystem::exists(path, ec) || ec) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Io_ImportFileNotFound,
-            .message = "Metadata file not found: " + path.string(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Io_ImportFileNotFound, "Metadata file not found: " + path.string()});
     }
 
     // 2. YAML::LoadFile in try/catch
     try {
         return YAML::LoadFile(path.string());
     } catch (const YAML::Exception& e) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Io_ImportParseFailed,
-            .message = "Failed to parse metadata YAML: " + std::string(e.what()),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Io_ImportParseFailed, "Failed to parse metadata YAML: " + std::string(e.what())});
     }
 }
 
@@ -102,27 +84,18 @@ auto BasicImporter::ImportImage(std::filesystem::path path) noexcept
     // 1. Existence check
     std::error_code ec;
     if (!std::filesystem::exists(path, ec) || ec) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Io_ImportFileNotFound,
-            .message = "Image file not found: " + path.string(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Io_ImportFileNotFound, "Image file not found: " + path.string()});
     }
 
     // 2. Read entire file into memory for stb_image
     std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Io_ImportFileNotFound,
-            .message = "Cannot open image file: " + path.string(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Io_ImportFileNotFound, "Cannot open image file: " + path.string()});
     }
 
     auto file_size = static_cast<std::size_t>(file.tellg());
     if (file_size == 0) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Io_ImportParseFailed,
-            .message = "Empty image file: " + path.string(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Io_ImportParseFailed, "Empty image file: " + path.string()});
     }
 
     std::vector<unsigned char> file_buffer(file_size);
@@ -130,10 +103,7 @@ auto BasicImporter::ImportImage(std::filesystem::path path) noexcept
     file.read(reinterpret_cast<char*>(file_buffer.data()),
               static_cast<std::streamsize>(file_size));
     if (!file) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Io_ImportParseFailed,
-            .message = "Failed to read image file: " + path.string(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Io_ImportParseFailed, "Failed to read image file: " + path.string()});
     }
 
     // 3. Detect format: .tif/.tiff uses minimal TIFF parser, others use stb_image.
@@ -257,25 +227,16 @@ auto BasicImporter::ImportImage(std::filesystem::path path) noexcept
 
     // 6. Validate decode result
     if (!is_16bit && pixels == nullptr) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Io_ImportParseFailed,
-            .message = std::string("Image decode failed: ") + stbi_failure_reason()
-                       + " [" + path.string() + "]",
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Io_ImportParseFailed, std::string("Image decode failed: ") + stbi_failure_reason()
+                       + " [" + path.string() + "]"});
     }
     if (is_16bit && pixels_16 == nullptr) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Io_ImportParseFailed,
-            .message = "16-bit image decode failed [" + path.string() + "]",
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Io_ImportParseFailed, "16-bit image decode failed [" + path.string() + "]"});
     }
     if (width <= 0 || height <= 0) {
         if (pixels) stbi_image_free(pixels);
         if (pixels_16) std::free(pixels_16);
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Io_ImportParseFailed,
-            .message = "Decoded image has invalid dimensions: " + path.string(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Io_ImportParseFailed, "Decoded image has invalid dimensions: " + path.string()});
     }
 
     // 7. Construct RawImage from decoded data.

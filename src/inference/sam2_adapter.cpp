@@ -45,17 +45,15 @@ auto Sam2Adapter::Infer(const sai::image::GpuImage& image,
 
     if (masks_binding == nullptr) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_InvalidBinding,
-            .message = "Sam2Adapter: output binding 'masks' not found",
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_InvalidBinding,
+            "Sam2Adapter: output binding 'masks' not found",
         });
     }
 
     if (masks_binding->device_ptr == nullptr) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_InvalidBinding,
-            .message = "Sam2Adapter: output binding 'masks' has null device_ptr",
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_InvalidBinding,
+            "Sam2Adapter: output binding 'masks' has null device_ptr",
         });
     }
 

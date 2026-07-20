@@ -12,9 +12,8 @@ auto Sam2Segmenter::Refine(
     -> Result<std::vector<RefinedRegion>> {
     if (!has_adapter_) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_EngineExecutionFailed,
-            .message = "Sam2Segmenter::Refine: adapter has been moved away",
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_EngineExecutionFailed,
+            "Sam2Segmenter::Refine: adapter has been moved away",
         });
     }
 

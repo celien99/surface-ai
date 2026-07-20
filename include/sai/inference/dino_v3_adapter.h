@@ -1,4 +1,5 @@
-// dino_v3_adapter.h — DINOv3 模型 Adapter（批次 3.1）
+// dino_v3_adapter.h — DINO ViT Adapter（批次 3.1）
+// Generic ViT patch feature extractor — compatible with DINOv2 and DINOv3.
 #pragma once
 
 #include <cstddef>
@@ -43,7 +44,7 @@ public:
     [[nodiscard]] auto InferAsync(const sai::image::GpuImage& image,
                                    void* stream) noexcept -> Result<PatchFeatures>;
 
-    [[nodiscard]] auto ModelName() const noexcept -> std::string_view { return "DINOv3"; }
+    [[nodiscard]] auto ModelName() const noexcept -> std::string_view { return "DINOv2"; }
 
     DinoV3Adapter(DinoV3Adapter&&) noexcept = default;
     auto operator=(DinoV3Adapter&&) noexcept -> DinoV3Adapter& = default;
@@ -61,46 +62,31 @@ inline auto DinoV3Adapter::Create(IInferenceEngine& engine,
                                    const DinoV3Config& cfg) noexcept -> Result<DinoV3Adapter> {
     const auto& outputs = engine.OutputBindings();
     if (outputs.empty()) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_ModelConfigMismatch,
-            .message = "DinoV3Adapter: engine has no output bindings",
-            .source_location = std::source_location::current(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Inference_ModelConfigMismatch, "DinoV3Adapter: engine has no output bindings"});
     }
 
-    // 查找 "features" 输出 binding
+    // 查找 "last_hidden_state" 输出 binding
     const TensorBinding* features_binding = nullptr;
     for (const auto& b : outputs) {
-        if (b.name == "features") {
+        if (b.name == "last_hidden_state") {
             features_binding = &b;
             break;
         }
     }
     if (features_binding == nullptr) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_ModelConfigMismatch,
-            .message = "DinoV3Adapter: engine missing 'features' output binding",
-            .source_location = std::source_location::current(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Inference_ModelConfigMismatch, "DinoV3Adapter: engine missing 'last_hidden_state' output binding"});
     }
 
     // 校验 embed_dim（取 shape 最后一维）
     if (features_binding->shape.empty()) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_ModelConfigMismatch,
-            .message = "DinoV3Adapter: 'features' binding has empty shape",
-            .source_location = std::source_location::current(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Inference_ModelConfigMismatch, "DinoV3Adapter: 'last_hidden_state' binding has empty shape"});
     }
     auto binding_embed_dim = static_cast<std::size_t>(features_binding->shape.back());
     if (binding_embed_dim != cfg.embed_dim) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_ModelConfigMismatch,
-            .message = "DinoV3Adapter: embed_dim mismatch (config=" +
-                       std::to_string(cfg.embed_dim) +
-                       ", engine=" + std::to_string(binding_embed_dim) + ")",
-            .source_location = std::source_location::current(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Inference_ModelConfigMismatch,
+                                   "DinoV3Adapter: embed_dim mismatch (config=" +
+                                   std::to_string(cfg.embed_dim) +
+                                   ", engine=" + std::to_string(binding_embed_dim) + ")"});
     }
 
     return DinoV3Adapter{&engine, cfg};

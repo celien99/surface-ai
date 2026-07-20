@@ -33,7 +33,7 @@ public:
         process_called_ = true;
         last_type_index_ = input.TypeIndex();
         // Echo input as output (passthrough via move)
-        return std::move(input);
+        return input;
     }
 
     bool init_called_ = false;
@@ -116,7 +116,7 @@ TEST(PipelineFailureTest, StageFailureDoesNotCrash) {
     // Verify that a failing Process() returns an error, not an exception
     FailingStage stage("failing", true);
     sai::Context ctx;
-    stage.OnInitialize(ctx);
+    (void)stage.OnInitialize(ctx);
 
     RawImage mock = RawImage::FromOwnedBuffer(
         std::vector<uint8_t>{1, 2, 3}, sai::image::ImageMeta{});
@@ -130,7 +130,7 @@ TEST(PipelineFailureTest, StageRecoversAfterFailure) {
     // A stage that fails once then succeeds on the next call
     FailingStage stage("recover", true);
     sai::Context ctx;
-    stage.OnInitialize(ctx);
+    (void)stage.OnInitialize(ctx);
 
     // First call fails
     {

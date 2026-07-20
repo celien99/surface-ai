@@ -39,17 +39,15 @@ auto GlobalEmbedder::ExtractGpu(const sai::image::Image& image) noexcept
     -> Result<Embedding> {
     if (!has_adapter_) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_EngineExecutionFailed,
-            .message = "GlobalEmbedder::ExtractGpu: adapter has been moved away",
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_EngineExecutionFailed,
+            "GlobalEmbedder::ExtractGpu: adapter has been moved away",
         });
     }
 
     if (!image.IsGpuImage()) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Embedding_NotGpuImage,
-            .message = "GlobalEmbedder::ExtractGpu requires a GpuImage",
-            .source_location = std::source_location::current(),
+            ErrorCode::Embedding_NotGpuImage,
+            "GlobalEmbedder::ExtractGpu requires a GpuImage",
         });
     }
 
@@ -57,10 +55,9 @@ auto GlobalEmbedder::ExtractGpu(const sai::image::Image& image) noexcept
     cudaError_t stream_err = EnsureStream(cuda_stream_);
     if (stream_err != cudaSuccess) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_EngineExecutionFailed,
-            .message = std::string("GlobalEmbedder: failed to create CUDA stream: ")
-                       + cudaGetErrorString(stream_err),
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_EngineExecutionFailed,
+            std::string("GlobalEmbedder: failed to create CUDA stream: ")
+                + cudaGetErrorString(stream_err),
         });
     }
     auto* stream = reinterpret_cast<cudaStream_t>(cuda_stream_);
@@ -81,10 +78,9 @@ auto GlobalEmbedder::ExtractGpu(const sai::image::Image& image) noexcept
         global_result->dim * sizeof(float), cudaMemcpyDeviceToHost, stream);
     if (d2h_err != cudaSuccess) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_EngineExecutionFailed,
-            .message = std::string("GlobalEmbedder: D2H copy failed: ")
-                       + cudaGetErrorString(d2h_err),
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_EngineExecutionFailed,
+            std::string("GlobalEmbedder: D2H copy failed: ")
+                + cudaGetErrorString(d2h_err),
         });
     }
 
@@ -94,10 +90,9 @@ auto GlobalEmbedder::ExtractGpu(const sai::image::Image& image) noexcept
 
     if (sync_err != cudaSuccess) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_EngineExecutionFailed,
-            .message = std::string("GlobalEmbedder: stream sync failed: ")
-                       + cudaGetErrorString(sync_err),
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_EngineExecutionFailed,
+            std::string("GlobalEmbedder: stream sync failed: ")
+                + cudaGetErrorString(sync_err),
         });
     }
 

@@ -40,18 +40,16 @@ auto PatchEmbedder::Create(sai::inference::DinoV3Adapter adapter) noexcept
 auto PatchEmbedder::Extract(const sai::image::Image& image) noexcept -> Result<Embedding> {
     if (!has_adapter_) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_EngineExecutionFailed,
-            .message = "PatchEmbedder::Extract: adapter has been moved away",
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_EngineExecutionFailed,
+            "PatchEmbedder::Extract: adapter has been moved away",
         });
     }
 
     if (!image.IsGpuImage()) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Embedding_NotGpuImage,
-            .message = "PatchEmbedder::Extract requires a GpuImage, "
-                       "but received a CPU-backed image",
-            .source_location = std::source_location::current(),
+            ErrorCode::Embedding_NotGpuImage,
+            "PatchEmbedder::Extract requires a GpuImage, "
+            "but received a CPU-backed image",
         });
     }
 
@@ -66,27 +64,24 @@ auto PatchEmbedder::ExtractBatch(
     -> Result<std::vector<Embedding>> {
     if (!has_adapter_) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_EngineExecutionFailed,
-            .message = "PatchEmbedder::ExtractBatch: adapter has been moved away",
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_EngineExecutionFailed,
+            "PatchEmbedder::ExtractBatch: adapter has been moved away",
         });
     }
 
     for (const auto* image_ptr : images) {
         if (!image_ptr || !image_ptr->IsGpuImage()) {
             return tl::make_unexpected(ErrorInfo{
-                .code = ErrorCode::Embedding_NotGpuImage,
-                .message = "PatchEmbedder::ExtractBatch requires all images to be GpuImage",
-                .source_location = std::source_location::current(),
+                ErrorCode::Embedding_NotGpuImage,
+                "PatchEmbedder::ExtractBatch requires all images to be GpuImage",
             });
         }
     }
 
     // GPU 推理路径：定义在 patch_embedder_cuda.cpp（CUDA 门控）。
     return tl::make_unexpected(ErrorInfo{
-        .code = ErrorCode::Inference_EngineExecutionFailed,
-        .message = "PatchEmbedder::ExtractBatch: GPU inference not available on this platform",
-        .source_location = std::source_location::current(),
+        ErrorCode::Inference_EngineExecutionFailed,
+        "PatchEmbedder::ExtractBatch: GPU inference not available on this platform",
     });
 }
 
@@ -96,9 +91,8 @@ auto PatchEmbedder::ExtractBatch(
 auto PatchEmbedder::ExtractGpu(const sai::image::Image& /*image*/) noexcept
     -> Result<Embedding> {
     return tl::make_unexpected(ErrorInfo{
-        .code = ErrorCode::Inference_EngineExecutionFailed,
-        .message = "PatchEmbedder::ExtractGpu: GPU inference not available on this platform",
-        .source_location = std::source_location::current(),
+        ErrorCode::Inference_EngineExecutionFailed,
+        "PatchEmbedder::ExtractGpu: GPU inference not available on this platform",
     });
 }
 

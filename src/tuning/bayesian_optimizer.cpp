@@ -518,11 +518,8 @@ auto BayesianOptimizer::Optimize(ITuningObjective& objective,
                                   std::chrono::system_clock::time_point since)
     -> Result<OptimizationPoint> {
     if (space_.Dimension() == 0) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Tuning_SpaceEmpty,
-            .message = "TuningSpace has zero parameters — nothing to optimize",
-            .source_location = std::source_location::current(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Tuning_SpaceEmpty,
+                                             "TuningSpace has zero parameters — nothing to optimize"});
     }
 
     // Generate initial random points if needed

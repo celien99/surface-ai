@@ -33,10 +33,8 @@ auto KnowledgeGraphObjective::EvaluateLegacy(
     -> Result<double> {
     auto nodes_result = kg_.FindNodesByType("GroundTruth");
     if (!nodes_result.has_value()) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Tuning_ObjectiveEvalFailed,
-            .message = "Failed to query GroundTruth nodes from knowledge graph",
-            .source_location = std::source_location::current()});
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Tuning_ObjectiveEvalFailed,
+                                             "Failed to query GroundTruth nodes from knowledge graph"});
     }
 
     auto since_us = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -122,10 +120,8 @@ auto KnowledgeGraphObjective::EvaluateSimulated(
     -> Result<double> {
     auto nodes_result = kg_.FindNodesByType("GroundTruth");
     if (!nodes_result.has_value()) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Tuning_ObjectiveEvalFailed,
-            .message = "Failed to query GroundTruth nodes from knowledge graph",
-            .source_location = std::source_location::current()});
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Tuning_ObjectiveEvalFailed,
+                                             "Failed to query GroundTruth nodes from knowledge graph"});
     }
 
     auto since_us = std::chrono::duration_cast<std::chrono::microseconds>(

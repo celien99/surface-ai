@@ -79,25 +79,13 @@ private:
 inline auto SimplePatchEmbedder::Create(SimplePatchEmbedderConfig cfg) noexcept
     -> Result<SimplePatchEmbedder> {
     if (cfg.image_width == 0 || cfg.image_height == 0 || cfg.patch_size == 0) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Embedding_InvalidPatchParameters,
-            .message = "SimplePatchEmbedder: image dimensions and patch size must be > 0",
-            .source_location = std::source_location::current(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Embedding_InvalidPatchParameters, "SimplePatchEmbedder: image dimensions and patch size must be > 0"});
     }
     if (cfg.image_width % cfg.patch_size != 0 || cfg.image_height % cfg.patch_size != 0) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Embedding_InvalidPatchParameters,
-            .message = "SimplePatchEmbedder: image size must be divisible by patch size",
-            .source_location = std::source_location::current(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Embedding_InvalidPatchParameters, "SimplePatchEmbedder: image size must be divisible by patch size"});
     }
     if (cfg.feature_dim == 0) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Embedding_InvalidPatchParameters,
-            .message = "SimplePatchEmbedder: feature_dim must be > 0",
-            .source_location = std::source_location::current(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Embedding_InvalidPatchParameters, "SimplePatchEmbedder: feature_dim must be > 0"});
     }
     return SimplePatchEmbedder{cfg};
 }

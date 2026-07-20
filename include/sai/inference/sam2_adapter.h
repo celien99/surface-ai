@@ -55,11 +55,7 @@ inline auto Sam2Adapter::Create(IInferenceEngine& engine,
     const auto& outputs = engine.OutputBindings();
 
     if (inputs.empty() && outputs.empty()) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_ModelConfigMismatch,
-            .message = "Sam2Adapter: engine has no bindings",
-            .source_location = std::source_location::current(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Inference_ModelConfigMismatch, "Sam2Adapter: engine has no bindings"});
     }
 
     // 校验必需 input bindings
@@ -70,11 +66,7 @@ inline auto Sam2Adapter::Create(IInferenceEngine& engine,
         if (b.name == "prompt") has_prompt = true;
     }
     if (!has_image || !has_prompt) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_ModelConfigMismatch,
-            .message = "Sam2Adapter: engine missing 'image' or 'prompt' input bindings",
-            .source_location = std::source_location::current(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Inference_ModelConfigMismatch, "Sam2Adapter: engine missing 'image' or 'prompt' input bindings"});
     }
 
     // 校验必需 output binding
@@ -83,11 +75,7 @@ inline auto Sam2Adapter::Create(IInferenceEngine& engine,
         if (b.name == "masks") has_masks = true;
     }
     if (!has_masks) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_ModelConfigMismatch,
-            .message = "Sam2Adapter: engine missing 'masks' output binding",
-            .source_location = std::source_location::current(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Inference_ModelConfigMismatch, "Sam2Adapter: engine missing 'masks' output binding"});
     }
 
     return Sam2Adapter{&engine, cfg};

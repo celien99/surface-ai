@@ -1,5 +1,6 @@
-// dino_v3_adapter.cpp — DINOv3 Adapter 推理实现（批次 3.1，CUDA 门控）
+// dino_v3_adapter.cpp — DINO ViT Adapter 推理实现（批次 3.1，CUDA 门控）
 // 该文件仅在目标平台上编译。Infer() 方法调用 TensorRtEngine 执行实际的 GPU 推理。
+// DINOv2 输出包含 CLS token，需跳过首 token 再交 PatchEmbedder。
 
 #include <sai/inference/dino_v3_adapter.h>
 
@@ -37,38 +38,38 @@ auto DinoV3Adapter::Infer(const sai::image::GpuImage& image) noexcept -> Result<
 
     if (features_binding == nullptr) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_InvalidBinding,
-            .message = "DinoV3Adapter: output binding 'last_hidden_state' not found",
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_InvalidBinding,
+            "DinoV3Adapter: output binding 'last_hidden_state' not found",
         });
     }
 
     if (features_binding->device_ptr == nullptr) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_InvalidBinding,
-            .message = "DinoV3Adapter: output binding 'last_hidden_state' has null device_ptr",
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_InvalidBinding,
+            "DinoV3Adapter: output binding 'last_hidden_state' has null device_ptr",
         });
     }
 
     // 4. 计算 patch grid 并校验维度。
+    // DINOv2 的 last_hidden_state 包含 CLS token 作为首 token，
+    // 因此期望大小比纯 patch 多一个 token。
     auto grid_h = cfg_.image_size / cfg_.patch_size;
     auto grid_w = cfg_.image_size / cfg_.patch_size;
 
-    std::size_t expected_elements = grid_h * grid_w * cfg_.embed_dim;
+    std::size_t expected_elements = (grid_h * grid_w + 1) * cfg_.embed_dim;  // +1 for CLS
     std::size_t actual_elements = features_binding->size_bytes / sizeof(float);
     if (actual_elements < expected_elements) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_ModelConfigMismatch,
-            .message = "DinoV3Adapter: output size mismatch (expected " +
+            ErrorCode::Inference_ModelConfigMismatch,
+            "DinoV3Adapter: output size mismatch (expected " +
                        std::to_string(expected_elements) + " floats, got " +
                        std::to_string(actual_elements) + ")",
-            .source_location = std::source_location::current(),
         });
     }
 
+    // 跳过 CLS token（首个 token），返回纯 patch features
     return PatchFeatures{
-        .device_ptr = static_cast<float*>(features_binding->device_ptr),
+        .device_ptr = static_cast<float*>(features_binding->device_ptr) + cfg_.embed_dim,
         .grid_h = grid_h,
         .grid_w = grid_w,
         .dim = cfg_.embed_dim,
@@ -104,38 +105,38 @@ auto DinoV3Adapter::InferAsync(const sai::image::GpuImage& image,
 
     if (features_binding == nullptr) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_InvalidBinding,
-            .message = "DinoV3Adapter: output binding 'last_hidden_state' not found",
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_InvalidBinding,
+            "DinoV3Adapter: output binding 'last_hidden_state' not found",
         });
     }
 
     if (features_binding->device_ptr == nullptr) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_InvalidBinding,
-            .message = "DinoV3Adapter: output binding 'last_hidden_state' has null device_ptr",
-            .source_location = std::source_location::current(),
+            ErrorCode::Inference_InvalidBinding,
+            "DinoV3Adapter: output binding 'last_hidden_state' has null device_ptr",
         });
     }
 
-    // 4. Compute patch grid and validate dimensions
+    // 4. Compute patch grid and validate dimensions.
+    // DINOv2's last_hidden_state includes a CLS token as the first token,
+    // so expected size is one token larger than pure patches.
     auto grid_h = cfg_.image_size / cfg_.patch_size;
     auto grid_w = cfg_.image_size / cfg_.patch_size;
 
-    std::size_t expected_elements = grid_h * grid_w * cfg_.embed_dim;
+    std::size_t expected_elements = (grid_h * grid_w + 1) * cfg_.embed_dim;  // +1 for CLS
     std::size_t actual_elements = features_binding->size_bytes / sizeof(float);
     if (actual_elements < expected_elements) {
         return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_ModelConfigMismatch,
-            .message = "DinoV3Adapter: output size mismatch (expected " +
+            ErrorCode::Inference_ModelConfigMismatch,
+            "DinoV3Adapter: output size mismatch (expected " +
                        std::to_string(expected_elements) + " floats, got " +
                        std::to_string(actual_elements) + ")",
-            .source_location = std::source_location::current(),
         });
     }
 
+    // Skip CLS token (first token), return pure patch features
     return PatchFeatures{
-        .device_ptr = static_cast<float*>(features_binding->device_ptr),
+        .device_ptr = static_cast<float*>(features_binding->device_ptr) + cfg_.embed_dim,
         .grid_h = grid_h,
         .grid_w = grid_w,
         .dim = cfg_.embed_dim,

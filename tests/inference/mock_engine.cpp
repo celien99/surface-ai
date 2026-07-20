@@ -17,20 +17,14 @@ auto MockEngine::Load(const std::filesystem::path&,
 
 auto MockEngine::Infer() noexcept -> Result<void> {
     if (inputs_.empty() && outputs_.empty()) {
-        return tl::make_unexpected(ErrorInfo{
-            .code = ErrorCode::Inference_EngineExecutionFailed,
-            .message = "MockEngine: no bindings loaded",
-            .source_location = std::source_location::current(),
-        });
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Inference_EngineExecutionFailed,
+                                             "MockEngine: no bindings loaded"});
     }
 
     for (const auto& output : outputs_) {
         if (output.device_ptr == nullptr) {
-            return tl::make_unexpected(ErrorInfo{
-                .code = ErrorCode::Inference_InvalidBinding,
-                .message = "MockEngine: output binding '" + output.name + "' has null device_ptr",
-                .source_location = std::source_location::current(),
-            });
+            return tl::make_unexpected(ErrorInfo{ErrorCode::Inference_InvalidBinding,
+                                                 "MockEngine: output binding '" + output.name + "' has null device_ptr"});
         }
     }
 
@@ -66,11 +60,8 @@ auto MockEngine::SetTensorAddress(const std::string& name, void* device_ptr) noe
             return {};
         }
     }
-    return tl::make_unexpected(ErrorInfo{
-        .code = ErrorCode::Inference_InvalidBinding,
-        .message = "MockEngine: binding '" + name + "' not found",
-        .source_location = std::source_location::current(),
-    });
+    return tl::make_unexpected(ErrorInfo{ErrorCode::Inference_InvalidBinding,
+                                         "MockEngine: binding '" + name + "' not found"});
 }
 
 auto MockEngine::InputBindings() const noexcept -> const std::vector<TensorBinding>& {
