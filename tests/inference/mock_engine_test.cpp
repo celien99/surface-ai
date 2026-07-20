@@ -203,7 +203,7 @@ TEST(DinoV3Adapter, CreateReturnsErrorWhenEngineHasNoOutputBindings) {
 TEST(DinoV3Adapter, CreateSucceedsWhenBindingsMatchConfig) {
     MockEngine engine;
     auto outputs = std::vector<TensorBinding>{
-        {"features", {1, 37, 37, 1024}, 0, nullptr},
+        {"last_hidden_state", {1, 37, 37, 1024}, 0, nullptr},
     };
     ASSERT_TRUE(engine.Load("dino.engine", {}, outputs).has_value());
 
@@ -213,13 +213,13 @@ TEST(DinoV3Adapter, CreateSucceedsWhenBindingsMatchConfig) {
                      .embed_dim = 1024};
     auto adapter = DinoV3Adapter::Create(engine, cfg);
     ASSERT_TRUE(adapter.has_value());
-    EXPECT_EQ(adapter->ModelName(), "DINOv3");
+    EXPECT_EQ(adapter->ModelName(), "DINOv2");
 }
 
 TEST(DinoV3Adapter, CreateFailsWhenEmbedDimMismatch) {
     MockEngine engine;
     auto outputs = std::vector<TensorBinding>{
-        {"features", {1, 37, 37, 512}, 0, nullptr},
+        {"last_hidden_state", {1, 37, 37, 512}, 0, nullptr},
     };
     ASSERT_TRUE(engine.Load("dino.engine", {}, outputs).has_value());
 

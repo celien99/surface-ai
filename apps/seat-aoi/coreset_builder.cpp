@@ -25,7 +25,7 @@
 #include <cuda_runtime.h>
 
 // Build coreset from normal (defect-free) sample images.
-// Uses DINOv3 → PatchEmbedder (1024-dim) with TensorRT GPU inference.
+// Uses DINOv2 → PatchEmbedder (768-dim) with TensorRT GPU inference.
 auto BuildCoreset(const CliArgs& cli) -> int {
     using namespace sai;
     using namespace seat_aoi::config;
@@ -35,11 +35,11 @@ auto BuildCoreset(const CliArgs& cli) -> int {
 
     io::BasicImporter importer;
 
-    // ── Create DINOv3 embedder ──
-    auto embedder_result = seat_aoi::CreateDinoV3PatchEmbedder(
-        kDinoV3Engine, kImageSize, kPatchSize, kEmbedDim);
+    // ── Create DINOv2 embedder ──
+    auto embedder_result = seat_aoi::CreateDinoV2PatchEmbedder(
+        kDinoV2Engine, kImageSize, kPatchSize, kEmbedDim);
     if (!embedder_result) {
-        std::cerr << "DINOv3 embedder creation failed: "
+        std::cerr << "DINOv2 embedder creation failed: "
                   << embedder_result.error().message << "\n";
         return 1;
     }
@@ -60,7 +60,7 @@ auto BuildCoreset(const CliArgs& cli) -> int {
         image::MakeResize(kImageSize, kImageSize)
     });
 
-    // GPU upload: SurfaceImage → GpuImage → DINOv3 → DtoH
+    // GPU upload: SurfaceImage → GpuImage → DINOv2 → DtoH
     sai::memory::ArenaAllocator arena(64 * 1024 * 1024);  // 64 MiB metadata
     auto gpu_pool_result = sai::memory::GpuPool::Create(
         sai::memory::MemoryPoolConfig{
@@ -126,7 +126,7 @@ auto BuildCoreset(const CliArgs& cli) -> int {
                 std::move(buffer), meta);
         }();
 
-        // Extract embedding: HtoD → DINOv3 infer → DtoH
+        // Extract embedding: HtoD → DINOv2 infer → DtoH
         sai::Result<embedding::Embedding> emb = tl::make_unexpected(
             ErrorInfo{ErrorCode::Inference_EngineExecutionFailed, "no path"});
         {
@@ -148,7 +148,7 @@ auto BuildCoreset(const CliArgs& cli) -> int {
                 continue;
             }
 
-            // Run DINOv3 inference on GPU
+            // Run DINOv2 inference on GPU
             emb = embedder->Extract(gpu_img);
             if (emb && emb->IsOnGpu()) {
                 // DtoH: download patch features to CPU for FeatureBank

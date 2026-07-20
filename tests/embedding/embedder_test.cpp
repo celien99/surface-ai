@@ -39,7 +39,7 @@ auto MakeSurfaceImage() -> SurfaceImage {
 // 调用方在同一作用域内保持 engine 存活即可。
 auto BuildDinoV3Adapter(MockEngine& engine) -> DinoV3Adapter {
     auto outputs = std::vector<TensorBinding>{
-        {"features", {1, 37, 37, 1024}, 0, nullptr},
+        {"last_hidden_state", {1, 37, 37, 1024}, 0, nullptr},
     };
     auto load_ok = engine.Load("dino_v3.engine", {}, outputs);
     EXPECT_TRUE(load_ok.has_value());
@@ -111,7 +111,7 @@ TEST(PatchEmbedder, ModelNameReturnsDinoV3) {
     auto adapter = BuildDinoV3Adapter(engine);
     auto embedder = PatchEmbedder::Create(std::move(adapter));
     ASSERT_TRUE(embedder.has_value());
-    EXPECT_EQ(embedder->ModelName(), "DINOv3");
+    EXPECT_EQ(embedder->ModelName(), "DINOv2");
 }
 
 // ============================================================================

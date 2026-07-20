@@ -19,18 +19,14 @@ pipeline:
       depends_on: [capture]
       config:
         steps: [debayer, white_balance, resize]
-        resize_width: 1024
-        resize_height: 1024
+        resize_width: 518
+        resize_height: 518
 
     - id: inference
       type: Inference
       depends_on: [preprocess]
       config:
-        engine: MockEngine
-        model: dino_v3_vit_base
-        global_model:        # CLIP for cross-modal retrieval (disabled by default)
-          enabled: false     # enable when CLIP engine is available
-          engine: clip_vit_b32
+        model: dino_v2_vit_base
 
     - id: detect
       type: Detect

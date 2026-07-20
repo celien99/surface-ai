@@ -1,4 +1,4 @@
-// embedder_factory.h — Shared DINOv3 PatchEmbedder factory
+// embedder_factory.h — Shared DINOv2 PatchEmbedder factory
 #pragma once
 
 #include <filesystem>
@@ -13,10 +13,10 @@
 
 namespace seat_aoi {
 
-/// Create a TensorRT + DINOv3 PatchEmbedder.
+/// Create a TensorRT + DINOv2 PatchEmbedder.
 /// Shared by app_builder.cpp (app assembly) and coreset_builder.cpp (standalone coreset build).
 /// Returns the embedder shared_ptr, or an error if any creation step fails.
-inline auto CreateDinoV3PatchEmbedder(
+inline auto CreateDinoV2PatchEmbedder(
     std::string_view engine_path,
     std::size_t image_size,
     std::size_t patch_size,
@@ -30,7 +30,7 @@ inline auto CreateDinoV3PatchEmbedder(
     if (!std::filesystem::exists(engine_path)) {
         return tl::make_unexpected(sai::ErrorInfo{
             sai::ErrorCode::Core_ConstructionFailed,
-            "DINOv3 engine not found: " + std::string(engine_path)});
+            "DINOv2 engine not found: " + std::string(engine_path)});
     }
 
     auto engine = std::make_shared<TensorRtEngine>(/*device_ordinal=*/0);
@@ -46,7 +46,7 @@ inline auto CreateDinoV3PatchEmbedder(
     if (!adapter) {
         return tl::make_unexpected(sai::ErrorInfo{
             sai::ErrorCode::Inference_EngineExecutionFailed,
-            "DinoV3Adapter creation failed: " + adapter.error().message});
+            "DinoAdapter creation failed: " + adapter.error().message});
     }
     auto embedder = PatchEmbedder::Create(std::move(*adapter));
     if (!embedder) {
@@ -56,7 +56,7 @@ inline auto CreateDinoV3PatchEmbedder(
     }
 
     auto result = std::make_shared<PatchEmbedder>(std::move(*embedder));
-    std::cout << "Embedder: PatchEmbedder (DINOv3, dim=" << embed_dim << ")\n";
+    std::cout << "Embedder: PatchEmbedder (DINOv2, dim=" << embed_dim << ")\n";
     return result;
 }
 

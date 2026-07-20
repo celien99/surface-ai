@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Export DINOv3 ViT-B/14 to TensorRT engine.
+Export DINOv2 ViT-B/14 to TensorRT engine.
 
-Downloads the HuggingFace DINOv3 model, traces it with torch.jit,
-exports to ONNX, and builds a TensorRT engine (.engine file).
+Downloads the HuggingFace DINOv2 model (fully open-source, no auth required),
+traces it with torch.jit, exports to ONNX, and builds a TensorRT engine.
 
 Usage:
     python tools/export_dino_v3.py \
-        --output resources/models/dino_v3_vit_base.engine \
+        --output resources/models/dino_v2_vit_base.engine \
         --image-size 1024 --patch-size 14 \
         --fp16
 
@@ -22,14 +22,14 @@ from pathlib import Path
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Export DINOv3 to TensorRT engine")
+    p = argparse.ArgumentParser(description="Export DINOv2 to TensorRT engine")
     p.add_argument("--output", required=True, help="Output .engine file path")
-    p.add_argument("--image-size", type=int, default=1024, help="Input image size (square)")
+    p.add_argument("--image-size", type=int, default=518, help="Input image size (square)")
     p.add_argument("--patch-size", type=int, default=14, help="ViT patch size")
     p.add_argument("--fp16", action="store_true", default=True, help="Use FP16 precision")
     p.add_argument("--int8", action="store_true", help="Use INT8 calibration (needs calibrator)")
     p.add_argument("--workspace-size", type=int, default=4096, help="TRT workspace in MiB")
-    p.add_argument("--model-name", default="facebook/dinov3-vit-base-patch14-1024",
+    p.add_argument("--model-name", default="facebook/dinov2-base",
                    help="HuggingFace model ID")
     return p.parse_args()
 
@@ -40,8 +40,7 @@ def build_trt_engine(onnx_path: Path, output_path: Path, args) -> None:
 
     logger = trt.Logger(trt.Logger.WARNING)
     builder = trt.Builder(logger)
-    network_flags = 1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
-    network = builder.create_network(network_flags)
+    network = builder.create_network()
 
     parser = trt.OnnxParser(network, logger)
     with open(onnx_path, "rb") as f:
@@ -78,12 +77,12 @@ def build_trt_engine(onnx_path: Path, output_path: Path, args) -> None:
 
 
 def export_onnx(args) -> Path:
-    """Load HuggingFace model, trace, and export to ONNX."""
+    """Load HuggingFace DINOv2 model and export to ONNX."""
     import torch
-    from transformers import AutoModel, AutoImageProcessor
+    from transformers import AutoModel
 
     print(f"Loading model: {args.model_name}")
-    model = AutoModel.from_pretrained(args.model_name, torchscript=True)
+    model = AutoModel.from_pretrained(args.model_name)
     model.eval()
 
     if args.fp16:
@@ -94,29 +93,34 @@ def export_onnx(args) -> Path:
 
     h, w = args.image_size, args.image_size
 
-    # Create dummy input and trace
+    # DINOv2 returns BaseModelOutputWithPooling; wrap to extract only
+    # last_hidden_state so ONNX export produces a single output tensor.
+    class FeatureExtractor(torch.nn.Module):
+        def __init__(self, backbone):
+            super().__init__()
+            self.backbone = backbone
+
+        def forward(self, pixel_values):
+            return self.backbone(pixel_values).last_hidden_state
+
+    wrapped = FeatureExtractor(model)
+    wrapped.eval()
+
     dummy = torch.randn(1, 3, h, w, dtype=dtype)
 
-    print("  Tracing model with torch.jit.trace...")
-    with torch.no_grad():
-        traced = torch.jit.trace(model, dummy)
-
-    # Rename output for cleaner binding names
     onnx_path = Path(args.output).with_suffix(".onnx")
     print(f"  Exporting to ONNX: {onnx_path}")
 
-    torch.onnx.export(
-        traced,
-        dummy,
-        str(onnx_path),
-        input_names=["pixel_values"],
-        output_names=["last_hidden_state"],
-        dynamic_axes={
-            "pixel_values": {0: "batch"},
-            "last_hidden_state": {0: "batch"},
-        },
-        opset_version=17,
-    )
+    with torch.no_grad():
+        torch.onnx.export(
+            wrapped,
+            dummy,
+            str(onnx_path),
+            input_names=["pixel_values"],
+            output_names=["last_hidden_state"],
+            opset_version=17,
+            dynamo=False,
+        )
     print(f"  ONNX export complete: {onnx_path}")
     return onnx_path
 
@@ -124,7 +128,7 @@ def export_onnx(args) -> Path:
 def main():
     args = parse_args()
     print("=" * 60)
-    print("DINOv3 → TensorRT Engine Export")
+    print("DINOv2 → TensorRT Engine Export")
     print(f"  Model:    {args.model_name}")
     print(f"  Image:    {args.image_size}×{args.image_size}")
     print(f"  Precision:{'FP16' if args.fp16 else 'FP32'}")

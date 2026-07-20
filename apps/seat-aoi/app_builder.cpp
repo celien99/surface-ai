@@ -83,11 +83,11 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     }
 
     // =========================================================================
-    // 2. Inference / embedding setup — TensorRT + DINOv3 (1024-dim)
+    // 2. Inference / embedding setup — TensorRT + DINOv2 (768-dim)
     // =========================================================================
 
-    auto embedder_result = seat_aoi::CreateDinoV3PatchEmbedder(
-        kDinoV3Engine, kImageSize, kPatchSize, kEmbedDim);
+    auto embedder_result = seat_aoi::CreateDinoV2PatchEmbedder(
+        kDinoV2Engine, kImageSize, kPatchSize, kEmbedDim);
     if (!embedder_result) return tl::make_unexpected(std::move(embedder_result.error()));
     auto embedder = std::move(*embedder_result);
 

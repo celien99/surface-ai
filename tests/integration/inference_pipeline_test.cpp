@@ -43,7 +43,7 @@ auto WriteFloatMatrix(const fs::path& path, const std::vector<float>& data) -> v
 }
 
 // ============================================================================
-// Pipeline Fixture: realistic DINOv3 dimensions (518, 14, 1024, grid=37)
+// Pipeline Fixture: realistic DINOv2 dimensions (518, 14, 1024, grid=37)
 // ============================================================================
 
 class InferencePipelineTest : public ::testing::Test {
@@ -84,7 +84,7 @@ protected:
     // normal: every patch == coreset vector 0 (all zeros)
     auto MakeNormalEmbedding() const -> Embedding {
         EmbeddingMeta meta;
-        meta.model_name = "DINOv3";
+        meta.model_name = "DINOv2";
         meta.type = EmbeddingType::Patch;
         meta.dim = kEmbedDim;
         meta.count = kPatchCount;
@@ -97,7 +97,7 @@ protected:
     // anomalous: 1368 patches == coreset[0]; last patch = far outlier
     auto MakeAnomalousEmbedding() const -> Embedding {
         EmbeddingMeta meta;
-        meta.model_name = "DINOv3";
+        meta.model_name = "DINOv2";
         meta.type = EmbeddingType::Patch;
         meta.dim = kEmbedDim;
         meta.count = kPatchCount;
@@ -124,17 +124,18 @@ protected:
 TEST_F(InferencePipelineTest, MockEngineToEmbedderConstruction) {
     MockEngine engine;
 
-    // DINOv3 bindings: 1 input (B, C, H, W), 1 output (B, H_p, W_p, D)
+    // DINOv2 bindings: 1 input (B, C, H, W), 1 output (B, 1+N_patches, D)
+    // Output includes CLS token → buffer sized for patches + CLS.
     auto input_shape = std::vector<std::int64_t>{
         1, 3, static_cast<std::int64_t>(kImageSize), static_cast<std::int64_t>(kImageSize)};
     TensorBinding in{"pixel_values", input_shape, 0, nullptr};
 
-    std::vector<float> output_buffer(kPatchCount * kEmbedDim);
+    std::vector<float> output_buffer((kPatchCount + 1) * kEmbedDim);
     auto output_shape = std::vector<std::int64_t>{
-        1, static_cast<std::int64_t>(kGridSize), static_cast<std::int64_t>(kGridSize),
+        1, static_cast<std::int64_t>(kPatchCount + 1),
         static_cast<std::int64_t>(kEmbedDim)};
     std::size_t output_bytes = output_buffer.size() * sizeof(float);
-    TensorBinding out{"features", output_shape, output_bytes, output_buffer.data()};
+    TensorBinding out{"last_hidden_state", output_shape, output_bytes, output_buffer.data()};
 
     ASSERT_TRUE(engine.Load("dino.engine", {in}, {out}).has_value());
 
@@ -154,12 +155,12 @@ TEST_F(InferencePipelineTest, MockEngineToEmbedderConstruction) {
                      .embed_dim = kEmbedDim};
     auto adapter = DinoV3Adapter::Create(engine, cfg);
     ASSERT_TRUE(adapter.has_value());
-    EXPECT_EQ(adapter->ModelName(), "DINOv3");
+    EXPECT_EQ(adapter->ModelName(), "DINOv2");
 
     // Create embedder
     auto embedder = PatchEmbedder::Create(std::move(*adapter));
     ASSERT_TRUE(embedder.has_value());
-    EXPECT_EQ(embedder->ModelName(), "DINOv3");
+    EXPECT_EQ(embedder->ModelName(), "DINOv2");
 
     // Extract with CPU image: expect GPU guard rejection
     auto img = sai::image::SurfaceImage::FromOwnedBuffer(
@@ -320,7 +321,7 @@ TEST_F(InferencePipelineTest, InvalidPatchGridReturnsError) {
 
     // Embedding with wrong grid size
     EmbeddingMeta meta;
-    meta.model_name = "DINOv3";
+    meta.model_name = "DINOv2";
     meta.type = EmbeddingType::Patch;
     meta.dim = kEmbedDim;
     meta.count = 4;
