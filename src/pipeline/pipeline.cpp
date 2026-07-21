@@ -342,17 +342,19 @@ auto Pipeline::Start() -> Result<void> {
                         }
 
                         // M7: invoke result callback if set (Export stage only, last stage in chain)
-                        if (result_callback_ && node_ptr->GetType() == StageType::Export) {
+                        if (node_ptr->GetType() == StageType::Export) {
                             auto& variant = result.value();
                             if (auto* rr = variant.GetIf<sai::reasoner::ReasoningResult>()) {
                                 if (rr->verdict == "NG") {
                                     metrics_ptr->frames_ng.fetch_add(
                                         1, std::memory_order_relaxed);
                                 }
-                                int frame_id = variant.Frame()
-                                    ? static_cast<int>(variant.Frame()->frame_id)
-                                    : -1;
-                                result_callback_(frame_id, *rr);
+                                if (result_callback_) {
+                                    int frame_id = variant.Frame()
+                                        ? static_cast<int>(variant.Frame()->frame_id)
+                                        : -1;
+                                    result_callback_(frame_id, *rr);
+                                }
                             }
                         }
                         if (result.value().GetIf<PipelineFailure>()) {
