@@ -230,10 +230,8 @@ auto Pipeline::Start() -> Result<void> {
         auto shared_drop_tracker = std::make_shared<std::atomic<std::size_t>>(0);
 
         for (std::size_t t = 0; t < num_threads; ++t) {
-            auto thread_label = (num_threads > 1)
-                ? std::to_string(t) : std::string{};
             worker_threads_.emplace_back(
-            [this, stage_id_sp, node_ptr, metrics_ptr, thread_label,
+            [this, stage_id_sp, node_ptr, metrics_ptr,
              shared_drop_tracker](std::stop_token st) {
                 using Clock = std::chrono::steady_clock;
 
