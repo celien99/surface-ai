@@ -178,7 +178,9 @@ auto Pipeline::Start() -> Result<void> {
             "Pipeline already running"});
     }
     stop_source_ = std::stop_source{};
+    ingress_stop_source_ = std::stop_source{};
     draining_.store(false);
+    submitting_frames_.store(0, std::memory_order_relaxed);
     in_flight_frames_.store(0, std::memory_order_relaxed);
     dequeueing_workers_.store(0, std::memory_order_relaxed);
     waiting_workers_.store(0, std::memory_order_relaxed);
@@ -403,39 +405,54 @@ auto Pipeline::Start() -> Result<void> {
 // =========================================================================
 
 auto Pipeline::Submit(sai::image::RawImage image) -> Result<void> {
-    std::unique_lock admission_lock(admission_mutex_);
-    if (!running_.load()) {
-        return tl::make_unexpected(ErrorInfo{
-            ErrorCode::Pipeline_InvalidState,
-            "Pipeline not running — call Start() first"});
-    }
-    if (draining_.load()) {
-        return tl::make_unexpected(ErrorInfo{
-            ErrorCode::Pipeline_InvalidState,
-            "Pipeline is draining"});
+    detail::ErasedStageQueue* queue = nullptr;
+    std::stop_token stop_token;
+    {
+        std::unique_lock admission_lock(admission_mutex_);
+        if (!running_.load()) {
+            return tl::make_unexpected(ErrorInfo{
+                ErrorCode::Pipeline_InvalidState,
+                "Pipeline not running — call Start() first"});
+        }
+        if (draining_.load()) {
+            return tl::make_unexpected(ErrorInfo{
+                ErrorCode::Pipeline_InvalidState,
+                "Pipeline is draining"});
+        }
+
+        auto it = input_queues_.find(entry_stage_id_);
+        if (it == input_queues_.end()) {
+            return tl::make_unexpected(ErrorInfo{
+                ErrorCode::Pipeline_InvalidConfig,
+                "No entry stage queue found for: " + entry_stage_id_});
+        }
+
+        const auto meta = image.Meta();
+        auto frame = std::make_shared<FrameContext>();
+        frame->frame_id = static_cast<std::uint64_t>(frame_counter_.fetch_add(
+            1, std::memory_order_relaxed));
+        frame->surface_id = meta.surface_id;
+        frame->position_id = meta.position_id;
+        queue = it->second.get();
+        stop_token = ingress_stop_source_.get_token();
+        submitting_frames_.fetch_add(1, std::memory_order_acq_rel);
+        auto output = std::make_unique<StageOutput>(
+            StageOutput::MakeWithContext(std::move(frame), std::move(image)));
+
+        admission_lock.unlock();
+        auto pushed = queue->PushBlockingWithStop(std::move(output), stop_token);
+        submitting_frames_.fetch_sub(1, std::memory_order_acq_rel);
+        if (pushed) return {};
     }
 
-    auto it = input_queues_.find(entry_stage_id_);
-    if (it == input_queues_.end()) {
-        return tl::make_unexpected(ErrorInfo{
-            ErrorCode::Pipeline_InvalidConfig,
-            "No entry stage queue found for: " + entry_stage_id_});
-    }
-
-    const auto meta = image.Meta();
-    auto frame = std::make_shared<FrameContext>();
-    frame->frame_id = static_cast<std::uint64_t>(frame_counter_.fetch_add(
-        1, std::memory_order_relaxed));
-    frame->surface_id = meta.surface_id;
-    frame->position_id = meta.position_id;
-    auto output = std::make_unique<StageOutput>(
-        StageOutput::MakeWithContext(std::move(frame), std::move(image)));
-    if (!it->second->PushBlockingWithStop(std::move(output), stop_source_.get_token())) {
+    if (stop_token.stop_requested()) {
         return tl::make_unexpected(ErrorInfo{
             ErrorCode::Runtime_Cancelled,
             "Pipeline stopped while submitting frame"});
     }
-    return {};
+    return tl::make_unexpected(ErrorInfo{
+        ErrorCode::Runtime_Cancelled,
+        "Frame was not accepted by pipeline ingress"});
 }
 
 // =========================================================================
@@ -543,6 +560,7 @@ auto Pipeline::WaitForIdle() -> Result<void> {
             }
         }
         if (all_empty
+            && submitting_frames_.load(std::memory_order_acquire) == 0
             && in_flight_frames_.load(std::memory_order_acquire) == 0
             && dequeueing_workers_.load(std::memory_order_acquire) == 0
             && waiting_workers_.load(std::memory_order_acquire)
@@ -556,6 +574,7 @@ auto Pipeline::WaitForIdle() -> Result<void> {
                 }
             }
             if (still_empty
+                && submitting_frames_.load(std::memory_order_acquire) == 0
                 && in_flight_frames_.load(std::memory_order_acquire) == 0
                 && dequeueing_workers_.load(std::memory_order_acquire) == 0
                 && waiting_workers_.load(std::memory_order_acquire)
@@ -582,6 +601,7 @@ auto Pipeline::Stop() -> Result<void> {
         draining_.store(true);
     }
 
+    ingress_stop_source_.request_stop();
     auto drain_result = WaitForIdle();
     stop_source_.request_stop();
 

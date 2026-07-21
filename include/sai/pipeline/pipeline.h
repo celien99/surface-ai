@@ -191,6 +191,7 @@ private:
     std::stop_source stop_source_;
     std::atomic<bool> running_{false};
     std::atomic<bool> draining_{false};
+    std::atomic<std::size_t> submitting_frames_{0};
     std::atomic<std::size_t> in_flight_frames_{0};
     std::atomic<std::size_t> dequeueing_workers_{0};
     std::atomic<std::size_t> waiting_workers_{0};
@@ -199,6 +200,7 @@ private:
     std::atomic<int> frame_counter_{0};
     std::string entry_stage_id_;  // first stage with empty depends_on
     Context* ctx_ = nullptr;      // stored during LoadFromYAML for lifecycle hooks
+    std::stop_source ingress_stop_source_;
     // Per-stage worker threads (one jthread per stage).
     // Each thread runs a persistent loop: dequeue, process, enqueue.
     // jthread's built-in stop_token signals shutdown via stop_source_.
