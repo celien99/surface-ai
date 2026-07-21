@@ -59,6 +59,7 @@ struct StageMetrics {
     std::atomic<size_t> frames_processed{0};
     std::atomic<size_t> frames_failed{0};
     std::atomic<size_t> frames_dropped{0};
+    std::atomic<size_t> frames_ng{0};
 
     // Per-frame latency (microseconds) of the most recently processed frame.
     // Stage pools may have multiple workers, so both values are atomic.
@@ -78,6 +79,7 @@ struct StageMetrics {
         , frames_processed(other.frames_processed.load())
         , frames_failed(other.frames_failed.load())
         , frames_dropped(other.frames_dropped.load())
+        , frames_ng(other.frames_ng.load())
         , avg_latency_us(other.avg_latency_us.load())
         , p99_latency_us(other.p99_latency_us.load())
         , queue_depth_(other.queue_depth_.load()) {}
@@ -89,6 +91,7 @@ struct StageMetrics {
             frames_processed.store(other.frames_processed.load());
             frames_failed.store(other.frames_failed.load());
             frames_dropped.store(other.frames_dropped.load());
+            frames_ng.store(other.frames_ng.load());
             avg_latency_us.store(other.avg_latency_us.load());
             p99_latency_us.store(other.p99_latency_us.load());
             queue_depth_.store(other.queue_depth_.load());

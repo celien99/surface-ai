@@ -230,16 +230,13 @@ auto TryCreateTuningScheduler(
             tuning::MetricsSnapshot snapshot;
             auto metrics = pipeline.Metrics();
             for (const auto& sm : metrics) {
-                // Use the Reason stage's metrics to compute NG rate.
-                // frames_failed on the Reason stage captures processing
-                // failures from the decision tree evaluation.
-                if (sm.type == pipeline::StageType::Reason) {
+                // Use Export stage verdict counts to compute actual NG rate.
+                if (sm.type == pipeline::StageType::Export) {
                     auto processed = sm.frames_processed.load();
-                    auto failed = sm.frames_failed.load();
+                    auto ng = sm.frames_ng.load();
                     snapshot.sample_count += processed;
                     if (processed > 0) {
-                        snapshot.ng_rate +=
-                            static_cast<double>(failed) / processed * processed;
+                        snapshot.ng_rate += static_cast<double>(ng);
                     }
                 }
             }

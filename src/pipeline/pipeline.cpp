@@ -345,6 +345,10 @@ auto Pipeline::Start() -> Result<void> {
                         if (result_callback_ && node_ptr->GetType() == StageType::Export) {
                             auto& variant = result.value();
                             if (auto* rr = variant.GetIf<sai::reasoner::ReasoningResult>()) {
+                                if (rr->verdict == "NG") {
+                                    metrics_ptr->frames_ng.fetch_add(
+                                        1, std::memory_order_relaxed);
+                                }
                                 int frame_id = variant.Frame()
                                     ? static_cast<int>(variant.Frame()->frame_id)
                                     : -1;
@@ -656,6 +660,7 @@ auto Pipeline::Metrics() const -> std::vector<StageMetrics> {
         sm.frames_processed.store(m.frames_processed.load());
         sm.frames_failed.store(m.frames_failed.load());
         sm.frames_dropped.store(m.frames_dropped.load());
+        sm.frames_ng.store(m.frames_ng.load());
         sm.avg_latency_us.store(m.avg_latency_us.load());
         sm.p99_latency_us.store(m.p99_latency_us.load());
         sm.set_queue_depth(m.queue_depth());
