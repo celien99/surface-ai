@@ -113,7 +113,14 @@ auto TryCreateTuningScheduler(
     auto tuning_cfg_path = TuningYaml();
 
     // Load tuning YAML for all config sections
-    auto tuning_yaml = YAML::LoadFile(tuning_cfg_path.string());
+    YAML::Node tuning_yaml;
+    try {
+        tuning_yaml = YAML::LoadFile(tuning_cfg_path.string());
+    } catch (const YAML::Exception& e) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Infra_ConfigParseError,
+            "Tuning: failed to load tuning YAML: " + std::string(e.what())});
+    }
     auto ty = tuning_yaml["tuning"];
 
     // 1. Parse TuningSpace
