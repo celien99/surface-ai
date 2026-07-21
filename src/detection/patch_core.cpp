@@ -55,7 +55,6 @@ auto ComputeAdaptiveThreshold(const FeatureBank& bank,
     auto num_samples = bank.NumSamples();
     if (num_samples == 0) return 0.0F;
 
-    auto dim = bank.Dim();
     auto all_vecs = bank.ExtractAllVectors();
     std::vector<float> nn_dists(num_samples);
 
