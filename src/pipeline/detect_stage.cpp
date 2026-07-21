@@ -45,14 +45,62 @@ auto DetectStage::Process(StageInput input) -> Result<StageOutput> {
         if (it == detectors_.end()) {
             // ── Cold-start bootstrap ──
             if (bootstrap_enabled_) {
+                if (bootstrap_min_frames_ == 0
+                    || bootstrap_target_size_ < bootstrap_min_frames_) {
+                    return StageOutput::MakeWithContext(input, PipelineFailure{
+                        .code = sai::ErrorCode::Pipeline_InvalidConfig,
+                        .stage_id = id_,
+                        .message = "DetectStage: bootstrap target_size must be "
+                                   "at least min_frames and both must be non-zero",
+                        .surface_id = emb->SurfaceId(),
+                        .position_id = emb->PositionId(),
+                    });
+                }
+
                 auto& state = bootstrap_states_[key];
-                auto patch_count = emb->Meta().grid[0] * emb->Meta().grid[1];
+                auto grid_h = emb->Meta().grid[0];
+                auto grid_w = emb->Meta().grid[1];
                 auto dim = emb->Meta().dim;
+                if (dim == 0) {
+                    return StageOutput::MakeWithContext(input, PipelineFailure{
+                        .code = sai::ErrorCode::Embedding_DimensionMismatch,
+                        .stage_id = id_,
+                        .message = "DetectStage: bootstrap embedding dimension is zero",
+                        .surface_id = emb->SurfaceId(),
+                        .position_id = emb->PositionId(),
+                    });
+                }
+                if (grid_h == 0 || grid_w == 0) {
+                    return StageOutput::MakeWithContext(input, PipelineFailure{
+                        .code = sai::ErrorCode::Detection_InvalidPatchGrid,
+                        .stage_id = id_,
+                        .message = "DetectStage: bootstrap patch grid is empty",
+                        .surface_id = emb->SurfaceId(),
+                        .position_id = emb->PositionId(),
+                    });
+                }
+                auto patch_count = grid_h * grid_w;
 
                 if (state.dim == 0) {
                     state.dim = dim;
-                    state.grid_h = emb->Meta().grid[0];
-                    state.grid_w = emb->Meta().grid[1];
+                    state.grid_h = grid_h;
+                    state.grid_w = grid_w;
+                } else if (state.dim != dim) {
+                    return StageOutput::MakeWithContext(input, PipelineFailure{
+                        .code = sai::ErrorCode::Embedding_DimensionMismatch,
+                        .stage_id = id_,
+                        .message = "DetectStage: bootstrap embedding dimension changed",
+                        .surface_id = emb->SurfaceId(),
+                        .position_id = emb->PositionId(),
+                    });
+                } else if (state.grid_h != grid_h || state.grid_w != grid_w) {
+                    return StageOutput::MakeWithContext(input, PipelineFailure{
+                        .code = sai::ErrorCode::Detection_InvalidPatchGrid,
+                        .stage_id = id_,
+                        .message = "DetectStage: bootstrap patch grid changed",
+                        .surface_id = emb->SurfaceId(),
+                        .position_id = emb->PositionId(),
+                    });
                 }
 
                 // Uniform-sample patches into the bootstrap buffer.
@@ -87,49 +135,59 @@ auto DetectStage::Process(StageInput input) -> Result<StageOutput> {
                     std::vector<const sai::embedding::Embedding*> ptrs{&tmp_emb};
                     auto fb_result = detection::FeatureBank::BuildWithGreedyCoreset(
                         ptrs, dim, std::min(bootstrap_target_size_, sample_count));
-                    if (fb_result.has_value()) {
-                        detection::PatchCore::Config pc_cfg;
-                        pc_cfg.embed_dim = dim;
-                        pc_cfg.k_nearest = 5;
-                        pc_cfg.patch_size = 14;
-                        pc_cfg.image_width = state.grid_w * pc_cfg.patch_size;
-                        pc_cfg.image_height = state.grid_h * pc_cfg.patch_size;
-                        auto pc = std::make_shared<detection::PatchCore>(pc_cfg);
-                        pc->SetFeatureBank(
-                            std::make_unique<detection::FeatureBank>(
-                                std::move(*fb_result)));
-                        if (ctx_ == nullptr) {
-                            return StageOutput::MakeWithContext(input, PipelineFailure{
-                                .code = sai::ErrorCode::Pipeline_StageInitFailed,
-                                .stage_id = id_,
-                                .message = "DetectStage: context is not initialized",
-                                .surface_id = emb->SurfaceId(),
-                                .position_id = emb->PositionId(),
-                            });
-                        }
-                        auto init_result = pc->Initialize(*ctx_);
-                        if (!init_result) {
-                            bootstrap_states_.erase(key);
-                            return StageOutput::MakeWithContext(input, PipelineFailure{
-                                .code = init_result.error().code,
-                                .stage_id = id_,
-                                .message = init_result.error().message,
-                                .surface_id = emb->SurfaceId(),
-                                .position_id = emb->PositionId(),
-                            });
-                        }
-                        detectors_[key] = pc;
-                        stub_ = false;
-
-                        sai::infra::Logger::Get("pipeline").Log(
-                            sai::infra::LogLevel::Info,
-                            "DetectStage: bootstrap complete — BankKey({}, {}) "
-                            "registered with {} samples from {} frames",
-                            key.first, key.second, sample_count, state.frame_count);
-
-                        // Notify app so it can create CoresetEvolution etc.
-                        if (on_bootstrap_) on_bootstrap_(key, pc);
+                    if (!fb_result) {
+                        auto error = fb_result.error();
+                        bootstrap_states_.erase(key);
+                        return StageOutput::MakeWithContext(input, PipelineFailure{
+                            .code = error.code,
+                            .stage_id = id_,
+                            .message = error.message,
+                            .surface_id = emb->SurfaceId(),
+                            .position_id = emb->PositionId(),
+                        });
                     }
+
+                    detection::PatchCore::Config pc_cfg;
+                    pc_cfg.embed_dim = dim;
+                    pc_cfg.k_nearest = 5;
+                    pc_cfg.patch_size = 14;
+                    pc_cfg.image_width = state.grid_w * pc_cfg.patch_size;
+                    pc_cfg.image_height = state.grid_h * pc_cfg.patch_size;
+                    auto pc = std::make_shared<detection::PatchCore>(pc_cfg);
+                    pc->SetFeatureBank(
+                        std::make_unique<detection::FeatureBank>(
+                            std::move(*fb_result)));
+                    if (ctx_ == nullptr) {
+                        return StageOutput::MakeWithContext(input, PipelineFailure{
+                            .code = sai::ErrorCode::Pipeline_StageInitFailed,
+                            .stage_id = id_,
+                            .message = "DetectStage: context is not initialized",
+                            .surface_id = emb->SurfaceId(),
+                            .position_id = emb->PositionId(),
+                        });
+                    }
+                    auto init_result = pc->Initialize(*ctx_);
+                    if (!init_result) {
+                        bootstrap_states_.erase(key);
+                        return StageOutput::MakeWithContext(input, PipelineFailure{
+                            .code = init_result.error().code,
+                            .stage_id = id_,
+                            .message = init_result.error().message,
+                            .surface_id = emb->SurfaceId(),
+                            .position_id = emb->PositionId(),
+                        });
+                    }
+                    detectors_[key] = pc;
+                    stub_ = false;
+
+                    sai::infra::Logger::Get("pipeline").Log(
+                        sai::infra::LogLevel::Info,
+                        "DetectStage: bootstrap complete — BankKey({}, {}) "
+                        "registered with {} samples from {} frames",
+                        key.first, key.second, sample_count, state.frame_count);
+
+                    // Notify app so it can create CoresetEvolution etc.
+                    if (on_bootstrap_) on_bootstrap_(key, pc);
                     bootstrap_states_.erase(key);
                 }
 
