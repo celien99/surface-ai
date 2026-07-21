@@ -7,6 +7,10 @@
 #include <sai/embedding/embedding.h>
 #include <sai/infra/logger.h>
 
+#if defined(SAI_CUDA_ENABLED)
+#include <cuda_runtime.h>
+#endif
+
 namespace sai::pipeline {
 
 DetectStage::DetectStage(std::string id, YAML::Node /*config*/)
@@ -111,7 +115,28 @@ auto DetectStage::Process(StageInput input) -> Result<StageOutput> {
                     ? (patch_count / target_per_frame) : 1;
                 if (stride < 1) stride = 1;
 
+                std::vector<float> host_data;
                 const float* data = emb->Data();
+                if (emb->IsOnGpu()) {
+#if defined(SAI_CUDA_ENABLED)
+                    host_data.resize(patch_count * dim);
+                    auto cuda_err = cudaMemcpy(
+                        host_data.data(), data, host_data.size() * sizeof(float),
+                        cudaMemcpyDeviceToHost);
+                    if (cuda_err != cudaSuccess) {
+                        bootstrap_states_.erase(key);
+                        return StageOutput::MakeWithContext(input, PipelineFailure{
+                            .code = sai::ErrorCode::Runtime_GpuError,
+                            .stage_id = id_,
+                            .message = std::string("DetectStage: bootstrap DtoH copy failed: ")
+                                + cudaGetErrorString(cuda_err),
+                            .surface_id = emb->SurfaceId(),
+                            .position_id = emb->PositionId(),
+                        });
+                    }
+                    data = host_data.data();
+#endif
+                }
                 for (std::size_t i = 0; i < patch_count; i += stride) {
                     auto offset = i * dim;
                     state.vectors.insert(state.vectors.end(),

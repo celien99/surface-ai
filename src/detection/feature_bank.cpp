@@ -284,17 +284,21 @@ auto FeatureBank::BuildWithGreedyCoreset(
     std::vector<std::size_t> coreset_indices;
     coreset_indices.reserve(num_samples);
 
-    std::unique_ptr<faiss::Index> selected_cpu =
-        std::make_unique<faiss::IndexFlatL2>(static_cast<faiss::idx_t>(dim));
-    selected_cpu->add(1, all_vectors.data());
-    std::unique_ptr<faiss::Index> selected_index;
 #if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
     auto selected_resources = std::make_unique<faiss::gpu::StandardGpuResources>();
+#endif
+    std::unique_ptr<faiss::Index> selected_index;
+#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
     selected_resources->setTempMemory(512 * 1024 * 1024);
+    auto selected_cpu = std::make_unique<faiss::IndexFlatL2>(
+        static_cast<faiss::idx_t>(dim));
+    selected_cpu->add(1, all_vectors.data());
     selected_index = std::unique_ptr<faiss::Index>(faiss::gpu::index_cpu_to_gpu(
         selected_resources.get(), 0, selected_cpu.get()));
 #else
-    selected_index = std::move(selected_cpu);
+    selected_index = std::make_unique<faiss::IndexFlatL2>(
+        static_cast<faiss::idx_t>(dim));
+    selected_index->add(1, all_vectors.data());
 #endif
 
     coreset_indices.push_back(0);
