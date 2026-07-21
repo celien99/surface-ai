@@ -136,11 +136,13 @@ auto RunHeadless(const CliArgs& cli, AssembledApp& app) -> int {
 
             (void)pos_pipeline->pipeline->Drain();
 
-            // Read the exported JSON result.
+            // Read the exported JSON result (per-position path matching ExportStage).
             // Drain() waits for queues to empty, but the Export worker may
             // still be writing result.json (file I/O). Retry with backoff.
+            auto surface_dir = rec.surface_id.empty() ? "default" : rec.surface_id;
+            auto serial_dir = "pos_" + std::to_string(rec.position_id);
             auto result_path = std::filesystem::path(cli.output_dir)
-                / "default" / "unknown" / "result.json";
+                / surface_dir / serial_dir / "result.json";
             std::string verdict = "?";
             double severity = 0.0;
             double confidence = 0.0;

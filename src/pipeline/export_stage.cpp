@@ -101,8 +101,8 @@ auto ExportStage::Process(StageInput input) -> Result<StageOutput> {
         if (!stub_ && exporter_) {
             // Build InspectionResult from ReasoningResult
             io::InspectionResult inspection;
-            inspection.sku_id = "default";
-            inspection.serial_number = "unknown";
+            inspection.sku_id = result->surface_id.empty() ? "default" : result->surface_id;
+            inspection.serial_number = "pos_" + std::to_string(result->position_id);
             inspection.timestamp = std::chrono::system_clock::now();
             inspection.verdict = result->verdict;
 
