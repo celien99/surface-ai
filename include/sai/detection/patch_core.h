@@ -89,6 +89,9 @@ public:
     [[nodiscard]] auto GetFeatureBank() const noexcept -> const FeatureBank* {
         return feature_bank_.get();
     }
+    [[nodiscard]] auto GetFeatureBank() noexcept -> FeatureBank* {
+        return feature_bank_.get();
+    }
 
     // ── 最近一帧检测上下文（供 CoresetEvolution 访问） ──
     // 每次 Detect() 调用后更新。调用方在 ResultCallback 中使用。

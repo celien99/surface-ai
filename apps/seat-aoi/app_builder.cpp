@@ -70,6 +70,11 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     (void)ctx->Initialize();
     (void)ctx->Start();
 
+    auto resolve_resource = [](const std::string& path) {
+        auto p = std::filesystem::path(path);
+        return p.is_absolute() ? p : (ProjectRoot() / "apps/seat-aoi/resources" / p);
+    };
+
     // =========================================================================
     // Load pipeline.yaml once — all sub-steps share this parse result
     // =========================================================================
@@ -163,34 +168,47 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     pc_cfg.enable_adaptive_threshold = true;
     pc_cfg.target_fpr = 0.01F;
 
-    auto patch_core = std::make_shared<detection::PatchCore>(pc_cfg);
-
     // =========================================================================
     // 4. FeatureBank + VectorPath — load coreset if provided
     // =========================================================================
     std::shared_ptr<detection::FeatureBank> feature_bank;
     std::shared_ptr<retrieval::VectorPath> vp;
+    std::unique_ptr<detection::FeatureBank> detector_bank;
 
     if (!cli.coreset_path.empty()) {
         pc_cfg.feature_bank_path = cli.coreset_path;
 
         auto fb_result = detection::FeatureBank::LoadFromFile(cli.coreset_path, kEmbedDim);
         if (fb_result) {
-            feature_bank = std::make_shared<detection::FeatureBank>(std::move(*fb_result));
-            std::cout << "FeatureBank loaded: " << feature_bank->NumSamples()
-                      << " samples, dim=" << feature_bank->Dim() << "\n";
-
+            detector_bank = std::make_unique<detection::FeatureBank>(std::move(*fb_result));
+            auto retrieval_bank = detection::FeatureBank::LoadFromFile(
+                cli.coreset_path, kEmbedDim);
+            if (!retrieval_bank) return tl::make_unexpected(retrieval_bank.error());
+            feature_bank = std::make_shared<detection::FeatureBank>(
+                std::move(*retrieval_bank));
             vp = std::make_shared<retrieval::VectorPath>(*feature_bank);
-            std::cout << "VectorPath: ready\n";
         } else {
-            std::cerr << "Warning: failed to load coreset from "
-                      << cli.coreset_path << ": "
-                      << fb_result.error().message << "\n";
+            return tl::make_unexpected(fb_result.error());
         }
     }
 
-    if (!feature_bank) {
+    if (!detector_bank) {
         std::cout << "FeatureBank: not loaded (detection will use PCA-only mode)\n";
+    }
+
+    auto patch_core = std::make_shared<detection::PatchCore>(pc_cfg);
+    if (detector_bank) {
+        patch_core->SetFeatureBank(std::move(detector_bank));
+        auto* bank = patch_core->GetFeatureBank();
+        std::cout << "FeatureBank loaded: " << bank->NumSamples()
+                  << " samples, dim=" << bank->Dim() << "\n";
+        std::cout << "VectorPath: ready\n";
+    }
+    auto patch_core_init = patch_core->Initialize(*ctx);
+    if (!patch_core_init) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Detection_FeatureBankLoadFailed,
+            "PatchCore initialization failed: " + patch_core_init.error().message});
     }
 
     // =========================================================================
@@ -225,6 +243,14 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
                 auto pos_patch_core = std::make_shared<detection::PatchCore>(pos_pc_cfg);
                 pos_patch_core->SetFeatureBank(
                     std::make_unique<detection::FeatureBank>(std::move(*fb_result)));
+                auto init_result = pos_patch_core->Initialize(*ctx);
+                if (!init_result) {
+                    return tl::make_unexpected(ErrorInfo{
+                        ErrorCode::Detection_FeatureBankLoadFailed,
+                        "PatchCore initialization failed for position " +
+                            std::to_string(bank.position_id) + ": " +
+                            init_result.error().message});
+                }
                 patch_cores[key] = pos_patch_core;
 
                 std::cout << "  Position " << bank.position_id << ": "
@@ -347,7 +373,9 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     if (tree_result) {
         reasoner = std::make_shared<reasoner::DefaultReasoner>(std::move(*tree_result));
     } else {
-        std::cerr << "Warning: decision tree load failed, reasoner unavailable\n";
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Reasoner_TreeLoadFailed,
+            "Decision tree load failed: " + tree_result.error().message});
     }
 
     // =========================================================================
@@ -414,6 +442,7 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
         }
         if (auto* s = pos_pipeline->GetStage("rule_eval")) {
             auto* rs = static_cast<pipeline::RuleEvalStage*>(s);
+            rs->SetRuleFile(resolve_resource("rules/seat_leather_defects.yaml"));
             rs->SetRuleEngine(rule_engine);
             rs->SetKnowledgeGraph(kg);
             if (vp) rs->SetVectorPath(vp);

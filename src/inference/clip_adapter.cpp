@@ -29,7 +29,7 @@ auto ClipAdapter::Infer(const sai::image::GpuImage& image) noexcept -> Result<Gl
     const auto& outputs = engine_->OutputBindings();
     const TensorBinding* features_binding = nullptr;
     for (const auto& b : outputs) {
-        if (b.name == "image_features") {
+        if (b.name == "features") {
             features_binding = &b;
             break;
         }
@@ -38,14 +38,14 @@ auto ClipAdapter::Infer(const sai::image::GpuImage& image) noexcept -> Result<Gl
     if (features_binding == nullptr) {
         return tl::make_unexpected(ErrorInfo{
             ErrorCode::Inference_InvalidBinding,
-            "ClipAdapter: output binding 'image_features' not found",
+            "ClipAdapter: output binding 'features' not found",
         });
     }
 
     if (features_binding->device_ptr == nullptr) {
         return tl::make_unexpected(ErrorInfo{
             ErrorCode::Inference_InvalidBinding,
-            "ClipAdapter: output binding 'image_features' has null device_ptr",
+            "ClipAdapter: output binding 'features' has null device_ptr",
         });
     }
 
@@ -86,7 +86,7 @@ auto ClipAdapter::InferAsync(const sai::image::GpuImage& image,
     const auto& outputs = engine_->OutputBindings();
     const TensorBinding* features_binding = nullptr;
     for (const auto& b : outputs) {
-        if (b.name == "image_features") {
+        if (b.name == "features") {
             features_binding = &b;
             break;
         }
@@ -95,14 +95,14 @@ auto ClipAdapter::InferAsync(const sai::image::GpuImage& image,
     if (features_binding == nullptr) {
         return tl::make_unexpected(ErrorInfo{
             ErrorCode::Inference_InvalidBinding,
-            "ClipAdapter: output binding 'image_features' not found",
+            "ClipAdapter: output binding 'features' not found",
         });
     }
 
     if (features_binding->device_ptr == nullptr) {
         return tl::make_unexpected(ErrorInfo{
             ErrorCode::Inference_InvalidBinding,
-            "ClipAdapter: output binding 'image_features' has null device_ptr",
+            "ClipAdapter: output binding 'features' has null device_ptr",
         });
     }
 

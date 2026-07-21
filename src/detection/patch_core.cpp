@@ -55,9 +55,11 @@ auto ComputeAdaptiveThreshold(const FeatureBank& bank,
     auto all_vecs = bank.ExtractAllVectors();
     std::vector<float> nn_dists(num_samples);
 
+    auto search_k = std::min<std::size_t>(k + 1, num_samples);
     float max_self_dist = 0.0F;
     for (std::size_t i = 0; i < num_samples; ++i) {
-        auto dists = bank.Search(all_vecs.data() + i * dim, 1, k + 1);
+        auto dists = bank.Search(all_vecs.data() + i * dim, 1, search_k);
+        if (dists.empty()) continue;
         nn_dists[i] = dists.back();  // 跳过自身（d=0），取最远邻
         if (nn_dists[i] > max_self_dist) max_self_dist = nn_dists[i];
     }
@@ -89,7 +91,7 @@ auto PatchCore::Initialize(sai::Context& /*ctx*/) noexcept -> Result<void> {
 
     return Result<void>{}
         .and_then([this]() -> Result<void> {
-            if (!feature_bank_) return Result<void>{};  // nothing to whiten
+            if (!feature_bank_) return Result<void>{};
             if (!cfg_.enable_whitening) return {};
 
             auto all_vecs = feature_bank_->ExtractAllVectors();
@@ -139,6 +141,7 @@ auto PatchCore::Initialize(sai::Context& /*ctx*/) noexcept -> Result<void> {
                 });
         })
         .and_then([this]() -> Result<void> {
+            if (!feature_bank_) return Result<void>{};
             if (cfg_.enable_adaptive_threshold) {
                 float threshold_raw = ComputeAdaptiveThreshold(
                     *feature_bank_, cfg_.target_fpr, cfg_.k_nearest, ref_dist_);
