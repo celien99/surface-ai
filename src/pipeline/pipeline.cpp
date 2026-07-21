@@ -290,6 +290,19 @@ auto Pipeline::Start() -> Result<void> {
                             }
                         }
 
+                        // Capture anomaly scores as side channel for heatmap export
+                        if (node_ptr->GetType() == StageType::Detect) {
+                            auto& variant = result.value();
+                            if (auto* dr = variant.GetIf<sai::detection::DetectionResult>()) {
+                                if (!dr->anomaly_map.scores.empty()) {
+                                    SetAnomalyScores(
+                                        dr->anomaly_map.scores,
+                                        dr->anomaly_map.grid_h,
+                                        dr->anomaly_map.grid_w);
+                                }
+                            }
+                        }
+
                         // M7: invoke result callback if set (Export stage only, last stage in chain)
                         if (result_callback_ && node_ptr->GetType() == StageType::Export) {
                             auto& variant = result.value();
@@ -557,6 +570,17 @@ auto Pipeline::SetFrameImage(const sai::image::SurfaceImage& image) -> void {
 auto Pipeline::TakeFrameImage() -> std::optional<FrameImageSnapshot> {
     auto result = std::move(current_frame_image_);
     current_frame_image_.reset();
+    return result;
+}
+
+auto Pipeline::SetAnomalyScores(std::vector<float> scores,
+                                 std::size_t grid_h, std::size_t grid_w) -> void {
+    current_anomaly_.emplace(AnomalySnapshot{std::move(scores), grid_h, grid_w});
+}
+
+auto Pipeline::TakeAnomalyScores() -> std::optional<AnomalySnapshot> {
+    auto result = std::move(current_anomaly_);
+    current_anomaly_.reset();
     return result;
 }
 

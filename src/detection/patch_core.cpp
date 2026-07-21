@@ -43,9 +43,11 @@ auto ApplyWhitening(const float* vectors, std::size_t count,
 }
 
 // 自适应阈值：对 coreset 进行自检，计算 k-NN 距离的 (1-target_fpr) 分位数
+// 同时返回所有自查询距离的最大值作为全局归一化参考值。
 auto ComputeAdaptiveThreshold(const FeatureBank& bank,
                               float target_fpr,
-                              std::size_t k) noexcept -> float {
+                              std::size_t k,
+                              float& out_ref_dist) noexcept -> float {
     auto num_samples = bank.NumSamples();
     if (num_samples == 0) return 0.0F;
 
@@ -53,15 +55,19 @@ auto ComputeAdaptiveThreshold(const FeatureBank& bank,
     auto all_vecs = bank.ExtractAllVectors();
     std::vector<float> nn_dists(num_samples);
 
+    float max_self_dist = 0.0F;
     for (std::size_t i = 0; i < num_samples; ++i) {
         auto dists = bank.Search(all_vecs.data() + i * dim, 1, k + 1);
         nn_dists[i] = dists.back();  // 跳过自身（d=0），取最远邻
+        if (nn_dists[i] > max_self_dist) max_self_dist = nn_dists[i];
     }
 
     std::sort(nn_dists.begin(), nn_dists.end());
 
     auto idx = static_cast<std::size_t>((1.0F - target_fpr) * static_cast<float>(num_samples - 1));
     if (idx >= num_samples) idx = num_samples - 1;
+
+    out_ref_dist = max_self_dist;
     return nn_dists[idx];
 }
 
@@ -134,10 +140,14 @@ auto PatchCore::Initialize(sai::Context& /*ctx*/) noexcept -> Result<void> {
         })
         .and_then([this]() -> Result<void> {
             if (cfg_.enable_adaptive_threshold) {
-                effective_threshold_ = ComputeAdaptiveThreshold(
-                    *feature_bank_, cfg_.target_fpr, cfg_.k_nearest);
+                float threshold_raw = ComputeAdaptiveThreshold(
+                    *feature_bank_, cfg_.target_fpr, cfg_.k_nearest, ref_dist_);
+                // Normalize threshold to ref_dist_ scale: OK patches ~ [0,1], NG patches > 1.
+                effective_threshold_ = (ref_dist_ > 0.0F)
+                    ? (threshold_raw / ref_dist_) : 1.0F;
             } else {
                 effective_threshold_ = cfg_.anomaly_threshold;
+                ref_dist_ = 1.0F;  // no normalization without adaptive threshold
             }
             return {};
         })
@@ -198,15 +208,18 @@ auto PatchCore::Detect(const sai::embedding::Embedding& embedding) noexcept
         });
     }
 
-    // 5. 提取 patch scores 并归一化到 [0,1]
+    // 5. 提取 patch scores 并用全局参考值归一化。
+    //    不使用 per-image max_dist 归一化——那会消除 OK/NG 图像的可区分性。
+    //    ref_dist_ = coreset 自查询距离 max，在 Initialize() 中计算。
+    //    OK patches: raw_dist ~ self_query_dist → score ~ [0, 1]
+    //    NG patches: raw_dist >> self_query_dist → score > 1.0
     std::vector<float> patch_scores(query_count);
-    for (std::size_t i = 0; i < query_count; ++i) {
-        patch_scores[i] = distances[i * cfg_.k_nearest];
-    }
-
-    float max_dist = *std::max_element(patch_scores.begin(), patch_scores.end());
-    if (max_dist > 0.0F) {
-        for (auto& s : patch_scores) s /= max_dist;
+    if (ref_dist_ > 0.0F) {
+        for (std::size_t i = 0; i < query_count; ++i)
+            patch_scores[i] = distances[i * cfg_.k_nearest] / ref_dist_;
+    } else {
+        for (std::size_t i = 0; i < query_count; ++i)
+            patch_scores[i] = distances[i * cfg_.k_nearest];
     }
 
     // 6. PCA 混合评分（E5）

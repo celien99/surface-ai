@@ -123,8 +123,13 @@ private:
     // E1+E2: 白化参数
     std::optional<sai::embedding::DimensionReducer::WhiteningParams> whitening_params_;
 
-    // E4: 自检计算的阈值
+    // E4: 自检计算的阈值（已归一化到 ref_dist_ 尺度，默认 1.0）
     float effective_threshold_ = 0.8F;
+
+    // 全局归一化参考值：coreset 自查询距离 99th 分位数。
+    // Detect() 用此值（而非 per-image max）归一化 patch scores，
+    // 使得 OK 图 scores ~ [0, 1]，NG 图 scores > 1.0，保留可区分性。
+    float ref_dist_ = 1.0F;
 
     // E5: 已加载的 PCA 模型
     std::optional<sai::embedding::DimensionReducer::PcaParams> pca_params_;

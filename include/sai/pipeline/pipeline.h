@@ -160,6 +160,13 @@ public:
     auto SetFrameImage(const sai::image::SurfaceImage& image) -> void;
     auto TakeFrameImage() -> std::optional<FrameImageSnapshot>;
 
+    // Per-frame anomaly heatmap side channel: Detect stage stores the
+    // raw patch anomaly scores (grid_h × grid_w); Export / headless runner
+    // retrieves them for heatmap export.
+    auto SetAnomalyScores(std::vector<float> scores, std::size_t grid_h, std::size_t grid_w) -> void;
+    struct AnomalySnapshot { std::vector<float> scores; std::size_t grid_h; std::size_t grid_w; };
+    auto TakeAnomalyScores() -> std::optional<AnomalySnapshot>;
+
     // Returns the stage node with the given id, or nullptr if not found.
     // Caller must cast to the concrete stage type (e.g. CaptureStage) and
     // call setter methods (SetEngine, SetCamera, ...) before Start().
@@ -204,6 +211,8 @@ private:
     // Per-frame image side channel (written by Preprocess stage worker,
     // read by Export stage worker; single-writer, single-consumer so no mutex needed)
     std::optional<FrameImageSnapshot> current_frame_image_;
+    // Per-frame anomaly heatmap side channel (written by Detect stage worker)
+    std::optional<AnomalySnapshot> current_anomaly_;
     std::atomic<int> frame_counter_{0};
     std::vector<std::unique_ptr<runtime::WorkerPool>> pools_;
     std::string entry_stage_id_;  // first stage with empty depends_on
