@@ -508,6 +508,7 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
                 *position_pipelines[0].pipeline);
             if (tuning_result.has_value() && *tuning_result) {
                 tuning_scheduler = std::move(*tuning_result);
+                tuning_scheduler->Start(tuning_stop_source.get_token());
                 std::cout << "TuningScheduler: started (GP+EI)\n";
             } else {
                 std::cerr << "Warning: failed to start tuning scheduler: "

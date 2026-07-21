@@ -108,19 +108,25 @@ auto TuningScheduler::MainLoop(std::stop_token token) -> void {
 
         // ── Phase 2: Evaluating — compute current cost ──
         state_.store(TuningState::Evaluating, std::memory_order_release);
-        auto eval_result = objective_->Evaluate(current_params_, since);
-        if (!eval_result.has_value()) {
-            sai::infra::Logger::Get("tuning").Log(
-                sai::infra::LogLevel::Error,
-                "TuningScheduler Evaluate failed: {}", eval_result.error().message);
-            continue;
+        if (current_params_.empty()) {
+            current_cost_ = 0.0;
+        } else {
+            auto eval_result = objective_->Evaluate(current_params_, since);
+            if (!eval_result.has_value()) {
+                sai::infra::Logger::Get("tuning").Log(
+                    sai::infra::LogLevel::Error,
+                    "TuningScheduler Evaluate failed: {}", eval_result.error().message);
+                continue;
+            }
+            current_cost_ = *eval_result;
         }
-        current_cost_ = *eval_result;
 
         // ── Phase 3: Optimizing — run Bayesian optimizer ──
         state_.store(TuningState::Optimizing, std::memory_order_release);
-        optimizer_->AddObservation({current_params_, current_cost_,
-                                     std::chrono::system_clock::now()});
+        if (!current_params_.empty()) {
+            optimizer_->AddObservation({current_params_, current_cost_,
+                                         std::chrono::system_clock::now()});
+        }
         auto opt_result = optimizer_->Optimize(*objective_, since);
         if (!opt_result.has_value()) {
             sai::infra::Logger::Get("tuning").Log(

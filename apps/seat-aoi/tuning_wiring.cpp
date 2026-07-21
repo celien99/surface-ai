@@ -110,8 +110,7 @@ auto TryCreateTuningScheduler(
         return std::unique_ptr<sai::tuning::TuningScheduler>{};
     }
 
-    auto resource_dir = std::filesystem::path("resources");
-    auto tuning_cfg_path = resource_dir / "tuning" / "seat_leather_tuning.yaml";
+    auto tuning_cfg_path = TuningYaml();
 
     // Load tuning YAML for all config sections
     auto tuning_yaml = YAML::LoadFile(tuning_cfg_path.string());
@@ -191,7 +190,7 @@ auto TryCreateTuningScheduler(
         std::shared_ptr<knowledge::KnowledgeEvolution>(&kg_evolution, [](auto*) {}));
 
     // 5. Inject callbacks
-    auto tree_path = resource_dir / "trees" / "seat_leather_inspection.yaml";
+    auto tree_path = DecisionTree();
     scheduler->SetParameterApplier(
         [&reasoner, tree_path, param_names = std::move(param_names)]
         (const std::vector<double>& params) -> Result<void> {
