@@ -87,6 +87,10 @@ auto PatchCore::Initialize(sai::Context& /*ctx*/) noexcept -> Result<void> {
         auto load_result = FeatureBank::LoadFromFile(cfg_.feature_bank_path, cfg_.embed_dim);
         if (!load_result) return tl::make_unexpected(load_result.error());
         feature_bank_ = std::make_unique<FeatureBank>(std::move(*load_result));
+#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
+        auto gpu_result = feature_bank_->ToGpu();
+        if (!gpu_result) return tl::make_unexpected(gpu_result.error());
+#endif
     }
     // If neither injected nor configured, feature_bank_ stays null →
     // Detect() will return Detection_FeatureBankLoadFailed.
