@@ -1,15 +1,13 @@
 #include "stage_nodes.h"
 
 #include <chrono>
-#include <filesystem>
+#include <vector>
 
 #include <sai/pipeline/rule_eval_output.h>
 #include <sai/detection/detection_result.h>
 #include <sai/rule/rule_engine.h>
 #include <sai/rule/fact_base.h>
 #include <sai/rule/fact_builder.h>
-#include <sai/knowledge/knowledge_graph.h>
-#include <sai/retrieval/vector_path.h>
 
 namespace sai::pipeline {
 
@@ -52,46 +50,20 @@ auto RuleEvalStage::Process(StageInput input) -> Result<StageOutput> {
         if (!stub_ && rule_engine_) {
             // Build FactBase from DetectionResult + Knowledge + Retrieval
             if (fact_builder_) {
-                // Resolve Knowledge Graph paths for the current surface.
-                // Seed data: Batch→Material (PRODUCED_AS reverse),
-                //            Material←Supplier (SUPPLIES reverse).
-                // Find the batch node matching det->surface_id, then
-                // resolve the material + supplier chain.
-                std::vector<std::string> graph_paths;
                 auto surface_id = det->surface_id.empty()
                     ? "default" : det->surface_id;
-
-                if (kg_ && surface_id != "default") {
-                    auto batches = kg_->FindNodesByType("Batch");
-                    if (batches) {
-                        for (auto& batch : *batches) {
-                            auto surf_it =
-                                batch.properties.fields.find("surface");
-                            if (surf_it ==
-                                batch.properties.fields.end())
-                                continue;
-                            auto* surf_val = std::get_if<std::string>(
-                                &surf_it->second);
-                            if (!surf_val || *surf_val != surface_id)
-                                continue;
-
-                            // Found the batch — resolve material +
-                            // supplier chain through the KG.
-                            graph_paths.push_back(
-                                "batch." +
-                                std::to_string(batch.id) +
-                                ".material.supplier");
-                            break;
-                        }
-                    }
-                }
-
                 auto build_result = fact_builder_->Build(
-                    surface_id, *det, graph_paths);
-                if (build_result) {
-                    fb = std::move(*build_result);
+                    surface_id, *det, {});
+                if (!build_result) {
+                    return StageOutput::MakeWithContext(input, PipelineFailure{
+                        .code = build_result.error().code,
+                        .stage_id = id_,
+                        .message = build_result.error().message,
+                        .surface_id = det->surface_id,
+                        .position_id = det->position_id,
+                    });
                 }
-                // else: fb stays empty, EvaluateAll handles empty facts
+                fb = std::move(*build_result);
             } else {
                 // No knowledge/retrieval: populate bare detection facts.
                 fb.Set("detection.anomaly_score",
