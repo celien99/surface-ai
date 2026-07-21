@@ -74,6 +74,7 @@ auto RunHeadless(const CliArgs& cli, AssembledApp& app) -> int {
 
     auto process_entries = [&](auto& entries, io::BasicImporter& importer) -> int {
         int ok = 0, ng = 0, warn = 0, uncertain = 0, failed = 0;
+        std::map<std::uint16_t, int> position_frame_ids;
 
         // Per-surface aggregation: track worst verdict for each product
         std::map<std::string, std::string> surface_verdict;
@@ -121,6 +122,7 @@ auto RunHeadless(const CliArgs& cli, AssembledApp& app) -> int {
             if constexpr (requires { entry.position_id; }) pos_id = entry.position_id;
             auto* pos_pipeline = app.FindPosition(rec.surface_id, pos_id);
             if (!pos_pipeline) pos_pipeline = &app.positions.at(0); // fallback
+            auto export_frame_id = position_frame_ids[pos_id]++;
 
             if (raw) {
                 img_result->release();
@@ -140,7 +142,8 @@ auto RunHeadless(const CliArgs& cli, AssembledApp& app) -> int {
             // Drain() waits for queues to empty, but the Export worker may
             // still be writing result.json (file I/O). Retry with backoff.
             auto surface_dir = rec.surface_id.empty() ? "default" : rec.surface_id;
-            auto serial_dir = "pos_" + std::to_string(rec.position_id);
+            auto serial_dir = "pos_" + std::to_string(rec.position_id)
+                + "_frame_" + std::to_string(export_frame_id);
             auto result_path = std::filesystem::path(cli.output_dir)
                 / surface_dir / serial_dir / "result.json";
             std::string verdict = "?";

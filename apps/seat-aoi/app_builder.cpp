@@ -215,6 +215,7 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     // 4b. Multi-position coreset loading (--coreset-manifest)
     // =========================================================================
     std::map<sai::pipeline::BankKey, std::shared_ptr<detection::PatchCore>> patch_cores;
+    std::map<sai::pipeline::BankKey, std::filesystem::path> patch_core_paths;
     std::map<sai::pipeline::BankKey, std::unique_ptr<detection::CoresetEvolution>> evolutions_map;
     std::map<sai::pipeline::BankKey, std::stop_source> evo_stop_sources_map;
 
@@ -252,6 +253,7 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
                             init_result.error().message});
                 }
                 patch_cores[key] = pos_patch_core;
+                patch_core_paths[key] = bank.path;
 
                 std::cout << "  Position " << bank.position_id << ": "
                           << pos_patch_core->LastContext().k_nearest << " k-NN ready\n";
@@ -272,8 +274,8 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
 
                 if (!patch_cores.empty()) {
                     for (auto& [key, pc] : patch_cores) {
-                        auto profile_path = std::filesystem::path(
-                            pc_cfg.feature_bank_path).replace_extension(".profile.yaml");
+                        auto profile_path = patch_core_paths[key];
+                        profile_path.replace_extension(".profile.yaml");
                         std::optional<detection::NormalityProfile> profile;
                         if (std::filesystem::exists(profile_path)) {
                             auto r = detection::NormalityProfile::LoadFromYaml(profile_path);

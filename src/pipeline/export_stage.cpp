@@ -14,6 +14,20 @@ namespace sai::pipeline {
 
 namespace {
 
+auto FrameSerial(const StageInput& input, std::uint16_t position_id) -> std::string {
+    auto serial = "pos_" + std::to_string(position_id);
+    if (input.Frame()) {
+        serial += "_frame_" + std::to_string(input.Frame()->frame_id);
+    }
+    return serial;
+}
+
+auto DefectSeverity(double score) -> std::string {
+    if (score >= 0.8) return "CRITICAL";
+    if (score >= 0.5) return "MAJOR";
+    return "MINOR";
+}
+
 // Write a heatmap PPM from anomaly scores (grid_h × grid_w → upsampled to w×h).
 // Color map: blue (cold) → green → yellow → red (hot).
 auto WriteHeatmapPpm(const std::filesystem::path& path,
@@ -107,7 +121,7 @@ auto ExportStage::Process(StageInput input) -> Result<StageOutput> {
         if (!stub_ && exporter_) {
             io::InspectionResult inspection;
             inspection.sku_id = result.surface_id.empty() ? "default" : result.surface_id;
-            inspection.serial_number = "pos_" + std::to_string(result.position_id);
+            inspection.serial_number = FrameSerial(input, result.position_id);
             inspection.timestamp = std::chrono::system_clock::now();
             inspection.verdict = result.verdict;
             auto export_result = exporter_->Export(inspection, output_dir_, nullptr);
@@ -127,7 +141,7 @@ auto ExportStage::Process(StageInput input) -> Result<StageOutput> {
             // Build InspectionResult from ReasoningResult
             io::InspectionResult inspection;
             inspection.sku_id = result->surface_id.empty() ? "default" : result->surface_id;
-            inspection.serial_number = "pos_" + std::to_string(result->position_id);
+            inspection.serial_number = FrameSerial(input, result->position_id);
             inspection.timestamp = std::chrono::system_clock::now();
             inspection.verdict = result->verdict;
 
@@ -135,7 +149,7 @@ auto ExportStage::Process(StageInput input) -> Result<StageOutput> {
             for (const auto& rule_name : result->triggered_rules) {
                 io::DefectRecord defect;
                 defect.label = rule_name;
-                defect.severity = result->verdict;
+                defect.severity = DefectSeverity(result->severity);
                 defect.confidence = static_cast<float>(result->confidence);
                 inspection.defects.push_back(std::move(defect));
             }

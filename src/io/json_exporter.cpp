@@ -25,6 +25,16 @@ auto JsonExporter::Export(const InspectionResult& result,
     j["serial_number"] = result.serial_number;
     j["timestamp"] = result.timestamp.time_since_epoch().count();
     j["verdict"] = result.verdict;
+    if (result.verdict == "NG") {
+        j["severity"] = 1.0;
+    } else if (result.verdict == "WARN") {
+        j["severity"] = 0.5;
+    } else {
+        j["severity"] = 0.0;
+    }
+    j["confidence"] = result.defects.empty()
+        ? 0.0
+        : result.defects.front().confidence;
 
     auto defects_json = nlohmann::json::array();
     for (const auto& d : result.defects) {
