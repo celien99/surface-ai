@@ -237,6 +237,7 @@ public:
     auto SetExporter(std::shared_ptr<sai::io::IExporter> exp) -> void {
         exporter_ = std::move(exp); stub_ = false;
     }
+    auto SetOutputDir(std::filesystem::path dir) -> void { output_dir_ = std::move(dir); }
 private:
     std::string id_;
     std::shared_ptr<sai::io::IExporter> exporter_;

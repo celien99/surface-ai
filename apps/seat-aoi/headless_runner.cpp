@@ -136,12 +136,16 @@ auto RunHeadless(const CliArgs& cli, AssembledApp& app) -> int {
 
             (void)pos_pipeline->pipeline->Drain();
 
-            // Read the exported JSON result
+            // Read the exported JSON result.
+            // Drain() waits for queues to empty, but the Export worker may
+            // still be writing result.json (file I/O). Retry with backoff.
             auto result_path = std::filesystem::path(cli.output_dir)
                 / "default" / "unknown" / "result.json";
             std::string verdict = "?";
             double severity = 0.0;
             double confidence = 0.0;
+            for (int retry = 0; retry < 10 && !std::filesystem::exists(result_path); ++retry)
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
             if (std::filesystem::exists(result_path)) {
                 std::ifstream ifs(result_path);
                 try {

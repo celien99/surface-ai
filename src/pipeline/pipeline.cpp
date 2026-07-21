@@ -47,6 +47,10 @@ public:
     auto PushBlocking(std::unique_ptr<StageOutput> item) -> void override {
         queue_->PushBlocking(std::move(item));
     }
+    auto PushBlockingWithStop(std::unique_ptr<StageOutput> item,
+                              std::stop_token st) -> bool override {
+        return queue_->PushBlockingWithStop(std::move(item), st);
+    }
     auto TryPush(std::unique_ptr<StageOutput> item) -> bool override {
         return queue_->TryPush(std::move(item));
     }
@@ -298,10 +302,15 @@ auto Pipeline::Start() -> Result<void> {
                         metrics_ptr->frames_processed.fetch_add(
                             1, std::memory_order_relaxed);
                         metrics_ptr->avg_latency_us = elapsed;
-                        EnqueueOutputs(
-                            *stage_id_sp,
-                            std::make_unique<StageOutput>(
-                                std::move(result).value()));
+                        // Stop-token-aware enqueue: if shutdown was requested
+                        // while we were processing, drop the output and exit.
+                        if (!EnqueueOutputs(
+                                *stage_id_sp,
+                                std::make_unique<StageOutput>(
+                                    std::move(result).value()),
+                                st)) {
+                            break;  // stop requested, exit worker loop
+                        }
                     } else {
                         metrics_ptr->frames_failed.fetch_add(
                             1, std::memory_order_relaxed);
@@ -361,20 +370,35 @@ auto Pipeline::EnqueueOutputs(const std::string& stage_id,
     auto adj = downstreams_.find(stage_id);
     if (adj == downstreams_.end()) return;
 
-    // StageOutput is a variant containing move-only types (RawImage),
-    // so it cannot be copied. For M6 v1, forward to the first downstream
-    // only. Production: each downstream gets a shared_ptr<const StageOutput>.
     for (size_t i = 0; i < adj->second.size(); ++i) {
         auto& downstream_id = adj->second[i];
         auto q = input_queues_.find(downstream_id);
         if (q == input_queues_.end()) continue;
 
         if (i == 0) {
-            // Move the original output to the first downstream
             q->second->PushBlocking(std::move(output));
         }
-        // For v1: subsequent downstreams are skipped (output already moved)
     }
+}
+
+// Stop-token-aware overload — used by worker threads so they can exit
+// gracefully when shutdown is requested, even if the downstream queue is full.
+auto Pipeline::EnqueueOutputs(const std::string& stage_id,
+                              std::unique_ptr<StageOutput> output,
+                              std::stop_token st) -> bool {
+    auto adj = downstreams_.find(stage_id);
+    if (adj == downstreams_.end()) return true;  // terminal stage — item consumed
+
+    for (size_t i = 0; i < adj->second.size(); ++i) {
+        auto& downstream_id = adj->second[i];
+        auto q = input_queues_.find(downstream_id);
+        if (q == input_queues_.end()) continue;
+
+        if (i == 0) {
+            return q->second->PushBlockingWithStop(std::move(output), st);
+        }
+    }
+    return true;
 }
 
 // =========================================================================

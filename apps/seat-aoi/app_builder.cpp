@@ -421,8 +421,11 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
             if (sam2_segmenter)
                 static_cast<pipeline::ReasonStage*>(s)->SetSam2Segmenter(sam2_segmenter);
         }
-        if (auto* s = pos_pipeline->GetStage("export"))
+        if (auto* s = pos_pipeline->GetStage("export")) {
             static_cast<pipeline::ExportStage*>(s)->SetExporter(exporter);
+            if (!cli.output_dir.empty())
+                static_cast<pipeline::ExportStage*>(s)->SetOutputDir(cli.output_dir);
+        }
 
         // Per-position result callback → evolution routing
         if (pos_def.evo != nullptr) {

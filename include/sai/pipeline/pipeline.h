@@ -126,6 +126,7 @@ public:
     virtual auto Capacity() const -> size_t = 0;
     virtual auto DroppedCount() const -> size_t = 0;
     virtual auto PushBlocking(std::unique_ptr<StageOutput>) -> void = 0;
+    virtual auto PushBlockingWithStop(std::unique_ptr<StageOutput>, std::stop_token) -> bool = 0;
     virtual auto TryPush(std::unique_ptr<StageOutput>) -> bool = 0;
     virtual auto TryPop() -> std::unique_ptr<StageOutput> = 0;
     virtual auto PopBlocking() -> std::unique_ptr<StageOutput> = 0;
@@ -175,6 +176,10 @@ private:
     // EnqueueOutputs: push output to all downstream stages' input queues.
     // Uses the adjacency map built during LoadFromYAML.
     auto EnqueueOutputs(const std::string& stage_id, std::unique_ptr<StageOutput>) -> void;
+    // Stop-token-aware variant: returns false if stop was requested and the
+    // item was not pushed. Caller discards the item on false.
+    auto EnqueueOutputs(const std::string& stage_id, std::unique_ptr<StageOutput>,
+                        std::stop_token st) -> bool;
     // BuildQueueWiring: after parsing config, create input queues for each stage
     // and populate adjacency_ (upstream_id -> downstream_ids).
     auto BuildQueueWiring(const PipelineConfig& config) -> Result<void>;

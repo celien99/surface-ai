@@ -156,6 +156,17 @@ public:
         cv_.notify_one();  // wake pop side
     }
 
+    // Like PushBlocking but respect a stop_token: returns false when stop is
+    // requested and the item was NOT pushed. Caller must handle the leftover item.
+    auto PushBlockingWithStop(std::unique_ptr<T> item, std::stop_token st) -> bool {
+        std::unique_lock lock(mutex_);
+        cv_.wait(lock, [this, &st] { return !ring_.IsFull() || st.stop_requested(); });
+        if (st.stop_requested()) return false;
+        ring_.TryPush(std::move(item));  // guaranteed to succeed (ring not full)
+        cv_.notify_one();  // wake pop side
+        return true;
+    }
+
     auto TryPop() -> std::unique_ptr<T> {
         auto item = ring_.TryPop();
         if (item) {
