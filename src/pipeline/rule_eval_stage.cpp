@@ -87,8 +87,6 @@ auto RuleEvalStage::Process(StageInput input) -> Result<StageOutput> {
                 // else: fb stays empty, EvaluateAll handles empty facts
             } else {
                 // No knowledge/retrieval: populate bare detection facts.
-                // The decision tree branches on detection.anomaly_map.max_score,
-                // so populate it from the DetectionResult even without KG/retrieval.
                 fb.Set("detection.anomaly_score",
                     rule::Value::Of(static_cast<double>(det->image_level_score)),
                     {rule::FactSourceKind::Direct, "DetectionResult"});
@@ -99,6 +97,7 @@ auto RuleEvalStage::Process(StageInput input) -> Result<StageOutput> {
                     rule::Value::Of(static_cast<double>(det->anomaly_map.MaxScore())),
                     {rule::FactSourceKind::Direct, "DetectionResult"});
             }
+
 
             // --- Vector retrieval via CLIP global features ---
             if (fact_builder_ && !det->global_features.empty()) {

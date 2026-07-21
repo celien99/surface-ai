@@ -407,6 +407,8 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
         // Wire shared components into this pipeline's stages
         if (auto* s = pos_pipeline->GetStage("inference")) {
             static_cast<pipeline::InferenceStage*>(s)->SetEmbedder(embedder);
+            if (gpu_pool_owner)
+                static_cast<pipeline::InferenceStage*>(s)->SetGpuPool(gpu_pool_owner.get());
             if (global_embedder)
                 static_cast<pipeline::InferenceStage*>(s)->SetGlobalEmbedder(global_embedder);
         }

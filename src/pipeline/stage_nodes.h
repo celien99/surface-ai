@@ -27,6 +27,8 @@
 #include <sai/io/exporter.h>
 #include <sai/pipeline/inspection_recorder.h>
 
+namespace sai::memory { class IMemoryPool; }
+
 namespace sai::pipeline {
 
 // Pipeline defined in <sai/pipeline/pipeline.h> — forward-declared here
@@ -83,6 +85,7 @@ public:
     auto SetEmbedder(std::shared_ptr<sai::embedding::IEmbedder> emb) -> void {
         embedder_ = std::move(emb); stub_ = false;
     }
+    auto SetGpuPool(sai::memory::IMemoryPool* pool) -> void { gpu_pool_ = pool; }
     auto SetGlobalEmbedder(std::shared_ptr<sai::embedding::IEmbedder> emb) -> void {
         global_embedder_ = std::move(emb); stub_ = false;
     }
@@ -91,6 +94,7 @@ private:
     std::shared_ptr<sai::inference::IInferenceEngine> engine_;
     std::shared_ptr<sai::embedding::IEmbedder> embedder_;
     std::shared_ptr<sai::embedding::IEmbedder> global_embedder_;
+    sai::memory::IMemoryPool* gpu_pool_ = nullptr;
     std::string model_name_;
     bool stub_ = true;
 };
