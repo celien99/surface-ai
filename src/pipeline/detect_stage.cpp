@@ -135,6 +135,15 @@ auto DetectStage::Process(StageInput input) -> Result<StageOutput> {
                         });
                     }
                     data = host_data.data();
+#else
+                    bootstrap_states_.erase(key);
+                    return StageOutput::MakeWithContext(input, PipelineFailure{
+                        .code = sai::ErrorCode::Runtime_GpuError,
+                        .stage_id = id_,
+                        .message = "DetectStage: GPU embedding requires CUDA",
+                        .surface_id = emb->SurfaceId(),
+                        .position_id = emb->PositionId(),
+                    });
 #endif
                 }
                 for (std::size_t i = 0; i < patch_count; i += stride) {
