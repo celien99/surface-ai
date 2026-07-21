@@ -160,8 +160,8 @@ public:
     // requested and the item was NOT pushed. Caller must handle the leftover item.
     auto PushBlockingWithStop(std::unique_ptr<T> item, std::stop_token st) -> bool {
         std::unique_lock lock(mutex_);
-        cv_.wait(lock, [this, &st] { return !ring_.IsFull() || st.stop_requested(); });
-        if (st.stop_requested()) return false;
+        if (!cv_.wait(lock, st, [this] { return !ring_.IsFull(); }))
+            return false;  // stop requested
         ring_.TryPush(std::move(item));  // guaranteed to succeed (ring not full)
         cv_.notify_one();  // wake pop side
         return true;
@@ -184,14 +184,12 @@ public:
     }
 
     // Like PopBlocking but respect a stop_token: returns nullptr when stop is
-    // requested, even if the queue is still empty. Uses cv_.wait with a
-    // compound predicate to avoid busy-polling.
+    // requested, even if the queue is still empty. Uses condition_variable_any
+    // so that stop_token callbacks wake the CV without needing an explicit notify.
     auto PopBlockingWithStop(std::stop_token st) -> std::unique_ptr<T> {
         std::unique_lock lock(mutex_);
-        cv_.wait(lock, [this, &st] {
-            return !ring_.IsEmpty() || st.stop_requested();
-        });
-        if (st.stop_requested() || ring_.IsEmpty()) return nullptr;
+        if (!cv_.wait(lock, st, [this] { return !ring_.IsEmpty(); }))
+            return nullptr;  // stop requested
         auto item = ring_.TryPop();  // guaranteed to succeed (ring not empty)
         cv_.notify_one();  // wake push side
         return item;
@@ -207,7 +205,7 @@ private:
 
     detail::RingBuffer<T> ring_;
     std::mutex mutex_;
-    std::condition_variable cv_;
+    std::condition_variable_any cv_;
 };
 
 }  // namespace sai::pipeline

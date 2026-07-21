@@ -18,3 +18,4 @@ datasets/car/images/
 datasets/car/*.bin
 datasets/car/*.yaml
 !datasets/car/template.yaml
+datasets/

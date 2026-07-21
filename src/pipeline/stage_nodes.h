@@ -184,9 +184,11 @@ public:
     }
     auto SetKnowledgeGraph(std::shared_ptr<sai::knowledge::KnowledgeGraph> kg) -> void {
         kg_ = std::move(kg);
+        TryCreateFactBuilder();
     }
     auto SetVectorPath(std::shared_ptr<sai::retrieval::VectorPath> vp) -> void {
         vp_ = std::move(vp);
+        TryCreateFactBuilder();
     }
     auto SetInspectionRecorder(std::shared_ptr<InspectionRecorder> rec) -> void {
         recorder_ = std::move(rec);
@@ -200,6 +202,13 @@ private:
     std::shared_ptr<InspectionRecorder> recorder_;
     std::string rule_file_;
     bool stub_ = true;
+
+    // Create fact_builder_ once kg_ is available (vp_ is optional).
+    // OnInitialize runs before setters, so lazy-init is required.
+    auto TryCreateFactBuilder() -> void {
+        if (kg_ && !fact_builder_)
+            fact_builder_ = std::make_unique<sai::rule::FactBuilder>(kg_, vp_);
+    }
 };
 
 class ReasonStage final : public IStageNode {
