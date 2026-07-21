@@ -16,6 +16,10 @@
 #include <sai/core/rect.h>
 #include <sai/embedding/dimension_reducer.h>
 
+#if defined(SAI_CUDA_ENABLED)
+#include <cuda_runtime.h>
+#endif
+
 namespace sai::detection {
 namespace {
 
@@ -189,6 +193,15 @@ auto PatchCore::Detect(const sai::embedding::Embedding& embedding) noexcept
     auto start = std::chrono::steady_clock::now();
     auto query_count = grid_h * grid_w;
 
+    if (embedding.IsOnGpu()
+        && (whitening_params_.has_value() || pca_params_.has_value())) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Embedding_DimensionMismatch,
+            "PatchCore: GPU embedding cannot use CPU whitening or PCA scoring",
+            std::source_location::current(),
+        });
+    }
+
     // 2. 保存原始查询指针（PCA 评分在原始向量上计算）
     const float* original_query = embedding.Data();
     const float* query_data = original_query;
@@ -253,10 +266,37 @@ auto PatchCore::Detect(const sai::embedding::Embedding& embedding) noexcept
 
     // 8. 保存检测上下文（仅在 CoresetEvolution 启用时捕获）
     if (capture_context_) {
+        std::shared_ptr<const std::vector<float>> embedding_data;
+        if (embedding.IsOnGpu()) {
+#if defined(SAI_CUDA_ENABLED)
+            std::vector<float> host_embedding(query_count * cfg_.embed_dim);
+            auto cuda_err = cudaMemcpy(
+                host_embedding.data(), embedding.Data(), embedding.SizeBytes(),
+                cudaMemcpyDeviceToHost);
+            if (cuda_err != cudaSuccess) {
+                return tl::make_unexpected(ErrorInfo{
+                    ErrorCode::Runtime_GpuError,
+                    std::string("PatchCore: context DtoH copy failed: ")
+                        + cudaGetErrorString(cuda_err),
+                    std::source_location::current(),
+                });
+            }
+            embedding_data = std::make_shared<const std::vector<float>>(
+                std::move(host_embedding));
+#else
+            return tl::make_unexpected(ErrorInfo{
+                ErrorCode::Runtime_GpuError,
+                "PatchCore: GPU context capture requires CUDA",
+                std::source_location::current(),
+            });
+#endif
+        } else {
+            embedding_data = std::make_shared<const std::vector<float>>(
+                embedding.Data(), embedding.Data() + query_count * cfg_.embed_dim);
+        }
         last_ctx_.knn_distances = std::move(distances);
         last_ctx_.k_nearest = cfg_.k_nearest;
-        last_ctx_.embedding_data = std::make_shared<const std::vector<float>>(
-            original_query, original_query + query_count * cfg_.embed_dim);
+        last_ctx_.embedding_data = std::move(embedding_data);
         last_ctx_.grid_h = grid_h;
         last_ctx_.grid_w = grid_w;
         last_ctx_.dim = cfg_.embed_dim;

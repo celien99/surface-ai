@@ -71,30 +71,7 @@ auto InferenceStage::Process(StageInput input) -> Result<StageOutput> {
         auto ext_result = embedder_->Extract(gpu_img);
         if (!ext_result) return failure(ext_result.error());
 
-        auto embedding_result = [&]() -> Result<sai::embedding::Embedding> {
-            if (ext_result->IsOnGpu()) {
-            // PatchCore currently consumes CPU FAISS vectors. Keep this
-            // explicit transfer, but never turn a failed copy into an empty
-            // embedding that could be mistaken for a normal frame.
-            auto byte_size = ext_result->SizeBytes();
-            auto& embedding_meta = ext_result->Meta();
-            std::vector<float> cpu_data(embedding_meta.count * embedding_meta.dim);
-            auto cuda_err2 = cudaMemcpy(
-                cpu_data.data(), ext_result->Data(), byte_size,
-                cudaMemcpyDeviceToHost);
-            if (cuda_err2 != cudaSuccess) {
-                return tl::make_unexpected(sai::ErrorInfo{
-                    sai::ErrorCode::Runtime_GpuError,
-                    std::string("InferenceStage: DtoH copy failed: ") +
-                        cudaGetErrorString(cuda_err2)});
-            }
-            return sai::embedding::Embedding::FromCpu(
-                std::move(cpu_data), embedding_meta);
-            }
-            return std::move(*ext_result);
-        }();
-        if (!embedding_result) return failure(embedding_result.error());
-        auto embedding = std::move(*embedding_result);
+        auto embedding = std::move(*ext_result);
 
         // Secondary: Global embedder (CLIP → global features for retrieval)
         if (!stub_ && global_embedder_) {
