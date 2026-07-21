@@ -220,9 +220,13 @@ auto RunGui(int argc, char* argv[], AssembledApp& app, const CliArgs& cli) -> in
             .width = 1024, .height = 1024, .fps = 10.0};
         auto camera = std::make_shared<device::FakeCamera>(cam_cfg);
         auto* pl_ptr = pp.pipeline.get();
+        const auto position_id = pp.key.second;
+        const auto surface_id = pp.key.first;
         (void)camera->RegisterFrameCallback(
-            [pl_ptr, fp, frame_counter](sai::image::RawImage img) {
+            [pl_ptr, fp, frame_counter, position_id, surface_id](sai::image::RawImage img) {
                 int fid = frame_counter->fetch_add(1, std::memory_order_relaxed);
+                img.Meta().position_id = position_id;
+                img.Meta().surface_id = surface_id;
                 fp->RegisterRawFrame(fid, img);
                 (void)pl_ptr->Submit(std::move(img));
             });
