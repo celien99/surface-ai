@@ -108,6 +108,11 @@ auto FeatureBank::ExtractAllVectors() const noexcept -> std::vector<float> {
 
 auto FeatureBank::Rebuild(const float* vectors, std::size_t count,
                           std::size_t dim) noexcept -> void {
+#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
+    gpu_index_.reset();
+    gpu_resources_.reset();
+    on_gpu_ = false;
+#endif
     auto index = std::make_unique<faiss::IndexFlatL2>(static_cast<faiss::idx_t>(dim));
     index->add(static_cast<faiss::idx_t>(count), vectors);
     index_ = std::move(index);
@@ -503,6 +508,11 @@ auto FeatureBank::ConvertToIVF(std::size_t nlist) noexcept -> Result<void> {
     new_index->train(static_cast<faiss::idx_t>(n), vectors.data());
     new_index->add(static_cast<faiss::idx_t>(n), vectors.data());
 
+#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
+    gpu_index_.reset();
+    gpu_resources_.reset();
+    on_gpu_ = false;
+#endif
     index_ = std::move(new_index);
     return {};
 }

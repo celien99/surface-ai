@@ -472,6 +472,16 @@ auto CoresetEvolution::Start(std::stop_token /*token*/) noexcept -> void {
                 auto fb = FeatureBank::BuildFromEmbeddings(ptrs, dim, meta.count);
                 if (!fb.has_value()) continue;
                 auto new_bank = std::make_unique<FeatureBank>(std::move(*fb));
+#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
+                auto gpu_result = new_bank->ToGpu();
+                if (!gpu_result) {
+                    sai::infra::Logger::Get("detection").Log(
+                        sai::infra::LogLevel::Error,
+                        "CoresetEvolution: GPU upload failed, keeping active bank: {}",
+                        gpu_result.error().message);
+                    continue;
+                }
+#endif
 
                 // Swap into PatchCore
                 auto old_bank = impl_->detector.SwapFeatureBank(std::move(new_bank));
@@ -668,6 +678,12 @@ auto CoresetEvolution::FullRebuild(const std::filesystem::path& save_path) noexc
     }
 
     auto new_bank = std::make_unique<FeatureBank>(std::move(*fb_result));
+#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
+    auto gpu_result = new_bank->ToGpu();
+    if (!gpu_result) {
+        return tl::make_unexpected(gpu_result.error());
+    }
+#endif
 
     // Compute new profile from the rebuilt bank (fast: sqrt(N) sampling,
     // avoids O(N²·D) exhaustive k-NN — typically < 1 s for 10k samples).

@@ -32,7 +32,7 @@ auto FeatureBank::ToGpu(int device) noexcept -> Result<void> {
         });
     }
 
-    if (gpu_resources_ != nullptr) {
+    if (on_gpu_) {
         return {};  // Already on GPU
     }
 
@@ -59,6 +59,9 @@ auto FeatureBank::ToGpu(int device) noexcept -> Result<void> {
 
         return {};
     } catch (const std::exception& e) {
+        gpu_index_.reset();
+        gpu_resources_.reset();
+        on_gpu_ = false;
         return tl::make_unexpected(ErrorInfo{
             ErrorCode::Detection_FeatureBankLoadFailed,
             std::string("FeatureBank::ToGpu failed: ") + e.what(),
