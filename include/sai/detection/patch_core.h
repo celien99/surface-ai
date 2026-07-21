@@ -112,6 +112,12 @@ public:
         return last_ctx_;
     }
 
+    // Capture the per-frame data consumed by CoresetEvolution.
+    // Disabled by default to avoid copying every embedding on the hot path.
+    auto SetContextCaptureEnabled(bool enabled) noexcept -> void {
+        capture_context_ = enabled;
+    }
+
     // Object（基类）禁止移动/拷贝，故 PatchCore 继承此约束
     PatchCore(PatchCore&&) noexcept = delete;
     PatchCore(const PatchCore&) = delete;
@@ -119,6 +125,7 @@ public:
 private:
     Config cfg_;
     std::unique_ptr<FeatureBank> feature_bank_;
+    bool capture_context_ = false;
 
     // 最近一帧检测上下文（每次 Detect 后更新）
     DetectionContext last_ctx_;

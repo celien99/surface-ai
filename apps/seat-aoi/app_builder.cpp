@@ -462,6 +462,7 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
 
         // Per-position result callback → evolution routing
         if (pos_def.evo != nullptr) {
+            pos_def.pc->SetContextCaptureEnabled(true);
             auto* pc_raw = pos_def.pc.get();
             auto* evo_raw = pos_def.evo.get();
             pos_pipeline->SetResultCallback(

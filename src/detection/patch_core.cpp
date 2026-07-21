@@ -251,18 +251,20 @@ auto PatchCore::Detect(const sai::embedding::Embedding& embedding) noexcept
                                         effective_threshold_,
                                         latency);
 
-    // 8. 保存检测上下文（供 CoresetEvolution 访问 — embedding 用 shared_ptr 零拷贝共享）
-    last_ctx_.knn_distances = distances;
-    last_ctx_.k_nearest = cfg_.k_nearest;
-    last_ctx_.embedding_data = std::make_shared<const std::vector<float>>(
-        original_query, original_query + query_count * cfg_.embed_dim);
-    last_ctx_.grid_h = grid_h;
-    last_ctx_.grid_w = grid_w;
-    last_ctx_.dim = cfg_.embed_dim;
-    last_ctx_.detection_result = result;
-    last_ctx_.effective_threshold = effective_threshold_;
-    last_ctx_.pca_image_score = 0.0F;
-    last_ctx_.pca_self_query_p95 = 0.0F;
+    // 8. 保存检测上下文（仅在 CoresetEvolution 启用时捕获）
+    if (capture_context_) {
+        last_ctx_.knn_distances = std::move(distances);
+        last_ctx_.k_nearest = cfg_.k_nearest;
+        last_ctx_.embedding_data = std::make_shared<const std::vector<float>>(
+            original_query, original_query + query_count * cfg_.embed_dim);
+        last_ctx_.grid_h = grid_h;
+        last_ctx_.grid_w = grid_w;
+        last_ctx_.dim = cfg_.embed_dim;
+        last_ctx_.detection_result = result;
+        last_ctx_.effective_threshold = effective_threshold_;
+        last_ctx_.pca_image_score = 0.0F;
+        last_ctx_.pca_self_query_p95 = 0.0F;
+    }
 
     return result;
 }
