@@ -154,9 +154,23 @@ auto DetectStage::Process(StageInput input) -> Result<StageOutput> {
                     pc_cfg.image_width = state.grid_w * pc_cfg.patch_size;
                     pc_cfg.image_height = state.grid_h * pc_cfg.patch_size;
                     auto pc = std::make_shared<detection::PatchCore>(pc_cfg);
-                    pc->SetFeatureBank(
-                        std::make_unique<detection::FeatureBank>(
-                            std::move(*fb_result)));
+                    auto bootstrap_bank = std::make_unique<detection::FeatureBank>(
+                        std::move(*fb_result));
+#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
+                    auto gpu_result = bootstrap_bank->ToGpu();
+                    if (!gpu_result) {
+                        auto error = gpu_result.error();
+                        bootstrap_states_.erase(key);
+                        return StageOutput::MakeWithContext(input, PipelineFailure{
+                            .code = error.code,
+                            .stage_id = id_,
+                            .message = error.message,
+                            .surface_id = emb->SurfaceId(),
+                            .position_id = emb->PositionId(),
+                        });
+                    }
+#endif
+                    pc->SetFeatureBank(std::move(bootstrap_bank));
                     if (ctx_ == nullptr) {
                         return StageOutput::MakeWithContext(input, PipelineFailure{
                             .code = sai::ErrorCode::Pipeline_StageInitFailed,

@@ -180,12 +180,26 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
 
         auto fb_result = detection::FeatureBank::LoadFromFile(cli.coreset_path, kEmbedDim);
         if (fb_result) {
-            detector_bank = std::make_unique<detection::FeatureBank>(std::move(*fb_result));
+            auto loaded_detector_bank = std::make_unique<detection::FeatureBank>(
+                std::move(*fb_result));
+#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
+            auto detector_gpu_result = loaded_detector_bank->ToGpu();
+            if (!detector_gpu_result) {
+                return tl::make_unexpected(detector_gpu_result.error());
+            }
+#endif
+            detector_bank = std::move(loaded_detector_bank);
             auto retrieval_bank = detection::FeatureBank::LoadFromFile(
                 cli.coreset_path, kEmbedDim);
             if (!retrieval_bank) return tl::make_unexpected(retrieval_bank.error());
             feature_bank = std::make_shared<detection::FeatureBank>(
                 std::move(*retrieval_bank));
+#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
+            auto retrieval_gpu_result = feature_bank->ToGpu();
+            if (!retrieval_gpu_result) {
+                return tl::make_unexpected(retrieval_gpu_result.error());
+            }
+#endif
             vp = std::make_shared<retrieval::VectorPath>(*feature_bank);
         } else {
             return tl::make_unexpected(fb_result.error());
@@ -242,8 +256,15 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
                 auto pos_pc_cfg = pc_cfg;
                 pos_pc_cfg.feature_bank_path = bank.path;
                 auto pos_patch_core = std::make_shared<detection::PatchCore>(pos_pc_cfg);
-                pos_patch_core->SetFeatureBank(
-                    std::make_unique<detection::FeatureBank>(std::move(*fb_result)));
+                auto position_bank = std::make_unique<detection::FeatureBank>(
+                    std::move(*fb_result));
+#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
+                auto position_gpu_result = position_bank->ToGpu();
+                if (!position_gpu_result) {
+                    return tl::make_unexpected(position_gpu_result.error());
+                }
+#endif
+                pos_patch_core->SetFeatureBank(std::move(position_bank));
                 auto init_result = pos_patch_core->Initialize(*ctx);
                 if (!init_result) {
                     return tl::make_unexpected(ErrorInfo{
