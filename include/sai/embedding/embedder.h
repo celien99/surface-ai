@@ -62,12 +62,20 @@ public:
         gpu_pool_ = pool;
     }
 
+    // Keep the inference engine alive for the embedder's lifetime.
+    // The adapter holds a raw pointer to the engine, so the engine must
+    // outlive the adapter. Call this after Create() to transfer ownership.
+    auto SetEngineHolder(std::shared_ptr<sai::inference::IInferenceEngine> engine) noexcept -> void {
+        engine_holder_ = std::move(engine);
+    }
+
 private:
     explicit PatchEmbedder(sai::inference::DinoV3Adapter adapter) noexcept;
     sai::inference::DinoV3Adapter adapter_;
     sai::memory::IMemoryPool* gpu_pool_ = nullptr;
     void* cuda_stream_ = nullptr;  // 每实例独立 CUDA stream，避免默认流串行化
     bool has_adapter_ = true;
+    std::shared_ptr<sai::inference::IInferenceEngine> engine_holder_;
 };
 
 // GlobalEmbedder — CLIP adapter → [CLS] token → Embedding。

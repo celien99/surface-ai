@@ -37,7 +37,7 @@ auto BuildCoreset(const CliArgs& cli) -> int {
 
     // ── Create DINOv2 embedder ──
     auto embedder_result = seat_aoi::CreateDinoV2PatchEmbedder(
-        kDinoV2Engine, kImageSize, kPatchSize, kEmbedDim);
+        DinoV2Engine(), kImageSize, kPatchSize, kEmbedDim);
     if (!embedder_result) {
         std::cerr << "DINOv2 embedder creation failed: "
                   << embedder_result.error().message << "\n";
@@ -111,10 +111,10 @@ auto BuildCoreset(const CliArgs& cli) -> int {
 
         // Wrap raw Image* as SurfaceImage
         sai::image::SurfaceImage surface = [&]() -> sai::image::SurfaceImage {
-            auto* raw = preprocess_result->get();
+            auto* raw = preprocess_result->release();  // transfer ownership from unique_ptr
             if (auto* surf = dynamic_cast<image::SurfaceImage*>(raw)) {
                 auto s = std::move(*surf);
-                delete raw;  // release unique_ptr ownership
+                delete raw;
                 return s;
             }
             auto meta = raw->Meta();
@@ -187,6 +187,13 @@ auto BuildCoreset(const CliArgs& cli) -> int {
               << "\nMax samples: " << cli.coreset_max_samples << "\n\n";
 
     auto output_dir = std::filesystem::path(cli.coreset_output_path);
+    std::error_code ec;
+    std::filesystem::create_directories(output_dir, ec);
+    if (ec) {
+        std::cerr << "Failed to create output directory: " << output_dir.string() << "\n";
+        return 1;
+    }
+
     io::CoresetManifest manifest;
     manifest.surface_id = surface_id;
 

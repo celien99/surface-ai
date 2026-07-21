@@ -6,9 +6,92 @@
 
 #include <sai/image/gpu_image.h>
 
+#include <cuda_runtime.h>
+
 #include <string>
 
 namespace sai::inference {
+
+namespace {
+
+// Lazily allocate the GPU output buffer for "last_hidden_state" if it hasn't
+// been allocated yet.  The pointer is stored in the adapter's output_buffer_
+// and freed by the destructor / move-assignment.
+[[nodiscard]] auto EnsureOutputBuffer(IInferenceEngine& engine,
+                                       std::size_t output_floats,
+                                       void*& output_buffer) noexcept -> Result<void> {
+    const auto& outputs = engine.OutputBindings();
+    const TensorBinding* binding = nullptr;
+    for (const auto& b : outputs) {
+        if (b.name == "last_hidden_state") {
+            binding = &b;
+            break;
+        }
+    }
+    if (binding == nullptr) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Inference_InvalidBinding,
+            "DinoV3Adapter: output binding 'last_hidden_state' not found",
+        });
+    }
+
+    // Already allocated — reuse.
+    if (binding->device_ptr != nullptr) {
+        return {};
+    }
+
+    // Allocate GPU memory for the output tensor.
+    void* ptr = nullptr;
+    cudaError_t err = cudaMalloc(&ptr, output_floats * sizeof(float));
+    if (err != cudaSuccess) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Inference_EngineExecutionFailed,
+            std::string("DinoV3Adapter: cudaMalloc for output buffer failed: ")
+                + cudaGetErrorString(err),
+        });
+    }
+
+    auto set_result = engine.SetTensorAddress("last_hidden_state", ptr);
+    if (!set_result.has_value()) {
+        cudaFree(ptr);
+        return tl::make_unexpected(set_result.error());
+    }
+
+    output_buffer = ptr;  // transfer ownership to adapter for cleanup
+    return {};
+}
+
+}  // namespace
+
+// ── Lifetime management (defined here because cudaFree requires cuda_runtime.h) ──
+
+DinoV3Adapter::~DinoV3Adapter() {
+    if (output_buffer_ != nullptr) {
+        cudaFree(output_buffer_);
+    }
+}
+
+DinoV3Adapter::DinoV3Adapter(DinoV3Adapter&& other) noexcept
+    : engine_(other.engine_),
+      cfg_(std::move(other.cfg_)),
+      output_buffer_(other.output_buffer_) {
+    other.output_buffer_ = nullptr;
+}
+
+auto DinoV3Adapter::operator=(DinoV3Adapter&& other) noexcept -> DinoV3Adapter& {
+    if (this != &other) {
+        if (output_buffer_ != nullptr) {
+            cudaFree(output_buffer_);
+        }
+        engine_ = other.engine_;
+        cfg_ = std::move(other.cfg_);
+        output_buffer_ = other.output_buffer_;
+        other.output_buffer_ = nullptr;
+    }
+    return *this;
+}
+
+// ── Inference ──
 
 auto DinoV3Adapter::Infer(const sai::image::GpuImage& image) noexcept -> Result<PatchFeatures> {
     // 1. 设置输入 tensor 的 GPU 地址——image.Data() 返回 const uint8_t*，
@@ -20,13 +103,22 @@ auto DinoV3Adapter::Infer(const sai::image::GpuImage& image) noexcept -> Result<
         return tl::make_unexpected(set_result.error());
     }
 
-    // 2. 执行同步 GPU 推理。
+    // 2. 确保输出 GPU buffer 已分配（首次调用懒分配，后续复用）。
+    auto grid_h = cfg_.image_size / cfg_.patch_size;
+    auto grid_w = cfg_.image_size / cfg_.patch_size;
+    std::size_t output_floats = (grid_h * grid_w + 1) * cfg_.embed_dim;  // +1 for CLS
+    auto buf_result = EnsureOutputBuffer(*engine_, output_floats, output_buffer_);
+    if (!buf_result.has_value()) {
+        return tl::make_unexpected(buf_result.error());
+    }
+
+    // 3. 执行同步 GPU 推理。
     auto infer_result = engine_->Infer();
     if (!infer_result.has_value()) {
         return tl::make_unexpected(infer_result.error());
     }
 
-    // 3. 读取输出 binding，获取 GPU 端的 patch features。
+    // 4. 读取输出 binding，获取 GPU 端的 patch features。
     const auto& outputs = engine_->OutputBindings();
     const TensorBinding* features_binding = nullptr;
     for (const auto& b : outputs) {
@@ -43,31 +135,18 @@ auto DinoV3Adapter::Infer(const sai::image::GpuImage& image) noexcept -> Result<
         });
     }
 
-    if (features_binding->device_ptr == nullptr) {
-        return tl::make_unexpected(ErrorInfo{
-            ErrorCode::Inference_InvalidBinding,
-            "DinoV3Adapter: output binding 'last_hidden_state' has null device_ptr",
-        });
-    }
-
-    // 4. 计算 patch grid 并校验维度。
-    // DINOv2 的 last_hidden_state 包含 CLS token 作为首 token，
-    // 因此期望大小比纯 patch 多一个 token。
-    auto grid_h = cfg_.image_size / cfg_.patch_size;
-    auto grid_w = cfg_.image_size / cfg_.patch_size;
-
-    std::size_t expected_elements = (grid_h * grid_w + 1) * cfg_.embed_dim;  // +1 for CLS
+    // 5. 校验输出大小。
     std::size_t actual_elements = features_binding->size_bytes / sizeof(float);
-    if (actual_elements < expected_elements) {
+    if (actual_elements < output_floats) {
         return tl::make_unexpected(ErrorInfo{
             ErrorCode::Inference_ModelConfigMismatch,
             "DinoV3Adapter: output size mismatch (expected " +
-                       std::to_string(expected_elements) + " floats, got " +
+                       std::to_string(output_floats) + " floats, got " +
                        std::to_string(actual_elements) + ")",
         });
     }
 
-    // 跳过 CLS token（首个 token），返回纯 patch features
+    // 6. 跳过 CLS token（首个 token），返回纯 patch features
     return PatchFeatures{
         .device_ptr = static_cast<float*>(features_binding->device_ptr) + cfg_.embed_dim,
         .grid_h = grid_h,
@@ -86,14 +165,23 @@ auto DinoV3Adapter::InferAsync(const sai::image::GpuImage& image,
         return tl::make_unexpected(set_result.error());
     }
 
-    // 2. Execute async GPU inference — no cudaStreamSynchronize.
+    // 2. Ensure output GPU buffer is allocated (lazy, first-call allocation).
+    auto grid_h = cfg_.image_size / cfg_.patch_size;
+    auto grid_w = cfg_.image_size / cfg_.patch_size;
+    std::size_t output_floats = (grid_h * grid_w + 1) * cfg_.embed_dim;  // +1 for CLS
+    auto buf_result = EnsureOutputBuffer(*engine_, output_floats, output_buffer_);
+    if (!buf_result.has_value()) {
+        return tl::make_unexpected(buf_result.error());
+    }
+
+    // 3. Execute async GPU inference — no cudaStreamSynchronize.
     // The caller owns stream lifecycle and synchronization.
     auto infer_result = engine_->InferAsync(stream);
     if (!infer_result.has_value()) {
         return tl::make_unexpected(infer_result.error());
     }
 
-    // 3. Read output binding (same as sync path)
+    // 4. Read output binding (same as sync path)
     const auto& outputs = engine_->OutputBindings();
     const TensorBinding* features_binding = nullptr;
     for (const auto& b : outputs) {
@@ -110,31 +198,18 @@ auto DinoV3Adapter::InferAsync(const sai::image::GpuImage& image,
         });
     }
 
-    if (features_binding->device_ptr == nullptr) {
-        return tl::make_unexpected(ErrorInfo{
-            ErrorCode::Inference_InvalidBinding,
-            "DinoV3Adapter: output binding 'last_hidden_state' has null device_ptr",
-        });
-    }
-
-    // 4. Compute patch grid and validate dimensions.
-    // DINOv2's last_hidden_state includes a CLS token as the first token,
-    // so expected size is one token larger than pure patches.
-    auto grid_h = cfg_.image_size / cfg_.patch_size;
-    auto grid_w = cfg_.image_size / cfg_.patch_size;
-
-    std::size_t expected_elements = (grid_h * grid_w + 1) * cfg_.embed_dim;  // +1 for CLS
+    // 5. Validate output size.
     std::size_t actual_elements = features_binding->size_bytes / sizeof(float);
-    if (actual_elements < expected_elements) {
+    if (actual_elements < output_floats) {
         return tl::make_unexpected(ErrorInfo{
             ErrorCode::Inference_ModelConfigMismatch,
             "DinoV3Adapter: output size mismatch (expected " +
-                       std::to_string(expected_elements) + " floats, got " +
+                       std::to_string(output_floats) + " floats, got " +
                        std::to_string(actual_elements) + ")",
         });
     }
 
-    // Skip CLS token (first token), return pure patch features
+    // 6. Skip CLS token (first token), return pure patch features
     return PatchFeatures{
         .device_ptr = static_cast<float*>(features_binding->device_ptr) + cfg_.embed_dim,
         .grid_h = grid_h,

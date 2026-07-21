@@ -13,6 +13,7 @@ PatchEmbedder::PatchEmbedder(PatchEmbedder&& other) noexcept
     , gpu_pool_(other.gpu_pool_)
     , cuda_stream_(other.cuda_stream_)
     , has_adapter_(true)
+    , engine_holder_(std::move(other.engine_holder_))
 {
     other.has_adapter_ = false;
     other.cuda_stream_ = nullptr;
@@ -24,6 +25,7 @@ auto PatchEmbedder::operator=(PatchEmbedder&& other) noexcept -> PatchEmbedder& 
         gpu_pool_ = other.gpu_pool_;
         cuda_stream_ = other.cuda_stream_;
         has_adapter_ = true;
+        engine_holder_ = std::move(other.engine_holder_);
         other.has_adapter_ = false;
         other.cuda_stream_ = nullptr;
     }

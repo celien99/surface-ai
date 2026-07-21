@@ -75,7 +75,7 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     // =========================================================================
     YAML::Node pipeline_yaml;
     try {
-        pipeline_yaml = YAML::LoadFile(std::string(kPipelineYaml));
+        pipeline_yaml = YAML::LoadFile(PipelineYaml().string());
     } catch (const YAML::Exception& e) {
         return tl::make_unexpected(ErrorInfo{
             ErrorCode::Pipeline_InvalidConfig,
@@ -87,7 +87,7 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     // =========================================================================
 
     auto embedder_result = seat_aoi::CreateDinoV2PatchEmbedder(
-        kDinoV2Engine, kImageSize, kPatchSize, kEmbedDim);
+        DinoV2Engine(), kImageSize, kPatchSize, kEmbedDim);
     if (!embedder_result) return tl::make_unexpected(std::move(embedder_result.error()));
     auto embedder = std::move(*embedder_result);
 
@@ -118,14 +118,14 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     {
         auto global_cfg = pipeline_yaml["pipeline"]["stages"][2]["config"]["global_model"];
         if (global_cfg.IsDefined() && global_cfg["enabled"].as<bool>(false)) {
-            if (!std::filesystem::exists(kClipEngine)) {
+            if (!std::filesystem::exists(ClipEngine())) {
                 std::cerr << "Warning: CLIP engine not found at "
-                          << kClipEngine << " — skipping global embedder\n";
+                          << ClipEngine() << " — skipping global embedder\n";
             } else {
                 auto clip_engine = std::make_shared<inference::TensorRtEngine>(
                     /*device_ordinal=*/0);
                 inference::ClipConfig clip_cfg;
-                clip_cfg.engine_path = kClipEngine;
+                clip_cfg.engine_path = ClipEngine();
                 clip_cfg.image_size = 224;
                 clip_cfg.embed_dim = 512;
 
@@ -310,14 +310,14 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     {
         auto sam2_cfg = pipeline_yaml["pipeline"]["stages"][5]["config"]["sam2"];
         if (sam2_cfg.IsDefined() && sam2_cfg["enabled"].as<bool>(false)) {
-            if (!std::filesystem::exists(kSam2Engine)) {
+            if (!std::filesystem::exists(Sam2Engine())) {
                 std::cerr << "Warning: SAM2 engine not found at "
-                          << kSam2Engine << " — skipping segmenter\n";
+                          << Sam2Engine() << " — skipping segmenter\n";
             } else {
                 auto sam2_engine = std::make_shared<inference::TensorRtEngine>(
                     /*device_ordinal=*/0);
                 inference::Sam2Config s2_cfg;
-                s2_cfg.engine_path = kSam2Engine;
+                s2_cfg.engine_path = Sam2Engine();
                 s2_cfg.image_size = kImageSize;
 
                 auto sam2_adapter = inference::Sam2Adapter::Create(*sam2_engine, s2_cfg);
@@ -342,7 +342,7 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     // =========================================================================
     auto rule_engine = std::make_shared<rule::RuleEngine>();
 
-    auto tree_result = reasoner::DecisionTree::LoadFromYAML(std::string(kDecisionTree));
+    auto tree_result = reasoner::DecisionTree::LoadFromYAML(DecisionTree().string());
     std::shared_ptr<reasoner::IReasoner> reasoner;
     if (tree_result) {
         reasoner = std::make_shared<reasoner::DefaultReasoner>(std::move(*tree_result));
@@ -389,7 +389,7 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
 
     for (auto& pos_def : position_defs) {
         auto pipeline_result = pipeline::Pipeline::LoadFromYAML(
-            std::string(kPipelineYaml), *ctx);
+            PipelineYaml().string(), *ctx);
         if (!pipeline_result) {
             return tl::make_unexpected(ErrorInfo{
                 ErrorCode::Pipeline_InvalidConfig,

@@ -46,8 +46,9 @@ public:
 
     [[nodiscard]] auto ModelName() const noexcept -> std::string_view { return "DINOv2"; }
 
-    DinoV3Adapter(DinoV3Adapter&&) noexcept = default;
-    auto operator=(DinoV3Adapter&&) noexcept -> DinoV3Adapter& = default;
+    ~DinoV3Adapter();
+    DinoV3Adapter(DinoV3Adapter&&) noexcept;
+    auto operator=(DinoV3Adapter&&) noexcept -> DinoV3Adapter&;
     DinoV3Adapter(const DinoV3Adapter&) = delete;
     auto operator=(const DinoV3Adapter&) -> DinoV3Adapter& = delete;
 
@@ -55,6 +56,7 @@ private:
     DinoV3Adapter(IInferenceEngine* engine, DinoV3Config cfg) noexcept;
     IInferenceEngine* engine_ = nullptr;
     DinoV3Config cfg_{};
+    void* output_buffer_ = nullptr;  // GPU output buffer, lazily allocated on first Infer
 };
 
 // Create 工厂实现：校验 engine 的 binding 名称/形状与 config 一致。

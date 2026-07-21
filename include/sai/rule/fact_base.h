@@ -20,11 +20,18 @@ enum class FactSourceKind {
 };
 
 struct FactSource {
-    FactSourceKind kind;
+    FactSourceKind kind = FactSourceKind::Direct;
     std::string description;
     std::chrono::microseconds elapsed{0};
     std::optional<std::string> sql;
     std::optional<int> top_k;
+
+    FactSource() = default;
+    FactSource(FactSourceKind k, std::string desc = "",
+               std::chrono::microseconds e = std::chrono::microseconds{0},
+               std::optional<std::string> sq = std::nullopt,
+               std::optional<int> tk = std::nullopt)
+        : kind(k), description(std::move(desc)), elapsed(e), sql(std::move(sq)), top_k(tk) {}
 };
 
 class FactBase {
