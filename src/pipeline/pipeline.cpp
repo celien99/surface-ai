@@ -171,12 +171,17 @@ auto Pipeline::LoadFromYAML(std::filesystem::path yaml_path, Context& ctx)
 // =========================================================================
 
 auto Pipeline::Start() -> Result<void> {
+    std::unique_lock admission_lock(admission_mutex_);
     if (running_.exchange(true)) {
         return tl::make_unexpected(ErrorInfo{
             ErrorCode::Pipeline_InvalidState,
             "Pipeline already running"});
     }
     stop_source_ = std::stop_source{};
+    draining_.store(false);
+    in_flight_frames_.store(0, std::memory_order_relaxed);
+    dequeueing_workers_.store(0, std::memory_order_relaxed);
+    waiting_workers_.store(0, std::memory_order_relaxed);
 
     // I2: call OnStart lifecycle hooks on each stage node
     std::vector<IStageNode*> started_nodes;
@@ -189,6 +194,7 @@ auto Pipeline::Start() -> Result<void> {
                     (void)(*it)->OnStop(*ctx_);
                 }
                 running_.store(false);
+                draining_.store(false);
                 return tl::make_unexpected(result.error());
             }
             started_nodes.push_back(node.get());
@@ -235,7 +241,14 @@ auto Pipeline::Start() -> Result<void> {
                 std::size_t reservoir_count = 0;
 
                 while (true) {
+                    waiting_workers_.fetch_add(1, std::memory_order_acq_rel);
+                    dequeueing_workers_.fetch_add(1, std::memory_order_acq_rel);
                     auto input = DequeueInput(*stage_id_sp, st);
+                    if (input) {
+                        in_flight_frames_.fetch_add(1, std::memory_order_acq_rel);
+                    }
+                    dequeueing_workers_.fetch_sub(1, std::memory_order_acq_rel);
+                    waiting_workers_.fetch_sub(1, std::memory_order_acq_rel);
                     if (!input) break;  // stop requested AND queue drained
                     auto frame_context = input->Frame();
 
@@ -345,13 +358,15 @@ auto Pipeline::Start() -> Result<void> {
                         metrics_ptr->avg_latency_us = elapsed;
                         // Stop-token-aware enqueue: if shutdown was requested
                         // while we were processing, drop the output and exit.
-                        if (!EnqueueOutputs(
+                        auto pushed = EnqueueOutputs(
                                 *stage_id_sp,
                                 std::make_unique<StageOutput>(
                                     StageOutput::MakeWithContext(
                                         frame_context,
                                         std::move(result).value())),
-                                st)) {
+                                st);
+                        in_flight_frames_.fetch_sub(1, std::memory_order_acq_rel);
+                        if (!pushed) {
                             break;  // stop requested, exit worker loop
                         }
                     } else {
@@ -369,7 +384,9 @@ auto Pipeline::Start() -> Result<void> {
                         auto failure = std::make_unique<StageOutput>(
                             StageOutput::MakeWithContext(
                                 frame_context, std::move(failure_data)));
-                        if (!EnqueueOutputs(*stage_id_sp, std::move(failure), st)) break;
+                        auto pushed = EnqueueOutputs(*stage_id_sp, std::move(failure), st);
+                        in_flight_frames_.fetch_sub(1, std::memory_order_acq_rel);
+                        if (!pushed) break;
                     }
                 }
             });
@@ -384,10 +401,16 @@ auto Pipeline::Start() -> Result<void> {
 // =========================================================================
 
 auto Pipeline::Submit(sai::image::RawImage image) -> Result<void> {
+    std::unique_lock admission_lock(admission_mutex_);
     if (!running_.load()) {
         return tl::make_unexpected(ErrorInfo{
             ErrorCode::Pipeline_InvalidState,
             "Pipeline not running — call Start() first"});
+    }
+    if (draining_.load()) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Pipeline_InvalidState,
+            "Pipeline is draining"});
     }
 
     auto it = input_queues_.find(entry_stage_id_);
@@ -428,44 +451,19 @@ auto Pipeline::DequeueInput(const std::string& stage_id,
     return it->second->PopBlockingWithStop(st);
 }
 
-// =========================================================================
-// Pipeline::EnqueueOutputs
-// =========================================================================
-
-auto Pipeline::EnqueueOutputs(const std::string& stage_id,
-                              std::unique_ptr<StageOutput> output) -> void {
-    auto adj = downstreams_.find(stage_id);
-    if (adj == downstreams_.end()) return;
-
-    for (size_t i = 0; i < adj->second.size(); ++i) {
-        auto& downstream_id = adj->second[i];
-        auto q = input_queues_.find(downstream_id);
-        if (q == input_queues_.end()) continue;
-
-        if (i == 0) {
-            q->second->PushBlocking(std::move(output));
-        }
-    }
-}
-
-// Stop-token-aware overload — used by worker threads so they can exit
+// Stop-token-aware enqueue — used by worker threads so they can exit
 // gracefully when shutdown is requested, even if the downstream queue is full.
 auto Pipeline::EnqueueOutputs(const std::string& stage_id,
                               std::unique_ptr<StageOutput> output,
                               std::stop_token st) -> bool {
     auto adj = downstreams_.find(stage_id);
-    if (adj == downstreams_.end()) return true;  // terminal stage — item consumed
-
-    for (size_t i = 0; i < adj->second.size(); ++i) {
-        auto& downstream_id = adj->second[i];
-        auto q = input_queues_.find(downstream_id);
-        if (q == input_queues_.end()) continue;
-
-        if (i == 0) {
-            return q->second->PushBlockingWithStop(std::move(output), st);
-        }
+    if (adj == downstreams_.end() || adj->second.empty()) {
+        return true;  // terminal stage — item consumed
     }
-    return true;
+
+    auto q = input_queues_.find(adj->second.front());
+    if (q == input_queues_.end()) return true;
+    return q->second->PushBlockingWithStop(std::move(output), st);
 }
 
 // =========================================================================
@@ -508,9 +506,30 @@ auto Pipeline::BuildQueueWiring(const PipelineConfig& config) -> Result<void> {
 // =========================================================================
 
 auto Pipeline::Drain() -> Result<void> {
-    draining_.store(true);
+    {
+        std::unique_lock admission_lock(admission_mutex_);
+        if (!running_.load()) {
+            return tl::make_unexpected(ErrorInfo{
+                ErrorCode::Pipeline_InvalidState,
+                "Pipeline not running"});
+        }
+        if (draining_.exchange(true)) {
+            return tl::make_unexpected(ErrorInfo{
+                ErrorCode::Pipeline_InvalidState,
+                "Pipeline is already draining"});
+        }
+    }
 
-    // Poll all input queues until all are zero, with a 30 s timeout.
+    auto result = WaitForIdle();
+    {
+        std::unique_lock admission_lock(admission_mutex_);
+        draining_.store(false);
+    }
+    return result;
+}
+
+auto Pipeline::WaitForIdle() -> Result<void> {
+
     auto deadline = std::chrono::steady_clock::now() + kDrainTimeout;
 
     while (std::chrono::steady_clock::now() < deadline) {
@@ -521,19 +540,33 @@ auto Pipeline::Drain() -> Result<void> {
                 break;
             }
         }
-        if (all_empty) break;
+        if (all_empty
+            && in_flight_frames_.load(std::memory_order_acquire) == 0
+            && dequeueing_workers_.load(std::memory_order_acquire) == 0
+            && waiting_workers_.load(std::memory_order_acquire)
+                == worker_threads_.size()) {
+            std::unique_lock admission_lock(admission_mutex_);
+            bool still_empty = true;
+            for (auto& [id, q] : input_queues_) {
+                if (q->Depth() > 0) {
+                    still_empty = false;
+                    break;
+                }
+            }
+            if (still_empty
+                && in_flight_frames_.load(std::memory_order_acquire) == 0
+                && dequeueing_workers_.load(std::memory_order_acquire) == 0
+                && waiting_workers_.load(std::memory_order_acquire)
+                    == worker_threads_.size()) {
+                return {};
+            }
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
-    // After timeout (or early exit), force-drain any remaining items.
-    for (auto& [id, q] : input_queues_) {
-        while (q->Depth() > 0) {
-            q->TryPop();
-        }
-    }
-
-    draining_.store(false);
-    return {};
+    return tl::make_unexpected(ErrorInfo{
+        ErrorCode::Runtime_Cancelled,
+        "Pipeline drain timed out"});
 }
 
 // =========================================================================
@@ -541,8 +574,14 @@ auto Pipeline::Drain() -> Result<void> {
 // =========================================================================
 
 auto Pipeline::Stop() -> Result<void> {
+    {
+        std::unique_lock admission_lock(admission_mutex_);
+        running_.store(false);
+        draining_.store(true);
+    }
+
+    auto drain_result = WaitForIdle();
     stop_source_.request_stop();
-    running_.store(false);
 
     // Request stop on all worker jthreads (they share the same stop_source
     // via the lambdas' stop_token, but each jthread also has its own
@@ -557,9 +596,15 @@ auto Pipeline::Stop() -> Result<void> {
     }
     worker_threads_.clear();
 
-    // Drain any remaining frames that may have been left in queues
-    auto drain_result = Drain();
-    if (!drain_result.has_value()) return drain_result;
+    // Discard only frames that arrived before the stop deadline.
+    for (auto& [id, q] : input_queues_) {
+        while (q->Depth() > 0) q->TryPop();
+    }
+
+    {
+        std::unique_lock admission_lock(admission_mutex_);
+        draining_.store(false);
+    }
 
     // I2: call OnStop lifecycle hooks in reverse order
     if (ctx_) {
@@ -572,7 +617,7 @@ auto Pipeline::Stop() -> Result<void> {
         }
     }
 
-    return {};
+    return drain_result;
 }
 
 // =========================================================================

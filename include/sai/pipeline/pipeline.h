@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <stop_token>
 #include <string>
 #include <string_view>
@@ -164,13 +165,13 @@ private:
     // For entry stages (no depends_on), Submit() pushes directly to their queue.
     auto DequeueInput(const std::string& stage_id, std::stop_token st)
         -> std::unique_ptr<StageOutput>;
-    // EnqueueOutputs: push output to all downstream stages' input queues.
+    // EnqueueOutputs: push output to the downstream stage's input queue.
+    // Returns false if stop was requested and the item was not pushed.
     // Uses the adjacency map built during LoadFromYAML.
-    auto EnqueueOutputs(const std::string& stage_id, std::unique_ptr<StageOutput>) -> void;
-    // Stop-token-aware variant: returns false if stop was requested and the
-    // item was not pushed. Caller discards the item on false.
+    // Caller discards the item on false.
     auto EnqueueOutputs(const std::string& stage_id, std::unique_ptr<StageOutput>,
                         std::stop_token st) -> bool;
+    auto WaitForIdle() -> Result<void>;
     // BuildQueueWiring: after parsing config, create input queues for each stage
     // and populate adjacency_ (upstream_id -> downstream_ids).
     auto BuildQueueWiring(const PipelineConfig& config) -> Result<void>;
@@ -187,9 +188,13 @@ private:
     // Adjacency: for each stage, the list of downstream stage ids
     detail::StringMap<std::vector<std::string>> downstreams_;
     detail::StringMap<StageMetrics> metrics_;
+    std::mutex admission_mutex_;
     std::stop_source stop_source_;
     std::atomic<bool> running_{false};
     std::atomic<bool> draining_{false};
+    std::atomic<std::size_t> in_flight_frames_{0};
+    std::atomic<std::size_t> dequeueing_workers_{0};
+    std::atomic<std::size_t> waiting_workers_{0};
     ResultCallback result_callback_;
     DetectionCallback detection_callback_;
     std::atomic<int> frame_counter_{0};
