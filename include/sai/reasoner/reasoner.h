@@ -23,6 +23,7 @@ struct ReasoningResult {
     double severity{0.0};                    // 0.0 – 1.0 (leaf score)
     std::string recommendation;              // human-readable action
     double confidence{0.0};                  // reuses leaf score
+    std::uint32_t error_code{0};             // non-zero for RECHECK failures
     std::vector<rule::TraceStep> trace;      // full decision trace
     std::vector<EvidenceItem> evidence;      // fact sources + rule actions
     std::vector<std::string> triggered_rules;

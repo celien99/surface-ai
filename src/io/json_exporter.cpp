@@ -25,6 +25,8 @@ auto JsonExporter::Export(const InspectionResult& result,
     j["serial_number"] = result.serial_number;
     j["timestamp"] = result.timestamp.time_since_epoch().count();
     j["verdict"] = result.verdict;
+    j["recommendation"] = result.recommendation;
+    j["error_code"] = result.error_code;
     if (result.verdict == "NG") {
         j["severity"] = 1.0;
     } else if (result.verdict == "WARN") {

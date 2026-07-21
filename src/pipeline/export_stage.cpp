@@ -35,6 +35,7 @@ auto WriteHeatmapPpm(const std::filesystem::path& path,
                      std::size_t grid_h, std::size_t grid_w,
                      std::size_t out_w, std::size_t out_h) -> void {
     if (scores.empty() || out_w == 0 || out_h == 0) return;
+    if (grid_h == 0 || grid_w == 0 || scores.size() < grid_h * grid_w) return;
 
     // Simple nearest-neighbor upsample: grid position → output pixel.
     std::vector<std::uint8_t> rgb(out_w * out_h * 3);
@@ -124,8 +125,14 @@ auto ExportStage::Process(StageInput input) -> Result<StageOutput> {
             inspection.serial_number = FrameSerial(input, result.position_id);
             inspection.timestamp = std::chrono::system_clock::now();
             inspection.verdict = result.verdict;
+            inspection.recommendation = result.recommendation;
+            inspection.error_code = static_cast<std::uint32_t>(failure->code);
             auto export_result = exporter_->Export(inspection, output_dir_, nullptr);
-            if (!export_result) return tl::make_unexpected(export_result.error());
+            if (!export_result) {
+                result.recommendation += " Export failed: " + export_result.error().message;
+                result.error_code = static_cast<std::uint32_t>(
+                    export_result.error().code);
+            }
         }
         return StageOutput::MakeWithContext(input, std::move(result));
     }
@@ -144,6 +151,8 @@ auto ExportStage::Process(StageInput input) -> Result<StageOutput> {
             inspection.serial_number = FrameSerial(input, result->position_id);
             inspection.timestamp = std::chrono::system_clock::now();
             inspection.verdict = result->verdict;
+            inspection.recommendation = result->recommendation;
+            inspection.error_code = result->error_code;
 
             // Map triggered rules to DefectRecords
             for (const auto& rule_name : result->triggered_rules) {
@@ -168,7 +177,14 @@ auto ExportStage::Process(StageInput input) -> Result<StageOutput> {
             auto export_result = exporter_->Export(
                 inspection, output_dir_,
                 frame_image.has_value() ? &*frame_image : nullptr);
-            if (!export_result) return tl::make_unexpected(export_result.error());
+            if (!export_result) {
+                result->verdict = "RECHECK";
+                result->confidence = 0.0;
+                result->recommendation = "ExportStage: "
+                    + export_result.error().message;
+                result->error_code = static_cast<std::uint32_t>(
+                    export_result.error().code);
+            }
 
             // Write anomaly heatmap if available
             if (input.Frame() && input.Frame()->anomaly.has_value()

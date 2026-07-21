@@ -2,6 +2,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -30,6 +31,8 @@ struct InspectionResult {
     std::chrono::system_clock::time_point timestamp;
     std::vector<DefectRecord> defects;
     std::string verdict;         // "PASS" | "FAIL" | "RECHECK"
+    std::string recommendation;
+    std::uint32_t error_code = 0;
 };
 
 class IExporter : public IPlugin {
