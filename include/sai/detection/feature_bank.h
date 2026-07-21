@@ -66,7 +66,8 @@ public:
     // Extracts all patch vectors from embeddings, then iteratively selects
     // patches that maximize coverage of the normal manifold (minimize max
     // distance to nearest coreset point). Produces a more representative
-    // coreset than uniform subsampling, at O(M·N·D) cost.
+    // coreset than uniform subsampling. Distance evaluation is batched through
+    // FAISS; CPU only maintains the furthest-point selection state.
     [[nodiscard]] static auto BuildWithGreedyCoreset(
         std::span<const sai::embedding::Embedding* const> embeddings,
         std::size_t dim,

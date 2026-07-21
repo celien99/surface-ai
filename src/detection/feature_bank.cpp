@@ -12,6 +12,10 @@
 
 #include <faiss/IndexFlat.h>
 #include <faiss/IndexIVFFlat.h>
+#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
+#include <faiss/gpu/GpuIndexFlat.h>
+#include <faiss/gpu/StandardGpuResources.h>
+#endif
 
 namespace sai::detection {
 
@@ -280,21 +284,23 @@ auto FeatureBank::BuildWithGreedyCoreset(
     std::vector<std::size_t> coreset_indices;
     coreset_indices.reserve(num_samples);
 
-    // Seed: pick first patch (index 0).
+    std::unique_ptr<faiss::Index> selected_cpu =
+        std::make_unique<faiss::IndexFlatL2>(static_cast<faiss::idx_t>(dim));
+    selected_cpu->add(1, all_vectors.data());
+    std::unique_ptr<faiss::Index> selected_index;
+#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
+    auto selected_resources = std::make_unique<faiss::gpu::StandardGpuResources>();
+    selected_resources->setTempMemory(512 * 1024 * 1024);
+    selected_index = std::unique_ptr<faiss::Index>(faiss::gpu::index_cpu_to_gpu(
+        selected_resources.get(), 0, selected_cpu.get()));
+#else
+    selected_index = std::move(selected_cpu);
+#endif
+
     coreset_indices.push_back(0);
-    {
-        const float* seed = all_vectors.data();
-        for (std::size_t i = 1; i < total_patches; ++i) {
-            const float* pi = all_vectors.data() + i * dim;
-            float dist_sq = 0.0F;
-            for (std::size_t d = 0; d < dim; ++d) {
-                float diff = pi[d] - seed[d];
-                dist_sq += diff * diff;
-            }
-            min_dist[i] = dist_sq;
-        }
-        min_dist[0] = 0.0F;
-    }
+    std::vector<faiss::idx_t> labels(total_patches);
+    selected_index->search(static_cast<faiss::idx_t>(total_patches),
+                           all_vectors.data(), 1, min_dist.data(), labels.data());
 
     // Iteratively select furthest point from current coreset.
     for (std::size_t k = 1; k < num_samples; ++k) {
@@ -311,18 +317,10 @@ auto FeatureBank::BuildWithGreedyCoreset(
         coreset_indices.push_back(best_idx);
         min_dist[best_idx] = 0.0F;
 
-        // Update min_dist with distances to the newly selected point.
-        const float* new_pt = all_vectors.data() + best_idx * dim;
-        for (std::size_t i = 0; i < total_patches; ++i) {
-            if (min_dist[i] == 0.0F) continue;  // already in coreset
-            const float* pi = all_vectors.data() + i * dim;
-            float dist_sq = 0.0F;
-            for (std::size_t d = 0; d < dim; ++d) {
-                float diff = pi[d] - new_pt[d];
-                dist_sq += diff * diff;
-            }
-            if (dist_sq < min_dist[i]) min_dist[i] = dist_sq;
-        }
+        selected_index->add(1, all_vectors.data() + best_idx * dim);
+        selected_index->search(static_cast<faiss::idx_t>(total_patches),
+                               all_vectors.data(), 1,
+                               min_dist.data(), labels.data());
     }
 
     // Build output vector from selected indices.
