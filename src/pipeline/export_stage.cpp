@@ -115,6 +115,15 @@ auto ExportStage::Process(StageInput input) -> Result<StageOutput> {
         sai::reasoner::ReasoningResult result;
         result.surface_id = failure->surface_id;
         result.position_id = failure->position_id;
+        result.error_code = static_cast<std::uint32_t>(failure->code);
+        if (input.Frame()) {
+            if (result.surface_id.empty()) {
+                result.surface_id = input.Frame()->surface_id;
+            }
+            if (result.position_id == 0) {
+                result.position_id = input.Frame()->position_id;
+            }
+        }
         result.verdict = "RECHECK";
         result.recommendation = failure->stage_id + ": " + failure->message;
         result.confidence = 0.0;
