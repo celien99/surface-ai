@@ -283,17 +283,17 @@ auto Pipeline::Start() -> Result<void> {
                     ++reservoir_idx;
                     if (reservoir_count < 100) ++reservoir_count;
                     if (reservoir_count > 0) {
-                        std::array<double, 100> sorted;
-                        std::copy_n(latency_reservoir.begin(), reservoir_count,
-                                    sorted.begin());
-                        auto end = sorted.begin() + reservoir_count;
-                        std::sort(sorted.begin(), end);
                         auto p99_idx = static_cast<std::size_t>(
                             static_cast<double>(reservoir_count) * 0.99);
                         if (p99_idx >= reservoir_count)
                             p99_idx = reservoir_count - 1;
+                        auto end = latency_reservoir.begin() + reservoir_count;
+                        std::nth_element(latency_reservoir.begin(),
+                                         latency_reservoir.begin() + p99_idx,
+                                         end);
                         metrics_ptr->p99_latency_us.store(
-                            sorted[p99_idx], std::memory_order_relaxed);
+                            latency_reservoir[p99_idx],
+                            std::memory_order_relaxed);
                     }
 
                     if (result.has_value()) {
