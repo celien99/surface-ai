@@ -68,4 +68,3 @@
 - Confirm `BuildWithGreedyCoreset()` no longer contains the per-point/per-dimension distance loop in the GPU-enabled path.
 - Confirm no stale GPU mirror survives `Rebuild()` or `ConvertToIVF()`.
 - Run only static commands listed in the global constraints; do not compile or execute tests.
-
