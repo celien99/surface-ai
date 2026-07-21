@@ -151,6 +151,11 @@ public:
 
     auto PushBlocking(std::unique_ptr<T> item) -> void {
         std::unique_lock lock(mutex_);
+        if (policy_ == BackpressurePolicy::DropOldest) {
+            ring_.TryPush(std::move(item));
+            cv_.notify_one();
+            return;
+        }
         cv_.wait(lock, [this] { return !ring_.IsFull(); });
         ring_.TryPush(std::move(item));  // guaranteed to succeed
         cv_.notify_one();  // wake pop side
@@ -160,6 +165,12 @@ public:
     // requested and the item was NOT pushed. Caller must handle the leftover item.
     auto PushBlockingWithStop(std::unique_ptr<T> item, std::stop_token st) -> bool {
         std::unique_lock lock(mutex_);
+        if (policy_ == BackpressurePolicy::DropOldest) {
+            if (st.stop_requested()) return false;
+            ring_.TryPush(std::move(item));
+            cv_.notify_one();
+            return true;
+        }
         if (!cv_.wait(lock, st, [this] { return !ring_.IsFull(); }))
             return false;  // stop requested
         ring_.TryPush(std::move(item));  // guaranteed to succeed (ring not full)
@@ -201,9 +212,10 @@ public:
 
 private:
     StageQueue(size_t capacity, BackpressurePolicy policy)
-        : ring_(capacity, policy) {}
+        : ring_(capacity, policy), policy_(policy) {}
 
     detail::RingBuffer<T> ring_;
+    BackpressurePolicy policy_;
     std::mutex mutex_;
     std::condition_variable_any cv_;
 };
