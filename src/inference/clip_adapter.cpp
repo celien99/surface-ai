@@ -25,7 +25,7 @@ auto ClipAdapter::Infer(const sai::image::GpuImage& image) noexcept -> Result<Gl
         return tl::make_unexpected(infer_result.error());
     }
 
-    // 3. 读取 "image_features" 输出 binding。
+    // 3. 读取 "features" 输出 binding。
     const auto& outputs = engine_->OutputBindings();
     const TensorBinding* features_binding = nullptr;
     for (const auto& b : outputs) {
