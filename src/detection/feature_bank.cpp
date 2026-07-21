@@ -286,45 +286,51 @@ auto FeatureBank::BuildWithGreedyCoreset(
 
 #if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
     auto selected_resources = std::make_unique<faiss::gpu::StandardGpuResources>();
-#endif
-    std::unique_ptr<faiss::Index> selected_index;
-#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
-    selected_resources->setTempMemory(512 * 1024 * 1024);
     auto selected_cpu = std::make_unique<faiss::IndexFlatL2>(
         static_cast<faiss::idx_t>(dim));
-    selected_cpu->add(1, all_vectors.data());
-    selected_index = std::unique_ptr<faiss::Index>(faiss::gpu::index_cpu_to_gpu(
-        selected_resources.get(), 0, selected_cpu.get()));
+#endif
+    std::unique_ptr<faiss::Index> selected_index;
+    std::vector<faiss::idx_t> labels(total_patches);
+    try {
+#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
+        selected_resources->setTempMemory(512 * 1024 * 1024);
+        selected_cpu->add(1, all_vectors.data());
+        selected_index = std::unique_ptr<faiss::Index>(faiss::gpu::index_cpu_to_gpu(
+            selected_resources.get(), 0, selected_cpu.get()));
 #else
-    selected_index = std::make_unique<faiss::IndexFlatL2>(
-        static_cast<faiss::idx_t>(dim));
-    selected_index->add(1, all_vectors.data());
+        selected_index = std::make_unique<faiss::IndexFlatL2>(
+            static_cast<faiss::idx_t>(dim));
+        selected_index->add(1, all_vectors.data());
 #endif
 
-    coreset_indices.push_back(0);
-    std::vector<faiss::idx_t> labels(total_patches);
-    selected_index->search(static_cast<faiss::idx_t>(total_patches),
-                           all_vectors.data(), 1, min_dist.data(), labels.data());
-
-    // Iteratively select furthest point from current coreset.
-    for (std::size_t k = 1; k < num_samples; ++k) {
-        // Find argmax of min_dist.
-        std::size_t best_idx = 0;
-        float best_dist = -1.0F;
-        for (std::size_t i = 0; i < total_patches; ++i) {
-            if (min_dist[i] > best_dist) {
-                best_dist = min_dist[i];
-                best_idx = i;
-            }
-        }
-
-        coreset_indices.push_back(best_idx);
-        min_dist[best_idx] = 0.0F;
-
-        selected_index->add(1, all_vectors.data() + best_idx * dim);
+        coreset_indices.push_back(0);
         selected_index->search(static_cast<faiss::idx_t>(total_patches),
                                all_vectors.data(), 1,
                                min_dist.data(), labels.data());
+
+        // Iteratively select furthest point from current coreset.
+        for (std::size_t k = 1; k < num_samples; ++k) {
+            std::size_t best_idx = 0;
+            float best_dist = -1.0F;
+            for (std::size_t i = 0; i < total_patches; ++i) {
+                if (min_dist[i] > best_dist) {
+                    best_dist = min_dist[i];
+                    best_idx = i;
+                }
+            }
+
+            coreset_indices.push_back(best_idx);
+            selected_index->add(1, all_vectors.data() + best_idx * dim);
+            selected_index->search(static_cast<faiss::idx_t>(total_patches),
+                                   all_vectors.data(), 1,
+                                   min_dist.data(), labels.data());
+        }
+    } catch (const std::exception& e) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Detection_FeatureBankLoadFailed,
+            std::string("BuildWithGreedyCoreset FAISS selection failed: ") + e.what(),
+            std::source_location::current(),
+        });
     }
 
     // Build output vector from selected indices.

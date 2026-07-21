@@ -192,7 +192,15 @@ auto PatchCore::Detect(const sai::embedding::Embedding& embedding) noexcept
     auto start = std::chrono::steady_clock::now();
     auto query_count = grid_h * grid_w;
 
-#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
+#if !defined(SAI_CUDA_ENABLED) || !defined(SAI_FAISS_GPU_ENABLED)
+    if (embedding.IsOnGpu()) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Detection_FeatureBankLoadFailed,
+            "PatchCore: GPU embedding requires CUDA FAISS",
+            std::source_location::current(),
+        });
+    }
+#else
     if (embedding.IsOnGpu() && !feature_bank_->IsOnGpu()) {
         return tl::make_unexpected(ErrorInfo{
             ErrorCode::Detection_FeatureBankLoadFailed,
@@ -201,7 +209,6 @@ auto PatchCore::Detect(const sai::embedding::Embedding& embedding) noexcept
         });
     }
 #endif
-
     if (embedding.IsOnGpu()
         && (whitening_params_.has_value() || pca_params_.has_value())) {
         return tl::make_unexpected(ErrorInfo{

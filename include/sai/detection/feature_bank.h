@@ -15,6 +15,9 @@ namespace sai::retrieval { class VectorPath; }
 // 前向声明——避免头文件泄漏 FAISS 内部类型给所有包含 feature_bank.h 的翻译单元
 namespace faiss {
 struct Index;
+#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
+namespace gpu { class StandardGpuResources; }
+#endif
 }  // namespace faiss
 
 namespace sai::detection {
