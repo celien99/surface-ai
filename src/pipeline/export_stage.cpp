@@ -163,9 +163,6 @@ auto ExportStage::Process(StageInput input) -> Result<StageOutput> {
                 inspection.defects.push_back(std::move(defect));
             }
 
-            // Create output dir
-            std::filesystem::create_directories(output_dir_);
-
             // Reconstruct the frame image captured in the shared frame context.
             std::optional<sai::image::SurfaceImage> frame_image;
             if (input.Frame() && input.Frame()->image.has_value()) {
