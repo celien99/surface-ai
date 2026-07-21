@@ -14,7 +14,7 @@ TEST(StageMetricsObjectTest, UpdateFromStageMetricsCapturesFields) {
     m.frames_processed.store(42);
     m.frames_failed.store(3);
     m.frames_dropped.store(1);
-    m.avg_latency_us = 12500.0;  // 12.5ms
+    m.avg_latency_us.store(12500.0);  // 12.5ms
 
     obj.UpdateFromStageMetrics(m);
 
