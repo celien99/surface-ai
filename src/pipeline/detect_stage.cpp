@@ -15,7 +15,8 @@ DetectStage::DetectStage(std::string id, YAML::Node /*config*/)
 auto DetectStage::GetType() const noexcept -> StageType { return StageType::Detect; }
 auto DetectStage::GetId() const -> std::string_view { return id_; }
 
-auto DetectStage::OnInitialize(Context& /*ctx*/) -> Result<void> {
+auto DetectStage::OnInitialize(Context& ctx) -> Result<void> {
+    ctx_ = &ctx;
     return {};
 }
 
@@ -30,6 +31,10 @@ auto DetectStage::SetBootstrapConfig(bool enabled, std::size_t min_frames,
 }
 
 auto DetectStage::Process(StageInput input) -> Result<StageOutput> {
+    if (auto* failure = input.GetIf<PipelineFailure>()) {
+        return StageOutput::MakeWithContext(input, std::move(*failure));
+    }
+
     if (auto* emb = input.GetIf<sai::embedding::Embedding>()) {
         sai::detection::DetectionResult result;
 
@@ -84,13 +89,35 @@ auto DetectStage::Process(StageInput input) -> Result<StageOutput> {
                         ptrs, dim, std::min(bootstrap_target_size_, sample_count));
                     if (fb_result.has_value()) {
                         detection::PatchCore::Config pc_cfg;
+                        pc_cfg.embed_dim = dim;
                         pc_cfg.k_nearest = 5;
-                        pc_cfg.image_width = state.grid_w;
-                        pc_cfg.image_height = state.grid_h;
+                        pc_cfg.patch_size = 14;
+                        pc_cfg.image_width = state.grid_w * pc_cfg.patch_size;
+                        pc_cfg.image_height = state.grid_h * pc_cfg.patch_size;
                         auto pc = std::make_shared<detection::PatchCore>(pc_cfg);
                         pc->SetFeatureBank(
                             std::make_unique<detection::FeatureBank>(
                                 std::move(*fb_result)));
+                        if (ctx_ == nullptr) {
+                            return StageOutput::MakeWithContext(input, PipelineFailure{
+                                .code = sai::ErrorCode::Pipeline_StageInitFailed,
+                                .stage_id = id_,
+                                .message = "DetectStage: context is not initialized",
+                                .surface_id = emb->SurfaceId(),
+                                .position_id = emb->PositionId(),
+                            });
+                        }
+                        auto init_result = pc->Initialize(*ctx_);
+                        if (!init_result) {
+                            bootstrap_states_.erase(key);
+                            return StageOutput::MakeWithContext(input, PipelineFailure{
+                                .code = init_result.error().code,
+                                .stage_id = id_,
+                                .message = init_result.error().message,
+                                .surface_id = emb->SurfaceId(),
+                                .position_id = emb->PositionId(),
+                            });
+                        }
                         detectors_[key] = pc;
                         stub_ = false;
 
@@ -106,19 +133,43 @@ auto DetectStage::Process(StageInput input) -> Result<StageOutput> {
                     bootstrap_states_.erase(key);
                 }
 
-                // Return empty result during bootstrap — no model yet.
-                result.surface_id = emb->SurfaceId();
-                result.position_id = emb->PositionId();
-                return StageOutput::Make(std::move(result));
+                if (detectors_.find(key) == detectors_.end()) {
+                    return StageOutput::MakeWithContext(input, PipelineFailure{
+                        .code = sai::ErrorCode::Detection_FeatureBankLoadFailed,
+                        .stage_id = id_,
+                        .message = "DetectStage: detector bootstrap is in progress",
+                        .surface_id = emb->SurfaceId(),
+                        .position_id = emb->PositionId(),
+                    });
+                }
             }
         }
 
+        it = detectors_.find(key);
+
         auto* detector = (it != detectors_.end()) ? it->second.get() : default_detector_.get();
 
-        if (!stub_ && detector) {
-            auto det_result = detector->Detect(*emb);
-            if (det_result) result = std::move(*det_result);
+        if (stub_ || detector == nullptr) {
+            return StageOutput::MakeWithContext(input, PipelineFailure{
+                .code = sai::ErrorCode::Detection_FeatureBankLoadFailed,
+                .stage_id = id_,
+                .message = "DetectStage: detector is not configured",
+                .surface_id = emb->SurfaceId(),
+                .position_id = emb->PositionId(),
+            });
         }
+
+        auto det_result = detector->Detect(*emb);
+        if (!det_result) {
+            return StageOutput::MakeWithContext(input, PipelineFailure{
+                .code = det_result.error().code,
+                .stage_id = id_,
+                .message = det_result.error().message,
+                .surface_id = emb->SurfaceId(),
+                .position_id = emb->PositionId(),
+            });
+        }
+        result = std::move(*det_result);
         // Carry forward CLIP global features for RuleEvalStage.
         if (emb->HasGlobalFeatures()) {
             result.global_features = emb->GlobalFeatures();
@@ -128,7 +179,7 @@ auto DetectStage::Process(StageInput input) -> Result<StageOutput> {
             result.surface_id = emb->SurfaceId();
         }
         result.position_id = emb->PositionId();
-        return StageOutput::Make(std::move(result));
+        return StageOutput::MakeWithContext(input, std::move(result));
     }
     return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_StageTypeMismatch,
         "Detect expects Embedding input"});

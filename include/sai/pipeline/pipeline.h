@@ -4,13 +4,11 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
-#include <optional>
 #include <stop_token>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <unordered_map>
-#include <utility>
 #include <vector>
 
 #include <sai/core/error.h>
@@ -153,20 +151,6 @@ public:
     auto SetResultCallback(ResultCallback callback) -> void;
     auto SetDetectionCallback(DetectionCallback callback) -> void;
 
-    // Per-frame image side channel: Capture/Preprocess stage stores the
-    // processed SurfaceImage pixel snapshot; Export stage retrieves it for
-    // annotated exports. SurfaceImage is move-only, so we snapshot raw bytes.
-    using FrameImageSnapshot = std::pair<std::vector<std::uint8_t>, sai::image::ImageMeta>;
-    auto SetFrameImage(const sai::image::SurfaceImage& image) -> void;
-    auto TakeFrameImage() -> std::optional<FrameImageSnapshot>;
-
-    // Per-frame anomaly heatmap side channel: Detect stage stores the
-    // raw patch anomaly scores (grid_h × grid_w); Export / headless runner
-    // retrieves them for heatmap export.
-    auto SetAnomalyScores(std::vector<float> scores, std::size_t grid_h, std::size_t grid_w) -> void;
-    struct AnomalySnapshot { std::vector<float> scores; std::size_t grid_h; std::size_t grid_w; };
-    auto TakeAnomalyScores() -> std::optional<AnomalySnapshot>;
-
     // Returns the stage node with the given id, or nullptr if not found.
     // Caller must cast to the concrete stage type (e.g. CaptureStage) and
     // call setter methods (SetEngine, SetCamera, ...) before Start().
@@ -208,13 +192,7 @@ private:
     std::atomic<bool> draining_{false};
     ResultCallback result_callback_;
     DetectionCallback detection_callback_;
-    // Per-frame image side channel (written by Preprocess stage worker,
-    // read by Export stage worker; single-writer, single-consumer so no mutex needed)
-    std::optional<FrameImageSnapshot> current_frame_image_;
-    // Per-frame anomaly heatmap side channel (written by Detect stage worker)
-    std::optional<AnomalySnapshot> current_anomaly_;
     std::atomic<int> frame_counter_{0};
-    std::vector<std::unique_ptr<runtime::WorkerPool>> pools_;
     std::string entry_stage_id_;  // first stage with empty depends_on
     Context* ctx_ = nullptr;      // stored during LoadFromYAML for lifecycle hooks
     // Per-stage worker threads (one jthread per stage).

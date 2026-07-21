@@ -24,10 +24,6 @@ auto RuleEvalStage::GetId() const -> std::string_view { return id_; }
 auto RuleEvalStage::OnInitialize(Context& /*ctx*/) -> Result<void> {
     // RuleEngine, KnowledgeGraph, VectorPath are concrete classes —
     // set externally via setters before Start().
-    if (!rule_file_.empty() && rule_engine_) {
-        auto load_result = rule_engine_->LoadFromYAML(rule_file_);
-        if (!load_result) return load_result;
-    }
     if (kg_ && vp_) {
         fact_builder_ = std::make_unique<rule::FactBuilder>(kg_, vp_);
     }
@@ -35,10 +31,21 @@ auto RuleEvalStage::OnInitialize(Context& /*ctx*/) -> Result<void> {
     return {};
 }
 
-auto RuleEvalStage::OnStart(Context&) -> Result<void> { return {}; }
+auto RuleEvalStage::OnStart(Context&) -> Result<void> {
+    if (rule_engine_ && !rule_file_.empty()) {
+        auto load_result = rule_engine_->LoadFromYAML(rule_file_);
+        if (!load_result) return load_result;
+        stub_ = false;
+    }
+    return {};
+}
 auto RuleEvalStage::OnStop(Context&) -> Result<void> { return {}; }
 
 auto RuleEvalStage::Process(StageInput input) -> Result<StageOutput> {
+    if (auto* failure = input.GetIf<PipelineFailure>()) {
+        return StageOutput::MakeWithContext(input, std::move(*failure));
+    }
+
     if (auto* det = input.GetIf<sai::detection::DetectionResult>()) {
         rule::FactBase fb;
 
@@ -124,7 +131,15 @@ auto RuleEvalStage::Process(StageInput input) -> Result<StageOutput> {
 
             // Evaluate rules
             auto eval_result = rule_engine_->EvaluateAll(fb);
-            if (!eval_result) return tl::make_unexpected(eval_result.error());
+            if (!eval_result) {
+                return StageOutput::MakeWithContext(input, PipelineFailure{
+                    .code = eval_result.error().code,
+                    .stage_id = id_,
+                    .message = eval_result.error().message,
+                    .surface_id = det->surface_id,
+                    .position_id = det->position_id,
+                });
+            }
 
             auto resolved = rule_engine_->ResolveConflicts(*eval_result);
 
@@ -154,14 +169,16 @@ auto RuleEvalStage::Process(StageInput input) -> Result<StageOutput> {
             RuleEvalOutput output{std::move(fb), std::move(resolved)};
             output.surface_id = det->surface_id;
             output.position_id = det->position_id;
-            return StageOutput::Make(std::move(output));
+            return StageOutput::MakeWithContext(input, std::move(output));
         }
 
-        // Stub: return empty RuleEvalOutput (but preserve surface routing metadata)
-        RuleEvalOutput stub_output{std::move(fb), {}};
-        stub_output.surface_id = det->surface_id;
-        stub_output.position_id = det->position_id;
-        return StageOutput::Make(std::move(stub_output));
+        return StageOutput::MakeWithContext(input, PipelineFailure{
+            .code = sai::ErrorCode::Rule_ParseError,
+            .stage_id = id_,
+            .message = "RuleEvalStage: rule engine is not configured",
+            .surface_id = det->surface_id,
+            .position_id = det->position_id,
+        });
     }
     return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_StageTypeMismatch,
         "RuleEval expects DetectionResult input"});

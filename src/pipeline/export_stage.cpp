@@ -7,7 +7,6 @@
 #include <vector>
 
 #include <sai/image/surface_image.h>
-#include <sai/pipeline/pipeline.h>
 #include <sai/reasoner/reasoner.h>
 #include <sai/io/exporter.h>
 
@@ -78,8 +77,8 @@ auto WriteHeatmapPpm(const std::filesystem::path& path,
 
 }  // namespace
 
-ExportStage::ExportStage(std::string id, YAML::Node config, Pipeline* pipeline)
-    : id_(std::move(id)), pipeline_(pipeline) {
+ExportStage::ExportStage(std::string id, YAML::Node config)
+    : id_(std::move(id)) {
     auto out_dir = config["output_dir"].as<std::string>("/tmp/surface-ai/results/");
     output_dir_ = std::filesystem::path(out_dir);
 }
@@ -97,7 +96,33 @@ auto ExportStage::OnStart(Context&) -> Result<void> { return {}; }
 auto ExportStage::OnStop(Context&) -> Result<void> { return {}; }
 
 auto ExportStage::Process(StageInput input) -> Result<StageOutput> {
+    if (auto* failure = input.GetIf<PipelineFailure>()) {
+        sai::reasoner::ReasoningResult result;
+        result.surface_id = failure->surface_id;
+        result.position_id = failure->position_id;
+        result.verdict = "RECHECK";
+        result.recommendation = failure->stage_id + ": " + failure->message;
+        result.confidence = 0.0;
+
+        if (!stub_ && exporter_) {
+            io::InspectionResult inspection;
+            inspection.sku_id = result.surface_id.empty() ? "default" : result.surface_id;
+            inspection.serial_number = "pos_" + std::to_string(result.position_id);
+            inspection.timestamp = std::chrono::system_clock::now();
+            inspection.verdict = result.verdict;
+            auto export_result = exporter_->Export(inspection, output_dir_, nullptr);
+            if (!export_result) return tl::make_unexpected(export_result.error());
+        }
+        return StageOutput::MakeWithContext(input, std::move(result));
+    }
+
     if (auto* result = input.GetIf<sai::reasoner::ReasoningResult>()) {
+        if (stub_ || !exporter_) {
+            result->verdict = "RECHECK";
+            result->recommendation = "ExportStage: exporter is not configured";
+            return StageOutput::MakeWithContext(input, std::move(*result));
+        }
+
         if (!stub_ && exporter_) {
             // Build InspectionResult from ReasoningResult
             io::InspectionResult inspection;
@@ -118,15 +143,12 @@ auto ExportStage::Process(StageInput input) -> Result<StageOutput> {
             // Create output dir
             std::filesystem::create_directories(output_dir_);
 
-            // Retrieve the per-frame image pixel snapshot from the pipeline
-            // side channel (stored by Preprocess stage worker).
-            // Reconstruct as SurfaceImage for the exporter.
-            auto snapshot = pipeline_ ? pipeline_->TakeFrameImage()
-                                       : std::nullopt;
+            // Reconstruct the frame image captured in the shared frame context.
             std::optional<sai::image::SurfaceImage> frame_image;
-            if (snapshot.has_value()) {
+            if (input.Frame() && input.Frame()->image.has_value()) {
+                auto& snapshot = *input.Frame()->image;
                 frame_image = sai::image::SurfaceImage::FromOwnedBuffer(
-                    std::move(snapshot->first), snapshot->second);
+                    std::move(snapshot.first), snapshot.second);
             }
 
             auto export_result = exporter_->Export(
@@ -135,18 +157,17 @@ auto ExportStage::Process(StageInput input) -> Result<StageOutput> {
             if (!export_result) return tl::make_unexpected(export_result.error());
 
             // Write anomaly heatmap if available
-            if (pipeline_) {
-                auto anomaly = pipeline_->TakeAnomalyScores();
-                if (anomaly.has_value() && !anomaly->scores.empty()) {
-                    auto heatmap_path = output_dir_ / inspection.sku_id
-                        / inspection.serial_number / "heatmap.ppm";
-                    WriteHeatmapPpm(heatmap_path, anomaly->scores,
-                                    anomaly->grid_h, anomaly->grid_w,
-                                    518, 518);
-                }
+            if (input.Frame() && input.Frame()->anomaly.has_value()
+                && !input.Frame()->anomaly->scores.empty()) {
+                auto& anomaly = *input.Frame()->anomaly;
+                auto heatmap_path = output_dir_ / inspection.sku_id
+                    / inspection.serial_number / "heatmap.ppm";
+                WriteHeatmapPpm(heatmap_path, anomaly.scores,
+                                anomaly.grid_h, anomaly.grid_w,
+                                518, 518);
             }
         }
-        return StageOutput::Make(std::move(*result));
+        return StageOutput::MakeWithContext(input, std::move(*result));
     }
     return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_StageTypeMismatch,
         "Export expects ReasoningResult input"});

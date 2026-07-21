@@ -58,11 +58,15 @@ auto CaptureStage::OnStop(Context&) -> Result<void> {
 }
 
 auto CaptureStage::Process(StageInput input) -> Result<StageOutput> {
+    if (auto* failure = input.GetIf<PipelineFailure>()) {
+        return StageOutput::MakeWithContext(input, std::move(*failure));
+    }
+
     // Passthrough: frames arrive via Pipeline::Submit (from camera callback or
     // external submission) into this stage's input queue. The Capture worker
     // dequeues and passes RawImage through to the downstream Preprocess stage.
     if (auto* img = input.GetIf<sai::image::RawImage>()) {
-        return StageOutput::Make(std::move(*img));
+        return StageOutput::MakeWithContext(input, std::move(*img));
     }
     return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_StageTypeMismatch,
         "Capture expects RawImage input"});

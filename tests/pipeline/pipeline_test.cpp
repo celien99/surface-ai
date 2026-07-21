@@ -149,5 +149,23 @@ TEST(PipelineFailureTest, StageRecoversAfterFailure) {
     }
 }
 
+TEST(PipelineFailureTest, FailureMessageCarriesFrameRoutingMetadata) {
+    PipelineFailure failure{
+        .code = ErrorCode::Inference_EngineExecutionFailed,
+        .stage_id = "inference",
+        .message = "engine unavailable",
+        .surface_id = "seat-42",
+        .position_id = 3,
+    };
+
+    auto message = StageOutput::Make(std::move(failure));
+    const auto* received = message.GetIf<PipelineFailure>();
+    ASSERT_NE(received, nullptr);
+    EXPECT_EQ(received->code, ErrorCode::Inference_EngineExecutionFailed);
+    EXPECT_EQ(received->stage_id, "inference");
+    EXPECT_EQ(received->surface_id, "seat-42");
+    EXPECT_EQ(received->position_id, 3);
+}
+
 } // namespace
 } // namespace sai::pipeline

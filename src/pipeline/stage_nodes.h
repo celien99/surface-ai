@@ -5,6 +5,7 @@
 // stage_factory.cpp includes this to construct stages by type.
 
 #include <functional>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <string>
@@ -149,6 +150,7 @@ public:
 
 private:
     std::string id_;
+    Context* ctx_ = nullptr;
     std::map<BankKey, std::shared_ptr<sai::detection::IDetector>> detectors_;
     std::shared_ptr<sai::detection::IDetector> default_detector_;
     bool stub_ = true;
@@ -180,11 +182,10 @@ public:
     auto Process(StageInput) -> Result<StageOutput> override;
     auto SetRuleEngine(std::shared_ptr<sai::rule::RuleEngine> re) -> void {
         rule_engine_ = std::move(re);
-        // Load rules now that engine is available (OnInitialize ran before setter)
-        if (!rule_file_.empty() && rule_engine_) {
-            (void)rule_engine_->LoadFromYAML(rule_file_);
-        }
         stub_ = false;
+    }
+    auto SetRuleFile(std::filesystem::path path) -> void {
+        rule_file_ = path.string();
     }
     auto SetKnowledgeGraph(std::shared_ptr<sai::knowledge::KnowledgeGraph> kg) -> void {
         kg_ = std::move(kg);
@@ -207,10 +208,10 @@ private:
     std::string rule_file_;
     bool stub_ = true;
 
-    // Create fact_builder_ once kg_ is available (vp_ is optional).
-    // OnInitialize runs before setters, so lazy-init is required.
+    // Setters are called before Start; construct only after both dependencies
+    // are present so the builder never captures a null VectorPath.
     auto TryCreateFactBuilder() -> void {
-        if (kg_ && !fact_builder_)
+        if (kg_ && vp_ && !fact_builder_)
             fact_builder_ = std::make_unique<sai::rule::FactBuilder>(kg_, vp_);
     }
 };
@@ -240,7 +241,7 @@ private:
 
 class ExportStage final : public IStageNode {
 public:
-    ExportStage(std::string id, YAML::Node config, Pipeline* pipeline);
+    ExportStage(std::string id, YAML::Node config);
     auto GetType() const noexcept -> StageType override;
     auto GetId() const -> std::string_view override;
     auto OnInitialize(Context&) -> Result<void> override;
@@ -255,7 +256,6 @@ private:
     std::string id_;
     std::shared_ptr<sai::io::IExporter> exporter_;
     std::filesystem::path output_dir_;
-    Pipeline* pipeline_ = nullptr;  // non-owning, for per-frame image side channel
     bool stub_ = true;
 };
 

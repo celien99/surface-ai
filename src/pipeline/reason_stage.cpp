@@ -25,15 +25,35 @@ auto ReasonStage::OnStart(Context&) -> Result<void> { return {}; }
 auto ReasonStage::OnStop(Context&) -> Result<void> { return {}; }
 
 auto ReasonStage::Process(StageInput input) -> Result<StageOutput> {
+    if (auto* failure = input.GetIf<PipelineFailure>()) {
+        return StageOutput::MakeWithContext(input, std::move(*failure));
+    }
+
     if (auto* eval_output = input.GetIf<RuleEvalOutput>()) {
         sai::reasoner::ReasoningResult result;
 
-        if (!stub_ && reasoner_) {
-            auto reason_result = reasoner_->Reason(
-                eval_output->facts, eval_output->rules);
-            if (!reason_result) return tl::make_unexpected(reason_result.error());
-            result = std::move(*reason_result);
+        if (stub_ || !reasoner_) {
+            return StageOutput::MakeWithContext(input, PipelineFailure{
+                .code = sai::ErrorCode::Reasoner_TreeLoadFailed,
+                .stage_id = id_,
+                .message = "ReasonStage: reasoner is not configured",
+                .surface_id = eval_output->surface_id,
+                .position_id = eval_output->position_id,
+            });
         }
+
+        auto reason_result = reasoner_->Reason(
+            eval_output->facts, eval_output->rules);
+        if (!reason_result) {
+            return StageOutput::MakeWithContext(input, PipelineFailure{
+                .code = reason_result.error().code,
+                .stage_id = id_,
+                .message = reason_result.error().message,
+                .surface_id = eval_output->surface_id,
+                .position_id = eval_output->position_id,
+            });
+        }
+        result = std::move(*reason_result);
 
         // Propagate surface routing metadata (multi-SKU / multi-position evolution)
         result.surface_id = eval_output->surface_id;
@@ -55,7 +75,7 @@ auto ReasonStage::Process(StageInput input) -> Result<StageOutput> {
             (void)sam2_segmenter_;  // reserved for M5 spatial reasoning
         }
 
-        return StageOutput::Make(std::move(result));
+        return StageOutput::MakeWithContext(input, std::move(result));
     }
     return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_StageTypeMismatch,
         "Reason expects RuleEvalOutput input"});

@@ -176,12 +176,22 @@ auto Pipeline::Start() -> Result<void> {
             ErrorCode::Pipeline_InvalidState,
             "Pipeline already running"});
     }
+    stop_source_ = std::stop_source{};
 
     // I2: call OnStart lifecycle hooks on each stage node
+    std::vector<IStageNode*> started_nodes;
+    started_nodes.reserve(nodes_.size());
     if (ctx_) {
         for (auto& [id, node] : nodes_) {
             auto result = node->OnStart(*ctx_);
-            if (!result.has_value()) return tl::make_unexpected(result.error());
+            if (!result.has_value()) {
+                for (auto it = started_nodes.rbegin(); it != started_nodes.rend(); ++it) {
+                    (void)(*it)->OnStop(*ctx_);
+                }
+                running_.store(false);
+                return tl::make_unexpected(result.error());
+            }
+            started_nodes.push_back(node.get());
         }
     }
 
@@ -227,6 +237,7 @@ auto Pipeline::Start() -> Result<void> {
                 while (true) {
                     auto input = DequeueInput(*stage_id_sp, st);
                     if (!input) break;  // stop requested AND queue drained
+                    auto frame_context = input->Frame();
 
                     // (A) Snapshot queue depth + accumulate dropped frames
                     auto qit = input_queues_.find(*stage_id_sp);
@@ -272,13 +283,20 @@ auto Pipeline::Start() -> Result<void> {
                     }
 
                     if (result.has_value()) {
-                        // Store SurfaceImage pixel snapshot for Export stage
-                        // (per-frame side channel). SurfaceImage is move-only
-                        // and forwarded to Inference, so we snapshot raw bytes.
+                        if (!frame_context) frame_context = result.value().Frame();
+                        result.value().AttachFrame(frame_context);
+
                         if (node_ptr->GetType() == StageType::Preprocess) {
-                            auto& variant = result.value();
-                            if (auto* si = variant.GetIf<sai::image::SurfaceImage>()) {
-                                SetFrameImage(*si);
+                            if (auto* si = result.value().GetIf<sai::image::SurfaceImage>()) {
+                                const auto& meta = si->Meta();
+                                const auto* data = si->Data();
+                                if (data && si->SizeBytes() > 0) {
+                                    if (frame_context) {
+                                        frame_context->image.emplace(
+                                            std::vector<std::uint8_t>(
+                                                data, data + si->SizeBytes()), meta);
+                                    }
+                                }
                             }
                         }
 
@@ -290,15 +308,19 @@ auto Pipeline::Start() -> Result<void> {
                             }
                         }
 
-                        // Capture anomaly scores as side channel for heatmap export
                         if (node_ptr->GetType() == StageType::Detect) {
                             auto& variant = result.value();
                             if (auto* dr = variant.GetIf<sai::detection::DetectionResult>()) {
                                 if (!dr->anomaly_map.scores.empty()) {
-                                    SetAnomalyScores(
-                                        dr->anomaly_map.scores,
-                                        dr->anomaly_map.grid_h,
-                                        dr->anomaly_map.grid_w);
+                                    // The frame context is copied with the
+                                    // message, so Export reads the same frame.
+                                    auto& frame = variant.MutableFrame();
+                                    if (frame) {
+                                        frame->anomaly = FrameAnomalySnapshot{
+                                            dr->anomaly_map.scores,
+                                            dr->anomaly_map.grid_h,
+                                            dr->anomaly_map.grid_w};
+                                    }
                                 }
                             }
                         }
@@ -307,26 +329,47 @@ auto Pipeline::Start() -> Result<void> {
                         if (result_callback_ && node_ptr->GetType() == StageType::Export) {
                             auto& variant = result.value();
                             if (auto* rr = variant.GetIf<sai::reasoner::ReasoningResult>()) {
-                                int frame_id = frame_counter_.fetch_add(
-                                    1, std::memory_order_relaxed);
+                                int frame_id = variant.Frame()
+                                    ? static_cast<int>(variant.Frame()->frame_id)
+                                    : -1;
                                 result_callback_(frame_id, *rr);
                             }
                         }
-                        metrics_ptr->frames_processed.fetch_add(
-                            1, std::memory_order_relaxed);
+                        if (result.value().GetIf<PipelineFailure>()) {
+                            metrics_ptr->frames_failed.fetch_add(
+                                1, std::memory_order_relaxed);
+                        } else {
+                            metrics_ptr->frames_processed.fetch_add(
+                                1, std::memory_order_relaxed);
+                        }
                         metrics_ptr->avg_latency_us = elapsed;
                         // Stop-token-aware enqueue: if shutdown was requested
                         // while we were processing, drop the output and exit.
                         if (!EnqueueOutputs(
                                 *stage_id_sp,
                                 std::make_unique<StageOutput>(
-                                    std::move(result).value()),
+                                    StageOutput::MakeWithContext(
+                                        frame_context,
+                                        std::move(result).value())),
                                 st)) {
                             break;  // stop requested, exit worker loop
                         }
                     } else {
                         metrics_ptr->frames_failed.fetch_add(
                             1, std::memory_order_relaxed);
+                        PipelineFailure failure_data{
+                            .code = result.error().code,
+                            .stage_id = *stage_id_sp,
+                            .message = result.error().message,
+                        };
+                        if (frame_context) {
+                            failure_data.surface_id = frame_context->surface_id;
+                            failure_data.position_id = frame_context->position_id;
+                        }
+                        auto failure = std::make_unique<StageOutput>(
+                            StageOutput::MakeWithContext(
+                                frame_context, std::move(failure_data)));
+                        if (!EnqueueOutputs(*stage_id_sp, std::move(failure), st)) break;
                     }
                 }
             });
@@ -354,8 +397,19 @@ auto Pipeline::Submit(sai::image::RawImage image) -> Result<void> {
             "No entry stage queue found for: " + entry_stage_id_});
     }
 
-    auto output = std::make_unique<StageOutput>(StageOutput::Make(std::move(image)));
-    it->second->PushBlocking(std::move(output));
+    const auto meta = image.Meta();
+    auto frame = std::make_shared<FrameContext>();
+    frame->frame_id = static_cast<std::uint64_t>(frame_counter_.fetch_add(
+        1, std::memory_order_relaxed));
+    frame->surface_id = meta.surface_id;
+    frame->position_id = meta.position_id;
+    auto output = std::make_unique<StageOutput>(
+        StageOutput::MakeWithContext(std::move(frame), std::move(image)));
+    if (!it->second->PushBlockingWithStop(std::move(output), stop_source_.get_token())) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Runtime_Cancelled,
+            "Pipeline stopped while submitting frame"});
+    }
     return {};
 }
 
@@ -553,35 +607,6 @@ auto Pipeline::SetResultCallback(ResultCallback callback) -> void {
 
 auto Pipeline::SetDetectionCallback(DetectionCallback callback) -> void {
     detection_callback_ = std::move(callback);
-}
-
-auto Pipeline::SetFrameImage(const sai::image::SurfaceImage& image) -> void {
-    // Snapshot pixel data — SurfaceImage is move-only, but we need a
-    // copy for Export stage that runs later in the pipeline.
-    const auto& meta = image.Meta();
-    const auto* data = image.Data();
-    std::size_t size = image.SizeBytes();
-    if (data && size > 0) {
-        std::vector<std::uint8_t> snapshot(data, data + size);
-        current_frame_image_.emplace(std::move(snapshot), meta);
-    }
-}
-
-auto Pipeline::TakeFrameImage() -> std::optional<FrameImageSnapshot> {
-    auto result = std::move(current_frame_image_);
-    current_frame_image_.reset();
-    return result;
-}
-
-auto Pipeline::SetAnomalyScores(std::vector<float> scores,
-                                 std::size_t grid_h, std::size_t grid_w) -> void {
-    current_anomaly_.emplace(AnomalySnapshot{std::move(scores), grid_h, grid_w});
-}
-
-auto Pipeline::TakeAnomalyScores() -> std::optional<AnomalySnapshot> {
-    auto result = std::move(current_anomaly_);
-    current_anomaly_.reset();
-    return result;
 }
 
 auto Pipeline::GetStage(std::string_view id) const -> IStageNode* {

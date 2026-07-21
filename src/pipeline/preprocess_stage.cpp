@@ -51,7 +51,12 @@ auto PreprocessStage::OnStart(Context&) -> Result<void> { return {}; }
 auto PreprocessStage::OnStop(Context&) -> Result<void> { return {}; }
 
 auto PreprocessStage::Process(StageInput input) -> Result<StageOutput> {
+    if (auto* failure = input.GetIf<PipelineFailure>()) {
+        return StageOutput::MakeWithContext(input, std::move(*failure));
+    }
+
     if (auto* img = input.GetIf<sai::image::RawImage>()) {
+        const auto meta = img->Meta();
         if (!stub_ && chain_) {
             auto raw = std::make_unique<sai::image::RawImage>(std::move(*img));
             auto result = chain_(std::move(raw));
@@ -62,24 +67,31 @@ auto PreprocessStage::Process(StageInput input) -> Result<StageOutput> {
                 auto* surf = dynamic_cast<sai::image::SurfaceImage*>(result->get());
                 if (surf) {
                     result->release();  // transfer ownership
-                    return StageOutput::Make(std::move(*surf));
+                    return StageOutput::MakeWithContext(input, std::move(*surf));
                 }
                 // Fallback: wrap buffer as SurfaceImage
                 auto meta = (*result)->Meta();
                 const auto* data = (*result)->Data();
                 auto size = (*result)->SizeBytes();
                 std::vector<std::uint8_t> buffer(data, data + size);
-                return StageOutput::Make(
+                return StageOutput::MakeWithContext(input,
                     sai::image::SurfaceImage::FromOwnedBuffer(std::move(buffer), meta));
             }
-            if (!result) return tl::make_unexpected(result.error());
+            if (!result) {
+                return StageOutput::MakeWithContext(input, PipelineFailure{
+                    .code = result.error().code,
+                    .stage_id = id_,
+                    .message = result.error().message,
+                    .surface_id = meta.surface_id,
+                    .position_id = meta.position_id,
+                });
+            }
         }
         // Stub / fallback: wrap RawImage buffer as SurfaceImage
-        auto meta = img->Meta();
         const auto* data = img->Data();
         auto size = img->SizeBytes();
         std::vector<std::uint8_t> buffer(data, data + size);
-        return StageOutput::Make(
+        return StageOutput::MakeWithContext(input,
             sai::image::SurfaceImage::FromOwnedBuffer(std::move(buffer), meta));
     }
     return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_StageTypeMismatch,
