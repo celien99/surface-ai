@@ -23,11 +23,10 @@ auto NormalityProfile::Compute(const FeatureBank& bank,
     auto all_vecs = bank.ExtractAllVectors();
     std::vector<float> nn_dists(num);
 
-    // 对每个 coreset 向量做 self-query（k+1 跳过自身）
     auto search_k = std::min<std::size_t>(k + 1, num);
+    auto dists = bank.Search(all_vecs.data(), num, search_k);
     for (std::size_t i = 0; i < num; ++i) {
-        auto dists = bank.Search(all_vecs.data() + i * dim, 1, search_k);
-        if (!dists.empty()) nn_dists[i] = dists.back();  // 第 k 近邻（k=search_k-1）
+        nn_dists[i] = dists[i * search_k + search_k - 1];
     }
 
     std::sort(nn_dists.begin(), nn_dists.end());
@@ -91,12 +90,19 @@ auto NormalityProfile::ComputeFast(const FeatureBank& bank,
     auto stride = num / actual_samples;
     if (stride < 1) stride = 1;
 
-    auto search_k = std::min<std::size_t>(k + 1, num);
+    std::vector<float> sampled_vectors;
+    sampled_vectors.reserve(actual_samples * dim);
     for (std::size_t i = 0; i < actual_samples; ++i) {
         auto idx = i * stride;
         if (idx >= num) idx = num - 1;
-        auto dists = bank.Search(all_vecs.data() + idx * dim, 1, search_k);
-        if (!dists.empty()) nn_dists[i] = dists.back();
+        sampled_vectors.insert(sampled_vectors.end(),
+                                all_vecs.data() + idx * dim,
+                                all_vecs.data() + (idx + 1) * dim);
+    }
+    auto search_k = std::min<std::size_t>(k + 1, num);
+    auto dists = bank.Search(sampled_vectors.data(), actual_samples, search_k);
+    for (std::size_t i = 0; i < actual_samples; ++i) {
+        nn_dists[i] = dists[i * search_k + search_k - 1];
     }
 
     std::sort(nn_dists.begin(), nn_dists.end());

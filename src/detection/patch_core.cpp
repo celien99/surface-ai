@@ -60,11 +60,10 @@ auto ComputeAdaptiveThreshold(const FeatureBank& bank,
     std::vector<float> nn_dists(num_samples);
 
     auto search_k = std::min<std::size_t>(k + 1, num_samples);
+    auto dists = bank.Search(all_vecs.data(), num_samples, search_k);
     float max_self_dist = 0.0F;
     for (std::size_t i = 0; i < num_samples; ++i) {
-        auto dists = bank.Search(all_vecs.data() + i * dim, 1, search_k);
-        if (dists.empty()) continue;
-        nn_dists[i] = dists.back();  // 跳过自身（d=0），取最远邻
+        nn_dists[i] = dists[i * search_k + search_k - 1];
         if (nn_dists[i] > max_self_dist) max_self_dist = nn_dists[i];
     }
 
