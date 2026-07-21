@@ -138,6 +138,10 @@ auto PatchCore::Initialize(sai::Context& /*ctx*/) noexcept -> Result<void> {
                     auto whitened = ApplyWhitening(all_vecs.data(), num_samples,
                                                     embed_dim, wp);
                     feature_bank_->Rebuild(whitened.data(), num_samples, total_k);
+#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
+                    auto gpu_result = feature_bank_->ToGpu();
+                    if (!gpu_result) return tl::make_unexpected(gpu_result.error());
+#endif
                     whitening_params_ = std::move(wp);
                     return {};
                 });
