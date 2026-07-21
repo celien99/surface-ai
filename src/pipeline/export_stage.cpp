@@ -190,6 +190,12 @@ auto ExportStage::Process(StageInput input) -> Result<StageOutput> {
                     + export_result.error().message;
                 result->error_code = static_cast<std::uint32_t>(
                     export_result.error().code);
+
+                io::InspectionResult failure_inspection = inspection;
+                failure_inspection.verdict = result->verdict;
+                failure_inspection.recommendation = result->recommendation;
+                failure_inspection.error_code = result->error_code;
+                (void)exporter_->Export(failure_inspection, output_dir_, nullptr);
             }
 
             // Write anomaly heatmap if available
