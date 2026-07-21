@@ -275,7 +275,8 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
                 if (!patch_cores.empty()) {
                     for (auto& [key, pc] : patch_cores) {
                         auto profile_path = patch_core_paths[key];
-                        profile_path.replace_extension(".profile.yaml");
+                        profile_path = std::filesystem::path(
+                            profile_path.string() + ".profile.yaml");
                         std::optional<detection::NormalityProfile> profile;
                         if (std::filesystem::exists(profile_path)) {
                             auto r = detection::NormalityProfile::LoadFromYaml(profile_path);
@@ -294,8 +295,8 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
                         }
                     }
                 } else if (feature_bank) {
-                    auto profile_path = std::filesystem::path(cli.coreset_path)
-                        .replace_extension(".profile.yaml");
+                    auto profile_path = std::filesystem::path(
+                        cli.coreset_path + std::string(".profile.yaml"));
                     std::optional<detection::NormalityProfile> profile;
                     if (std::filesystem::exists(profile_path)) {
                         auto r = detection::NormalityProfile::LoadFromYaml(profile_path);
