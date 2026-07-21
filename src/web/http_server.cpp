@@ -64,7 +64,7 @@ void HttpServer::Start() {
                     stage["id"] = m.stage_id;
                     stage["frames_processed"] = m.frames_processed;
                     stage["frames_failed"] = m.frames_failed;
-                    stage["avg_latency_us"] = m.avg_latency_us;
+                    stage["avg_latency_us"] = m.avg_latency_us.load();
                     stage["queue_depth"] = m.queue_depth;
                     j.push_back(stage);
                 }
@@ -235,7 +235,7 @@ void HttpServer::UpdateMetrics(const std::vector<sai::pipeline::StageMetrics>& m
         snap.stage_id = m.stage_id;
         snap.frames_processed = m.frames_processed.load();
         snap.frames_failed = m.frames_failed.load();
-        snap.avg_latency_us = m.avg_latency_us;
+        snap.avg_latency_us = m.avg_latency_us.load();
         snap.queue_depth = m.queue_depth();
         metrics_.push_back(std::move(snap));
     }

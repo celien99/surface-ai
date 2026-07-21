@@ -11,8 +11,8 @@ void StageMetricsObject::UpdateFromStageMetrics(const sai::pipeline::StageMetric
     frames_failed_ = static_cast<int>(m.frames_failed.load());
     frames_dropped_ = static_cast<int>(m.frames_dropped.load());
     queue_depth_ = static_cast<int>(m.queue_depth());
-    avg_latency_ms_ = m.avg_latency_us / 1000.0;
-    p99_latency_ms_ = m.p99_latency_us / 1000.0;
+    avg_latency_ms_ = m.avg_latency_us.load() / 1000.0;
+    p99_latency_ms_ = m.p99_latency_us.load() / 1000.0;
     emit metricsChanged();
 }
 

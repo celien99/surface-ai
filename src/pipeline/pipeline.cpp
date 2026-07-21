@@ -292,7 +292,8 @@ auto Pipeline::Start() -> Result<void> {
                             static_cast<double>(reservoir_count) * 0.99);
                         if (p99_idx >= reservoir_count)
                             p99_idx = reservoir_count - 1;
-                        metrics_ptr->p99_latency_us = sorted[p99_idx];
+                        metrics_ptr->p99_latency_us.store(
+                            sorted[p99_idx], std::memory_order_relaxed);
                     }
 
                     if (result.has_value()) {
@@ -355,7 +356,8 @@ auto Pipeline::Start() -> Result<void> {
                             metrics_ptr->frames_processed.fetch_add(
                                 1, std::memory_order_relaxed);
                         }
-                        metrics_ptr->avg_latency_us = elapsed;
+                        metrics_ptr->avg_latency_us.store(
+                            elapsed, std::memory_order_relaxed);
                         // Stop-token-aware enqueue: if shutdown was requested
                         // while we were processing, drop the output and exit.
                         auto pushed = EnqueueOutputs(
@@ -634,8 +636,8 @@ auto Pipeline::Metrics() const -> std::vector<StageMetrics> {
         sm.frames_processed.store(m.frames_processed.load());
         sm.frames_failed.store(m.frames_failed.load());
         sm.frames_dropped.store(m.frames_dropped.load());
-        sm.avg_latency_us = m.avg_latency_us;
-        sm.p99_latency_us = m.p99_latency_us;
+        sm.avg_latency_us.store(m.avg_latency_us.load());
+        sm.p99_latency_us.store(m.p99_latency_us.load());
         sm.set_queue_depth(m.queue_depth());
         result.push_back(std::move(sm));
     }

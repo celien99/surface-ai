@@ -61,10 +61,9 @@ struct StageMetrics {
     std::atomic<size_t> frames_dropped{0};
 
     // Per-frame latency (microseconds) of the most recently processed frame.
-    // Written by the worker loop, read by Metrics(). Non-atomic double is
-    // safe for this single-writer / eventual-read pattern.
-    double avg_latency_us = 0.0;
-    double p99_latency_us = 0.0;
+    // Stage pools may have multiple workers, so both values are atomic.
+    std::atomic<double> avg_latency_us{0.0};
+    std::atomic<double> p99_latency_us{0.0};
 
     StageMetrics() = default;
     StageMetrics(std::string id, StageType t)
@@ -79,8 +78,8 @@ struct StageMetrics {
         , frames_processed(other.frames_processed.load())
         , frames_failed(other.frames_failed.load())
         , frames_dropped(other.frames_dropped.load())
-        , avg_latency_us(other.avg_latency_us)
-        , p99_latency_us(other.p99_latency_us)
+        , avg_latency_us(other.avg_latency_us.load())
+        , p99_latency_us(other.p99_latency_us.load())
         , queue_depth_(other.queue_depth_.load()) {}
 
     StageMetrics& operator=(StageMetrics&& other) noexcept {
@@ -90,8 +89,8 @@ struct StageMetrics {
             frames_processed.store(other.frames_processed.load());
             frames_failed.store(other.frames_failed.load());
             frames_dropped.store(other.frames_dropped.load());
-            avg_latency_us = other.avg_latency_us;
-            p99_latency_us = other.p99_latency_us;
+            avg_latency_us.store(other.avg_latency_us.load());
+            p99_latency_us.store(other.p99_latency_us.load());
             queue_depth_.store(other.queue_depth_.load());
         }
         return *this;
