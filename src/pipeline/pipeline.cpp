@@ -317,20 +317,6 @@ auto Pipeline::Start() -> Result<void> {
                         if (!frame_context) frame_context = result.value().Frame();
                         result.value().AttachFrame(frame_context);
 
-                        if (node_ptr->GetType() == StageType::Preprocess) {
-                            if (auto* si = result.value().GetIf<sai::image::SurfaceImage>()) {
-                                const auto& meta = si->Meta();
-                                const auto* data = si->Data();
-                                if (data && si->SizeBytes() > 0) {
-                                    if (frame_context) {
-                                        frame_context->image.emplace(
-                                            std::vector<std::uint8_t>(
-                                                data, data + si->SizeBytes()), meta);
-                                    }
-                                }
-                            }
-                        }
-
                         // M7: invoke detection callback for live defect overlay
                         if (detection_callback_ && node_ptr->GetType() == StageType::Detect) {
                             auto& variant = result.value();

@@ -172,17 +172,13 @@ auto ExportStage::Process(StageInput input) -> Result<StageOutput> {
                 inspection.defects.push_back(std::move(defect));
             }
 
-            // Reconstruct the frame image captured in the shared frame context.
-            std::optional<sai::image::SurfaceImage> frame_image;
+            const sai::image::SurfaceImage* frame_image = nullptr;
             if (input.Frame() && input.Frame()->image.has_value()) {
-                auto& snapshot = *input.Frame()->image;
-                frame_image = sai::image::SurfaceImage::FromOwnedBuffer(
-                    std::move(snapshot.first), snapshot.second);
+                frame_image = &*input.Frame()->image;
             }
 
             auto export_result = exporter_->Export(
-                inspection, output_dir_,
-                frame_image.has_value() ? &*frame_image : nullptr);
+                inspection, output_dir_, frame_image);
             if (!export_result) {
                 result->verdict = "RECHECK";
                 result->confidence = 0.0;

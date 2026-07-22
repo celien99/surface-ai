@@ -97,6 +97,10 @@ auto InferenceStage::Process(StageInput input) -> Result<StageOutput> {
             embedding.SetPositionId(img_meta.position_id);
         }
 
+        if (auto frame = input.Frame()) {
+            frame->image.emplace(std::move(*img));
+        }
+
         return StageOutput::MakeWithContext(input, std::move(embedding));
     }
     return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_StageTypeMismatch,

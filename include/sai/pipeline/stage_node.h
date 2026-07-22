@@ -39,8 +39,6 @@ inline constexpr int kStageData_RuleEvalOutput  = 4;
 inline constexpr int kStageData_ReasoningResult = 6;
 inline constexpr int kStageData_PipelineFailure = 7;
 
-using FrameImageSnapshot = std::pair<std::vector<std::uint8_t>, sai::image::ImageMeta>;
-
 struct FrameAnomalySnapshot {
     std::vector<float> scores;
     std::size_t grid_h = 0;
@@ -51,7 +49,7 @@ struct FrameContext {
     std::uint64_t frame_id = 0;
     std::string surface_id;
     std::uint16_t position_id = 0;
-    std::optional<FrameImageSnapshot> image;
+    std::optional<sai::image::SurfaceImage> image;
     std::optional<FrameAnomalySnapshot> anomaly;
     std::shared_ptr<detail::FrameCompletionToken> completion;
 };

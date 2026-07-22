@@ -106,6 +106,24 @@ TEST(FrameCompletionTest, LastFrameReferenceCompletesLifecycle) {
     EXPECT_TRUE(state->WaitUntil(std::chrono::steady_clock::now()));
 }
 
+TEST(FrameContextTest, OwnsMovedSurfaceImageWithoutSnapshotCopy) {
+    auto image = SurfaceImage::FromOwnedBuffer(
+        std::vector<std::uint8_t>{4, 5, 6},
+        sai::image::ImageMeta{
+            .width = 1,
+            .height = 1,
+            .channels = 3,
+            .pixel_format = sai::image::PixelFormat::RGB8,
+        });
+    auto* original = image.Data();
+
+    FrameContext frame;
+    frame.image.emplace(std::move(image));
+
+    ASSERT_TRUE(frame.image.has_value());
+    EXPECT_EQ(frame.image->Data(), original);
+}
+
 TEST(IStageNodeTest, GetTypeAndId) {
     MockStage stage("my_id", StageType::Reason);
     EXPECT_EQ(stage.GetType(), StageType::Reason);
