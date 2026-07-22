@@ -188,6 +188,13 @@ public:
     auto GetStage(std::string_view id) const -> IStageNode*;
 
 private:
+    enum class State {
+        Stopped,
+        Starting,
+        Running,
+        Draining,
+    };
+
     Pipeline() = default;
 
     // DequeueInput: pop from the stage's input queue. When stop_token is
@@ -220,8 +227,7 @@ private:
     detail::StringMap<StageMetrics> metrics_;
     std::mutex admission_mutex_;
     std::stop_source stop_source_;
-    std::atomic<bool> running_{false};
-    std::atomic<bool> draining_{false};
+    State state_ = State::Stopped;
     std::shared_ptr<detail::FrameCompletionState> frame_completion_ =
         std::make_shared<detail::FrameCompletionState>();
     ResultCallback result_callback_;

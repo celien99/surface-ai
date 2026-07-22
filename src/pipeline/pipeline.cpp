@@ -197,15 +197,17 @@ auto Pipeline::LoadFromYAML(std::filesystem::path yaml_path, Context& ctx)
 // =========================================================================
 
 auto Pipeline::Start() -> Result<void> {
-    std::unique_lock admission_lock(admission_mutex_);
-    if (running_.exchange(true)) {
-        return tl::make_unexpected(ErrorInfo{
-            ErrorCode::Pipeline_InvalidState,
-            "Pipeline already running"});
+    {
+        std::lock_guard admission_lock(admission_mutex_);
+        if (state_ != State::Stopped) {
+            return tl::make_unexpected(ErrorInfo{
+                ErrorCode::Pipeline_InvalidState,
+                "Pipeline is not stopped"});
+        }
+        state_ = State::Starting;
+        stop_source_ = std::stop_source{};
+        ingress_stop_source_ = std::stop_source{};
     }
-    stop_source_ = std::stop_source{};
-    ingress_stop_source_ = std::stop_source{};
-    draining_.store(false);
 
     // I2: call OnStart lifecycle hooks on each stage node
     std::vector<IStageNode*> started_nodes;
@@ -217,8 +219,8 @@ auto Pipeline::Start() -> Result<void> {
                 for (auto it = started_nodes.rbegin(); it != started_nodes.rend(); ++it) {
                     (void)(*it)->OnStop(*ctx_);
                 }
-                running_.store(false);
-                draining_.store(false);
+                std::lock_guard admission_lock(admission_mutex_);
+                state_ = State::Stopped;
                 return tl::make_unexpected(result.error());
             }
             started_nodes.push_back(node.get());
@@ -413,6 +415,11 @@ auto Pipeline::Start() -> Result<void> {
         }  // for each thread in this stage's pool
     }
 
+    {
+        std::lock_guard admission_lock(admission_mutex_);
+        state_ = State::Running;
+    }
+
     return {};
 }
 
@@ -425,15 +432,10 @@ auto Pipeline::Submit(sai::image::RawImage image) -> Result<void> {
     std::stop_token stop_token;
     {
         std::unique_lock admission_lock(admission_mutex_);
-        if (!running_.load()) {
+        if (state_ != State::Running) {
             return tl::make_unexpected(ErrorInfo{
                 ErrorCode::Pipeline_InvalidState,
-                "Pipeline not running — call Start() first"});
-        }
-        if (draining_.load()) {
-            return tl::make_unexpected(ErrorInfo{
-                ErrorCode::Pipeline_InvalidState,
-                "Pipeline is draining"});
+                "Pipeline is not accepting frames"});
         }
 
         auto it = input_queues_.find(entry_stage_id_);
@@ -542,23 +544,19 @@ auto Pipeline::BuildQueueWiring(const PipelineConfig& config) -> Result<void> {
 
 auto Pipeline::Drain() -> Result<void> {
     {
-        std::unique_lock admission_lock(admission_mutex_);
-        if (!running_.load()) {
+        std::lock_guard admission_lock(admission_mutex_);
+        if (state_ != State::Running) {
             return tl::make_unexpected(ErrorInfo{
                 ErrorCode::Pipeline_InvalidState,
                 "Pipeline not running"});
         }
-        if (draining_.exchange(true)) {
-            return tl::make_unexpected(ErrorInfo{
-                ErrorCode::Pipeline_InvalidState,
-                "Pipeline is already draining"});
-        }
+        state_ = State::Draining;
     }
 
     auto result = WaitForIdle();
     {
-        std::unique_lock admission_lock(admission_mutex_);
-        draining_.store(false);
+        std::lock_guard admission_lock(admission_mutex_);
+        state_ = State::Running;
     }
     return result;
 }
@@ -578,9 +576,14 @@ auto Pipeline::WaitForIdle() -> Result<void> {
 
 auto Pipeline::Stop() -> Result<void> {
     {
-        std::unique_lock admission_lock(admission_mutex_);
-        running_.store(false);
-        draining_.store(true);
+        std::lock_guard admission_lock(admission_mutex_);
+        if (state_ == State::Stopped) return {};
+        if (state_ != State::Running) {
+            return tl::make_unexpected(ErrorInfo{
+                ErrorCode::Pipeline_InvalidState,
+                "Pipeline is not running"});
+        }
+        state_ = State::Draining;
     }
 
     ingress_stop_source_.request_stop();
@@ -605,11 +608,6 @@ auto Pipeline::Stop() -> Result<void> {
         while (q->Depth() > 0) q->TryPop();
     }
 
-    {
-        std::unique_lock admission_lock(admission_mutex_);
-        draining_.store(false);
-    }
-
     // I2: call OnStop lifecycle hooks in reverse order
     if (ctx_) {
         std::vector<std::string> reverse_ids;
@@ -617,8 +615,17 @@ auto Pipeline::Stop() -> Result<void> {
         for (auto& [id, node] : nodes_) reverse_ids.push_back(id);
         for (auto it = reverse_ids.rbegin(); it != reverse_ids.rend(); ++it) {
             auto result = nodes_[*it]->OnStop(*ctx_);
-            if (!result.has_value()) return tl::make_unexpected(result.error());
+            if (!result.has_value()) {
+                std::lock_guard admission_lock(admission_mutex_);
+                state_ = State::Stopped;
+                return tl::make_unexpected(result.error());
+            }
         }
+    }
+
+    {
+        std::lock_guard admission_lock(admission_mutex_);
+        state_ = State::Stopped;
     }
 
     return drain_result;

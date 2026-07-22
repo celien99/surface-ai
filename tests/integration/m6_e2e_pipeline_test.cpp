@@ -82,6 +82,26 @@ TEST(M6E2EPipelineTest, LoadPipelineFromYaml) {
     }
 }
 
+TEST(M6E2EPipelineTest, RejectsSubmissionBeforeStart) {
+    auto yaml_path = WritePipelineYaml();
+    sai::Context ctx;
+    auto pipeline = Pipeline::LoadFromYAML(yaml_path, ctx);
+    ASSERT_TRUE(pipeline.has_value());
+
+    auto image = sai::image::RawImage::FromOwnedBuffer(
+        std::vector<std::uint8_t>{1},
+        sai::image::ImageMeta{
+            .width = 1,
+            .height = 1,
+            .channels = 1,
+            .pixel_format = sai::image::PixelFormat::Mono8,
+        });
+    auto result = (*pipeline)->Submit(std::move(image));
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, sai::ErrorCode::Pipeline_InvalidState);
+}
+
 TEST(M6E2EPipelineTest, InvalidYamlReturnsError) {
     const char* bad_yaml = R"(
 pipeline:
