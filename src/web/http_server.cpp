@@ -64,7 +64,7 @@ void HttpServer::Start() {
                     stage["id"] = m.stage_id;
                     stage["frames_processed"] = m.frames_processed;
                     stage["frames_failed"] = m.frames_failed;
-                    stage["avg_latency_us"] = m.avg_latency_us.load();
+                    stage["avg_latency_us"] = m.avg_latency_us;
                     stage["queue_depth"] = m.queue_depth;
                     j.push_back(stage);
                 }
