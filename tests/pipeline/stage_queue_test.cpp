@@ -181,5 +181,22 @@ TEST(StageQueueTest, DropOldestRepeatedly) {
     EXPECT_EQ((*q)->TryPop(), nullptr);
 }
 
+TEST(StageQueueTest, DropOldestDestroysDiscardedItemImmediately) {
+    struct Tracked {
+        explicit Tracked(std::shared_ptr<std::atomic<int>> destroyed)
+            : destroyed(std::move(destroyed)) {}
+        ~Tracked() { destroyed->fetch_add(1); }
+        std::shared_ptr<std::atomic<int>> destroyed;
+    };
+
+    auto destroyed = std::make_shared<std::atomic<int>>(0);
+    auto q = StageQueue<Tracked>::Create(1, BackpressurePolicy::DropOldest);
+    ASSERT_TRUE(q.has_value());
+
+    EXPECT_TRUE((*q)->TryPush(std::make_unique<Tracked>(destroyed)));
+    EXPECT_TRUE((*q)->TryPush(std::make_unique<Tracked>(destroyed)));
+    EXPECT_EQ(destroyed->load(), 1);
+}
+
 }  // namespace
 }  // namespace sai::pipeline

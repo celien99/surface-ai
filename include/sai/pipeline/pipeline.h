@@ -1,6 +1,8 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -108,6 +110,32 @@ private:
 
 namespace detail {
 
+class FrameCompletionState final {
+public:
+    auto Accept() -> void;
+    auto Complete() -> void;
+    [[nodiscard]] auto WaitUntil(std::chrono::steady_clock::time_point deadline)
+        -> bool;
+
+private:
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    std::size_t outstanding_ = 0;
+};
+
+class FrameCompletionToken final {
+public:
+    explicit FrameCompletionToken(
+        std::shared_ptr<FrameCompletionState> state) noexcept;
+    ~FrameCompletionToken();
+
+    FrameCompletionToken(const FrameCompletionToken&) = delete;
+    auto operator=(const FrameCompletionToken&) -> FrameCompletionToken& = delete;
+
+private:
+    std::shared_ptr<FrameCompletionState> state_;
+};
+
 // Transparent hash for heterogeneous lookup: find(std::string_view) on
 // unordered_map<std::string, T> without constructing a temporary std::string.
 struct TransparentStringHash {
@@ -194,10 +222,8 @@ private:
     std::stop_source stop_source_;
     std::atomic<bool> running_{false};
     std::atomic<bool> draining_{false};
-    std::atomic<std::size_t> submitting_frames_{0};
-    std::atomic<std::size_t> in_flight_frames_{0};
-    std::atomic<std::size_t> dequeueing_workers_{0};
-    std::atomic<std::size_t> waiting_workers_{0};
+    std::shared_ptr<detail::FrameCompletionState> frame_completion_ =
+        std::make_shared<detail::FrameCompletionState>();
     ResultCallback result_callback_;
     DetectionCallback detection_callback_;
     std::atomic<int> frame_counter_{0};

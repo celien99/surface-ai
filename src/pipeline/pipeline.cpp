@@ -4,7 +4,6 @@
 #include <array>
 #include <chrono>
 #include <set>
-#include <thread>
 
 #include <sai/core/error.h>
 #include <sai/core/registry.h>
@@ -29,6 +28,33 @@ constexpr auto kDrainTimeout = std::chrono::seconds(30);
 }  // namespace
 
 namespace sai::pipeline {
+
+auto detail::FrameCompletionState::Accept() -> void {
+    std::lock_guard lock(mutex_);
+    ++outstanding_;
+}
+
+auto detail::FrameCompletionState::Complete() -> void {
+    std::lock_guard lock(mutex_);
+    --outstanding_;
+    if (outstanding_ == 0) cv_.notify_all();
+}
+
+auto detail::FrameCompletionState::WaitUntil(
+    std::chrono::steady_clock::time_point deadline) -> bool {
+    std::unique_lock lock(mutex_);
+    return cv_.wait_until(lock, deadline, [this] { return outstanding_ == 0; });
+}
+
+detail::FrameCompletionToken::FrameCompletionToken(
+    std::shared_ptr<FrameCompletionState> state) noexcept
+    : state_(std::move(state)) {
+    state_->Accept();
+}
+
+detail::FrameCompletionToken::~FrameCompletionToken() {
+    state_->Complete();
+}
 
 // ---------------------------------------------------------------------------
 // Concrete ErasedStageQueue backed by StageQueue<StageOutput>
@@ -180,10 +206,6 @@ auto Pipeline::Start() -> Result<void> {
     stop_source_ = std::stop_source{};
     ingress_stop_source_ = std::stop_source{};
     draining_.store(false);
-    submitting_frames_.store(0, std::memory_order_relaxed);
-    in_flight_frames_.store(0, std::memory_order_relaxed);
-    dequeueing_workers_.store(0, std::memory_order_relaxed);
-    waiting_workers_.store(0, std::memory_order_relaxed);
 
     // I2: call OnStart lifecycle hooks on each stage node
     std::vector<IStageNode*> started_nodes;
@@ -241,14 +263,7 @@ auto Pipeline::Start() -> Result<void> {
                 std::size_t reservoir_count = 0;
 
                 while (true) {
-                    waiting_workers_.fetch_add(1, std::memory_order_acq_rel);
-                    dequeueing_workers_.fetch_add(1, std::memory_order_acq_rel);
                     auto input = DequeueInput(*stage_id_sp, st);
-                    if (input) {
-                        in_flight_frames_.fetch_add(1, std::memory_order_acq_rel);
-                    }
-                    dequeueing_workers_.fetch_sub(1, std::memory_order_acq_rel);
-                    waiting_workers_.fetch_sub(1, std::memory_order_acq_rel);
                     if (!input) break;  // stop requested AND queue drained
                     auto frame_context = input->Frame();
 
@@ -372,7 +387,6 @@ auto Pipeline::Start() -> Result<void> {
                                 *stage_id_sp,
                                 std::make_unique<StageOutput>(std::move(output)),
                                 st);
-                        in_flight_frames_.fetch_sub(1, std::memory_order_acq_rel);
                         if (!pushed) {
                             break;  // stop requested, exit worker loop
                         }
@@ -392,7 +406,6 @@ auto Pipeline::Start() -> Result<void> {
                             StageOutput::MakeWithContext(
                                 frame_context, std::move(failure_data)));
                         auto pushed = EnqueueOutputs(*stage_id_sp, std::move(failure), st);
-                        in_flight_frames_.fetch_sub(1, std::memory_order_acq_rel);
                         if (!pushed) break;
                     }
                 }
@@ -436,15 +449,15 @@ auto Pipeline::Submit(sai::image::RawImage image) -> Result<void> {
             1, std::memory_order_relaxed));
         frame->surface_id = meta.surface_id;
         frame->position_id = meta.position_id;
+        frame->completion = std::make_shared<detail::FrameCompletionToken>(
+            frame_completion_);
         queue = it->second.get();
         stop_token = ingress_stop_source_.get_token();
-        submitting_frames_.fetch_add(1, std::memory_order_acq_rel);
         auto output = std::make_unique<StageOutput>(
             StageOutput::MakeWithContext(std::move(frame), std::move(image)));
 
         admission_lock.unlock();
         auto pushed = queue->PushBlockingWithStop(std::move(output), stop_token);
-        submitting_frames_.fetch_sub(1, std::memory_order_acq_rel);
         if (pushed) return {};
     }
 
@@ -551,42 +564,8 @@ auto Pipeline::Drain() -> Result<void> {
 }
 
 auto Pipeline::WaitForIdle() -> Result<void> {
-
     auto deadline = std::chrono::steady_clock::now() + kDrainTimeout;
-
-    while (std::chrono::steady_clock::now() < deadline) {
-        bool all_empty = true;
-        for (auto& [id, q] : input_queues_) {
-            if (q->Depth() > 0) {
-                all_empty = false;
-                break;
-            }
-        }
-        if (all_empty
-            && submitting_frames_.load(std::memory_order_acquire) == 0
-            && in_flight_frames_.load(std::memory_order_acquire) == 0
-            && dequeueing_workers_.load(std::memory_order_acquire) == 0
-            && waiting_workers_.load(std::memory_order_acquire)
-                == worker_threads_.size()) {
-            std::unique_lock admission_lock(admission_mutex_);
-            bool still_empty = true;
-            for (auto& [id, q] : input_queues_) {
-                if (q->Depth() > 0) {
-                    still_empty = false;
-                    break;
-                }
-            }
-            if (still_empty
-                && submitting_frames_.load(std::memory_order_acquire) == 0
-                && in_flight_frames_.load(std::memory_order_acquire) == 0
-                && dequeueing_workers_.load(std::memory_order_acquire) == 0
-                && waiting_workers_.load(std::memory_order_acquire)
-                    == worker_threads_.size()) {
-                return {};
-            }
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    if (frame_completion_->WaitUntil(deadline)) return {};
 
     return tl::make_unexpected(ErrorInfo{
         ErrorCode::Runtime_Cancelled,

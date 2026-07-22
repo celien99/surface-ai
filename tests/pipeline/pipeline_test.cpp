@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <sai/pipeline/pipeline.h>
 #include <sai/pipeline/stage_node.h>
 #include <sai/core/context.h>
 
@@ -93,6 +94,16 @@ TEST(StageDataTest, MovingStageOutputPreservesConcreteTypeAndFrame) {
     EXPECT_NE(forwarded.GetIf<RawImage>(), nullptr);
     ASSERT_NE(forwarded.Frame(), nullptr);
     EXPECT_EQ(forwarded.Frame()->frame_id, 17U);
+}
+
+TEST(FrameCompletionTest, LastFrameReferenceCompletesLifecycle) {
+    auto state = std::make_shared<detail::FrameCompletionState>();
+    auto frame = std::make_shared<FrameContext>();
+    frame->completion = std::make_shared<detail::FrameCompletionToken>(state);
+
+    EXPECT_FALSE(state->WaitUntil(std::chrono::steady_clock::now()));
+    frame.reset();
+    EXPECT_TRUE(state->WaitUntil(std::chrono::steady_clock::now()));
 }
 
 TEST(IStageNodeTest, GetTypeAndId) {

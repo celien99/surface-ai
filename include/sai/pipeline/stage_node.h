@@ -28,6 +28,8 @@ namespace sai::pipeline { struct RuleEvalOutput; }
 
 namespace sai::pipeline {
 
+namespace detail { class FrameCompletionToken; }
+
 // ── Type tag constants (mapped from StageType → data flow ordering) ──────
 inline constexpr int kStageData_RawImage        = 0;
 inline constexpr int kStageData_SurfaceImage    = 1;
@@ -51,6 +53,7 @@ struct FrameContext {
     std::uint16_t position_id = 0;
     std::optional<FrameImageSnapshot> image;
     std::optional<FrameAnomalySnapshot> anomaly;
+    std::shared_ptr<detail::FrameCompletionToken> completion;
 };
 
 // A stage failure is data, not a dropped frame.  It travels to Export so the

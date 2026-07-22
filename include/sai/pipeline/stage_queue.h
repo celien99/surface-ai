@@ -46,10 +46,11 @@ public:
                 // If CAS fails, TryPop already advanced head_ concurrently
                 // (a slot was freed), so we have space either way — fall through.
                 size_t h = head_.load(std::memory_order_relaxed);
-                if (head_.compare_exchange_weak(h,
+                if (head_.compare_exchange_strong(h,
                         (h + 1) % (logical_capacity_ + 1),
                         std::memory_order_release,
                         std::memory_order_relaxed)) {
+                    buffer_[h].reset();
                     dropped_count_.fetch_add(1, std::memory_order_relaxed);
                 }
                 // Now we have space — write at tail
