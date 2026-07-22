@@ -248,8 +248,13 @@ TEST(GaussianBlurTest, BlurPreservesRange) {
 class PatchCoreDetectTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        // 创建简单的 coreset：1 个 4 维向量
-        std::vector<float> coreset = {0.5F, 0.5F, 0.5F, 0.5F};
+        // 创建简单的 coreset：4 个 4 维向量（PrepareGpuIvf/ConvertToIVF 需要足够样本）
+        std::vector<float> coreset = {
+            0.5F, 0.5F, 0.5F, 0.5F,
+            0.6F, 0.6F, 0.6F, 0.6F,
+            0.4F, 0.4F, 0.4F, 0.4F,
+            0.7F, 0.7F, 0.7F, 0.7F,
+        };
         coreset_path_ = fs::temp_directory_path() / "test_patchcore_coreset.bin";
         WriteFloatMatrix(coreset_path_, coreset);
 

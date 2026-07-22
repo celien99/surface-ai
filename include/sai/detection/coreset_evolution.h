@@ -166,7 +166,7 @@ struct EvolutionConfig {
     // Update
     std::size_t target_size = 10000;
     std::chrono::seconds min_update_interval{5};
-    std::size_t candidate_sample_limit = 5000;
+    std::size_t greedy_prefilter = 5000;
 
     // Persistence
     bool save_on_stop = true;
@@ -180,8 +180,14 @@ struct EvolutionConfig {
     float coverage_saturation_threshold = 0.95F;
     std::size_t saturation_window = 10;
 
-    // After this many incremental updates, request a full bounded rebuild.
+    // After this many incremental updates, trigger a full greedy rebuild
+    // (instead of incremental merge) to refresh coreset quality.
     std::size_t max_incremental_updates = 100;
+
+    // When concept drift is detected, automatically trigger a full rebuild
+    // to replace stale patches with fresh ones. Disabled by default to avoid
+    // unexpected rebuilds during production.
+    bool drift_auto_rebuild = false;
 
     // ── Self-validation ──
     // After each incremental swap, sample old bank patches and query the new

@@ -7,7 +7,6 @@ find_package(yaml-cpp CONFIG REQUIRED)
 
 # 主检测库源文件
 set(SAI_DETECTION_SOURCES
-    bounded_patch_sampler.cpp
     detection_result.cpp
     feature_bank.cpp
     patch_core.cpp

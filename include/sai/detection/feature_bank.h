@@ -57,9 +57,20 @@ public:
     // path: N×dim float32 值（little-endian，行主序）
     [[nodiscard]] auto SaveToFile(const std::filesystem::path& path) const noexcept -> Result<void>;
 
-    // 从多个 CPU Embedding 流式构建有界 coreset FeatureBank。
-    // 固定种子 reservoir sampling 保证内存不随总 patch 数增长。
+    // 从多个 Embedding（正常样本）构建 coreset FeatureBank。
+    // 提取所有 patch 向量，超限时按 stride 等距均匀采样至 max_samples 个。
     [[nodiscard]] static auto BuildFromEmbeddings(
+        std::span<const sai::embedding::Embedding* const> embeddings,
+        std::size_t dim,
+        std::size_t max_samples = 10000) noexcept -> Result<FeatureBank>;
+
+    // Greedy coreset selection via furthest-point sampling.
+    // Extracts all patch vectors from embeddings, then iteratively selects
+    // patches that maximize coverage of the normal manifold (minimize max
+    // distance to nearest coreset point). Produces a more representative
+    // coreset than uniform subsampling. Distance evaluation is batched through
+    // FAISS; CPU only maintains the furthest-point selection state.
+    [[nodiscard]] static auto BuildWithGreedyCoreset(
         std::span<const sai::embedding::Embedding* const> embeddings,
         std::size_t dim,
         std::size_t max_samples = 10000) noexcept -> Result<FeatureBank>;

@@ -1,16 +1,22 @@
 // feature_bank.cpp — FeatureBank 可移植 CPU 实现（FAISS IndexFlatL2）
 #include <sai/detection/feature_bank.h>
-#include <sai/detection/bounded_patch_sampler.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <source_location>
 #include <span>
 
 #include <faiss/IndexFlat.h>
 #include <faiss/IndexIVFFlat.h>
+
+#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
+#include <faiss/gpu/GpuCloner.h>
+#include <faiss/gpu/StandardGpuResources.h>
+#endif
 
 namespace sai::detection {
 
@@ -156,7 +162,9 @@ auto FeatureBank::BuildFromEmbeddings(
         });
     }
 
-    BoundedPatchSampler sampler(dim, max_samples);
+    // Collect all patch vectors from all embeddings
+    std::vector<float> all_vectors;
+    std::size_t total_patches = 0;
 
     for (const auto* emb : embeddings) {
         if (emb == nullptr) continue;
@@ -171,10 +179,12 @@ auto FeatureBank::BuildFromEmbeddings(
         }
         auto count = meta.count;
         if (count == 0) continue;
-        sampler.Add(emb->Data(), count);
+        const float* data = emb->Data();
+        all_vectors.insert(all_vectors.end(), data, data + count * dim);
+        total_patches += count;
     }
 
-    if (sampler.Size() == 0) {
+    if (total_patches == 0) {
         return tl::make_unexpected(ErrorInfo{
             ErrorCode::Detection_FeatureBankLoadFailed,
             "BuildFromEmbeddings: no patch vectors extracted from embeddings",
@@ -182,7 +192,170 @@ auto FeatureBank::BuildFromEmbeddings(
         });
     }
 
-    return BuildFromVectors(sampler.Vectors().data(), sampler.Size(), dim);
+    // Uniform subsampling if total exceeds max_samples
+    std::size_t num_samples = total_patches;
+    const float* sampled_data = all_vectors.data();
+
+    if (total_patches > max_samples) {
+        // Stride-based subsampling: take every Nth vector
+        num_samples = max_samples;
+        auto stride = static_cast<std::size_t>(
+            static_cast<double>(total_patches) / static_cast<double>(max_samples));
+        if (stride < 1) stride = 1;
+
+        std::vector<float> subsampled;
+        subsampled.reserve(num_samples * dim);
+        for (std::size_t i = 0; i < total_patches && subsampled.size() / dim < max_samples; i += stride) {
+            subsampled.insert(subsampled.end(),
+                              all_vectors.data() + i * dim,
+                              all_vectors.data() + (i + 1) * dim);
+        }
+        // Adjust to exact max_samples
+        while (subsampled.size() / dim < max_samples && subsampled.size() / dim < total_patches) {
+            auto idx = subsampled.size() / dim;
+            subsampled.insert(subsampled.end(),
+                              all_vectors.data() + idx * dim,
+                              all_vectors.data() + (idx + 1) * dim);
+        }
+        all_vectors = std::move(subsampled);
+        sampled_data = all_vectors.data();
+        num_samples = all_vectors.size() / dim;
+    }
+
+    FeatureBank bank;
+    bank.Rebuild(sampled_data, num_samples, dim);
+    return bank;
+}
+
+auto FeatureBank::BuildWithGreedyCoreset(
+    std::span<const sai::embedding::Embedding* const> embeddings,
+    std::size_t dim,
+    std::size_t max_samples) noexcept -> Result<FeatureBank> {
+    if (embeddings.empty()) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Detection_FeatureBankLoadFailed,
+            "BuildWithGreedyCoreset: no embeddings provided",
+            std::source_location::current(),
+        });
+    }
+
+    // Collect all patch vectors and validate dimensions.
+    std::vector<float> all_vectors;
+    std::size_t total_patches = 0;
+
+    for (const auto* emb : embeddings) {
+        if (emb == nullptr) continue;
+        const auto& meta = emb->Meta();
+        if (meta.dim != dim) {
+            return tl::make_unexpected(ErrorInfo{
+                ErrorCode::Detection_FeatureBankLoadFailed,
+                "BuildWithGreedyCoreset: embedding dim mismatch (expected "
+                    + std::to_string(dim) + ", got " + std::to_string(meta.dim) + ")",
+                std::source_location::current(),
+            });
+        }
+        auto count = meta.count;
+        if (count == 0) continue;
+        const float* data = emb->Data();
+        all_vectors.insert(all_vectors.end(), data, data + count * dim);
+        total_patches += count;
+    }
+
+    if (total_patches == 0) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Detection_FeatureBankLoadFailed,
+            "BuildWithGreedyCoreset: no patch vectors extracted",
+            std::source_location::current(),
+        });
+    }
+
+    auto num_samples = std::min(max_samples, total_patches);
+
+    // ── Greedy furthest-point sampling ──
+    // min_dist[i] = squared L2 distance from patch i to nearest coreset point.
+    std::vector<float> min_dist(total_patches, std::numeric_limits<float>::max());
+    std::vector<std::size_t> coreset_indices;
+    coreset_indices.reserve(num_samples);
+
+#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
+    std::unique_ptr<faiss::gpu::StandardGpuResources> selected_resources;
+#endif
+    std::unique_ptr<faiss::Index> selected_index;
+    std::vector<faiss::idx_t> labels(total_patches);
+    try {
+#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
+        selected_resources = std::make_unique<faiss::gpu::StandardGpuResources>();
+        auto selected_cpu = std::make_unique<faiss::IndexFlatL2>(
+            static_cast<faiss::idx_t>(dim));
+        selected_resources->setTempMemory(512 * 1024 * 1024);
+        selected_cpu->add(1, all_vectors.data());
+        selected_index = std::unique_ptr<faiss::Index>(faiss::gpu::index_cpu_to_gpu(
+            selected_resources.get(), 0, selected_cpu.get()));
+#else
+        selected_index = std::make_unique<faiss::IndexFlatL2>(
+            static_cast<faiss::idx_t>(dim));
+        selected_index->add(1, all_vectors.data());
+#endif
+
+        coreset_indices.push_back(0);
+        selected_index->search(static_cast<faiss::idx_t>(total_patches),
+                               all_vectors.data(), 1,
+                               min_dist.data(), labels.data());
+
+        // Iteratively select furthest point from current coreset.
+        for (std::size_t k = 1; k < num_samples; ++k) {
+            std::size_t best_idx = 0;
+            float best_dist = -1.0F;
+            for (std::size_t i = 0; i < total_patches; ++i) {
+                if (min_dist[i] > best_dist) {
+                    best_dist = min_dist[i];
+                    best_idx = i;
+                }
+            }
+
+            coreset_indices.push_back(best_idx);
+            selected_index->add(1, all_vectors.data() + best_idx * dim);
+            selected_index->search(static_cast<faiss::idx_t>(total_patches),
+                                   all_vectors.data(), 1,
+                                   min_dist.data(), labels.data());
+        }
+    } catch (const std::exception& e) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Detection_FeatureBankLoadFailed,
+            std::string("BuildWithGreedyCoreset FAISS selection failed: ") + e.what(),
+            std::source_location::current(),
+        });
+    }
+
+    // Build output vector from selected indices.
+    std::vector<float> coreset_data;
+    coreset_data.reserve(num_samples * dim);
+    for (auto idx : coreset_indices) {
+        coreset_data.insert(coreset_data.end(),
+                            all_vectors.data() + idx * dim,
+                            all_vectors.data() + (idx + 1) * dim);
+    }
+
+    // Compute coverage statistics.
+    float min_coverage = std::numeric_limits<float>::max();
+    float max_coverage = 0.0F;
+    double mean_coverage = 0.0;
+    for (std::size_t i = 0; i < total_patches; ++i) {
+        float d = std::sqrt(min_dist[i]);
+        if (d < min_coverage) min_coverage = d;
+        if (d > max_coverage) max_coverage = d;
+        mean_coverage += static_cast<double>(d);
+    }
+    mean_coverage /= static_cast<double>(total_patches);
+
+    // Log coverage stats (informational, not error).
+    (void)min_coverage;
+    (void)max_coverage;
+    (void)mean_coverage;
+
+    FeatureBank bank;
+    bank.Rebuild(coreset_data.data(), num_samples, dim);
+    return bank;
 }
 
 auto FeatureBank::BuildFromVectors(const float* vectors,

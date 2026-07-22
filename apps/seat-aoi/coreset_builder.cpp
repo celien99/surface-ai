@@ -1,5 +1,6 @@
 #include "coreset_builder.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <iostream>
 #include <map>
@@ -17,7 +18,6 @@
 #include <sai/image/preprocess.h>
 #include <sai/image/gpu_image.h>
 #include <sai/embedding/embedding.h>
-#include <sai/detection/bounded_patch_sampler.h>
 #include <sai/detection/feature_bank.h>
 #include <sai/io/coreset_manifest.h>
 #include <sai/memory/gpu_pool.h>
@@ -75,13 +75,17 @@ auto BuildCoreset(const CliArgs& cli) -> int {
     }
     auto& gpu_pool = **gpu_pool_result;
 
+    // Group entries by position_id for per-position coreset building
+    std::map<std::uint16_t, std::vector<io::DatasetEntry>> pos_entries;
     std::string surface_id;
     for (auto& e : entries) {
+        pos_entries[e.position_id].push_back(e);
         if (surface_id.empty()) surface_id = e.surface_id;
     }
+    std::cout << "Positions: " << pos_entries.size() << "\n";
 
-    std::map<std::uint16_t, detection::BoundedPatchSampler> pos_samplers;
-    std::map<std::uint16_t, std::size_t> sampled_image_counts;
+    // Group embeddings by position_id
+    std::map<std::uint16_t, std::vector<embedding::Embedding>> pos_embeddings;
     int processed = 0;
 
     for (auto& entry : entries) {
@@ -170,20 +174,15 @@ auto BuildCoreset(const CliArgs& cli) -> int {
             continue;
         }
 
-        auto [sampler_it, inserted] = pos_samplers.try_emplace(
-            entry.position_id, kEmbedDim, cli.coreset_max_samples);
-        (void)inserted;
-        sampler_it->second.Add(emb->Data(), emb->Meta().count);
-        ++sampled_image_counts[entry.position_id];
         ++processed;
+        pos_embeddings[entry.position_id].push_back(std::move(*emb));
         std::cout << "[" << processed << "/" << entries.size() << "] "
                   << entry.path.filename().string() << " → "
-                  << emb->Meta().count << " patches\n";
+                  << pos_embeddings[entry.position_id].back().Meta().count << " patches\n";
     }
 
     // Build per-position FeatureBanks and manifest
-    std::cout << "Positions: " << pos_samplers.size() << "\n";
-    std::cout << "\nCoreset algorithm: deterministic bounded sampling"
+    std::cout << "\nCoreset algorithm: greedy (furthest-point sampling)"
               << "\nMax samples: " << cli.coreset_max_samples << "\n\n";
 
     auto output_dir = std::filesystem::path(cli.coreset_output_path);
@@ -197,17 +196,26 @@ auto BuildCoreset(const CliArgs& cli) -> int {
     io::CoresetManifest manifest;
     manifest.surface_id = surface_id;
 
-    for (auto& [pid, sampler] : pos_samplers) {
-        if (sampler.Size() == 0) {
+    for (auto& [pid, embeddings] : pos_embeddings) {
+        if (embeddings.empty()) {
             std::cerr << "Position " << pid << ": no embeddings — skipped\n";
             continue;
         }
 
-        auto bank = detection::FeatureBank::BuildFromVectors(
-            sampler.Vectors().data(), sampler.Size(), kEmbedDim);
+        std::vector<const embedding::Embedding*> emb_ptrs;
+        emb_ptrs.reserve(embeddings.size());
+        for (auto& e : embeddings) emb_ptrs.push_back(&e);
+
+        auto bank_result = detection::FeatureBank::BuildWithGreedyCoreset(
+            emb_ptrs, kEmbedDim, cli.coreset_max_samples);
+        if (!bank_result) {
+            std::cerr << "Position " << pid << ": FeatureBank build failed: "
+                      << bank_result.error().message << "\n";
+            return 1;
+        }
 
         auto bank_path = output_dir / ("pos_" + std::to_string(pid) + ".bin");
-        auto save_result = bank.SaveToFile(bank_path);
+        auto save_result = bank_result->SaveToFile(bank_path);
         if (!save_result) {
             std::cerr << "Position " << pid << ": failed to save coreset: "
                       << save_result.error().message << "\n";
@@ -220,9 +228,9 @@ auto BuildCoreset(const CliArgs& cli) -> int {
         });
 
         std::cout << "Position " << pid << ":\n"
-                  << "  Images:       " << sampled_image_counts[pid] << "\n"
-                  << "  Coreset size: " << bank.NumSamples() << "\n"
-                  << "  Feature dim:  " << bank.Dim() << "\n"
+                  << "  Images:       " << embeddings.size() << "\n"
+                  << "  Coreset size: " << bank_result->NumSamples() << "\n"
+                  << "  Feature dim:  " << bank_result->Dim() << "\n"
                   << "  Output:       " << bank_path.string() << "\n\n";
     }
 

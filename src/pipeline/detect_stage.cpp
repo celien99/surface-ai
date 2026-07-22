@@ -49,12 +49,13 @@ auto DetectStage::Process(StageInput input) -> Result<StageOutput> {
         if (it == detectors_.end()) {
             // ── Cold-start bootstrap ──
             if (bootstrap_enabled_) {
-                if (bootstrap_min_frames_ == 0 || bootstrap_target_size_ == 0) {
+                if (bootstrap_min_frames_ == 0
+                    || bootstrap_target_size_ < bootstrap_min_frames_) {
                     return StageOutput::MakeWithContext(input, PipelineFailure{
                         .code = sai::ErrorCode::Pipeline_InvalidConfig,
                         .stage_id = id_,
-                        .message = "DetectStage: bootstrap min_frames and target_size "
-                                   "must be non-zero",
+                        .message = "DetectStage: bootstrap target_size must be "
+                                   "at least min_frames and both must be non-zero",
                         .surface_id = emb->SurfaceId(),
                         .position_id = emb->PositionId(),
                     });
@@ -88,7 +89,6 @@ auto DetectStage::Process(StageInput input) -> Result<StageOutput> {
                     state.dim = dim;
                     state.grid_h = grid_h;
                     state.grid_w = grid_w;
-                    state.sampler.emplace(dim, bootstrap_target_size_);
                 } else if (state.dim != dim) {
                     return StageOutput::MakeWithContext(input, PipelineFailure{
                         .code = sai::ErrorCode::Embedding_DimensionMismatch,
@@ -106,6 +106,14 @@ auto DetectStage::Process(StageInput input) -> Result<StageOutput> {
                         .position_id = emb->PositionId(),
                     });
                 }
+
+                // Uniform-sample patches into the bootstrap buffer.
+                // Stride adapts so that total accumulated patches ≈ target_size
+                // after bootstrap_min_frames_ frames.
+                auto target_per_frame = bootstrap_target_size_ / bootstrap_min_frames_;
+                auto stride = (patch_count > target_per_frame)
+                    ? (patch_count / target_per_frame) : 1;
+                if (stride < 1) stride = 1;
 
                 std::vector<float> host_data;
                 const float* data = emb->Data();
@@ -138,13 +146,40 @@ auto DetectStage::Process(StageInput input) -> Result<StageOutput> {
                     });
 #endif
                 }
-                state.sampler->Add(data, patch_count);
+                for (std::size_t i = 0; i < patch_count; i += stride) {
+                    auto offset = i * dim;
+                    state.vectors.insert(state.vectors.end(),
+                                         data + offset, data + offset + dim);
+                }
                 ++state.frame_count;
 
                 if (state.frame_count >= bootstrap_min_frames_) {
-                    auto sample_count = state.sampler->Size();
-                    auto bank = detection::FeatureBank::BuildFromVectors(
-                        state.sampler->Vectors().data(), sample_count, dim);
+                    // Build initial FeatureBank via greedy coreset
+                    std::vector<float> vecs = std::move(state.vectors);
+                    auto sample_count = vecs.size() / dim;
+
+                    sai::embedding::EmbeddingMeta meta;
+                    meta.model_name = "bootstrap";
+                    meta.type = sai::embedding::EmbeddingType::Patch;
+                    meta.dim = dim;
+                    meta.count = sample_count;
+                    meta.grid = {1, sample_count};
+                    auto tmp_emb = sai::embedding::Embedding::FromCpu(
+                        std::move(vecs), std::move(meta));
+                    std::vector<const sai::embedding::Embedding*> ptrs{&tmp_emb};
+                    auto fb_result = detection::FeatureBank::BuildWithGreedyCoreset(
+                        ptrs, dim, std::min(bootstrap_target_size_, sample_count));
+                    if (!fb_result) {
+                        auto error = fb_result.error();
+                        bootstrap_states_.erase(key);
+                        return StageOutput::MakeWithContext(input, PipelineFailure{
+                            .code = error.code,
+                            .stage_id = id_,
+                            .message = error.message,
+                            .surface_id = emb->SurfaceId(),
+                            .position_id = emb->PositionId(),
+                        });
+                    }
 
                     detection::PatchCore::Config pc_cfg;
                     pc_cfg.embed_dim = dim;
@@ -154,7 +189,7 @@ auto DetectStage::Process(StageInput input) -> Result<StageOutput> {
                     pc_cfg.image_height = state.grid_h * pc_cfg.patch_size;
                     auto pc = std::make_shared<detection::PatchCore>(pc_cfg);
                     auto bootstrap_bank = std::make_unique<detection::FeatureBank>(
-                        std::move(bank));
+                        std::move(*fb_result));
 #if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
                     auto gpu_result = bootstrap_bank->PrepareGpuIvf();
                     if (!gpu_result) {
