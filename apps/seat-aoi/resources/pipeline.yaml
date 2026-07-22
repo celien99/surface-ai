@@ -31,6 +31,7 @@ pipeline:
     - id: detect
       type: Detect
       depends_on: [inference]
+      queue_capacity: 2
       config:
         detector: PatchCore
         k_nearest: 5

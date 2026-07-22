@@ -25,7 +25,7 @@ namespace io { class JsonExporter; }
 namespace knowledge { class KnowledgeGraph; class KnowledgeEvolution; class KnowledgeStore; }
 namespace inference { class Sam2Segmenter; }
 namespace retrieval { class VectorPath; }
-namespace memory { class GpuPool; }
+namespace memory { class ArenaAllocator; class GpuPool; }
 }
 
 struct CliArgs;
@@ -45,7 +45,10 @@ struct PositionPipeline {
 
     std::unique_ptr<sai::pipeline::Pipeline> pipeline;
     std::shared_ptr<sai::detection::PatchCore> patch_core;
-    std::shared_ptr<sai::memory::GpuPool> gpu_pool;
+    std::unique_ptr<sai::memory::ArenaAllocator> image_pool_arena;
+    std::unique_ptr<sai::memory::ArenaAllocator> embedding_pool_arena;
+    std::shared_ptr<sai::memory::GpuPool> image_pool;
+    std::shared_ptr<sai::memory::GpuPool> embedding_pool;
     std::shared_ptr<sai::embedding::PatchEmbedder> embedder;
     std::shared_ptr<sai::embedding::IEmbedder> global_embedder;
     std::unique_ptr<sai::detection::CoresetEvolution> evolution;

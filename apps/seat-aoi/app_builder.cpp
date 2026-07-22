@@ -87,27 +87,6 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
             "Failed to load pipeline.yaml: " + std::string(e.what())});
     }
 
-    // GPU pool ownership is split per position below.
-    std::shared_ptr<sai::memory::GpuPool> gpu_pool_owner;
-    {
-        static sai::memory::ArenaAllocator gpu_pool_arena(4096);
-        sai::memory::MemoryPoolConfig pool_cfg;
-        pool_cfg.slab_size = kEmbedDim * (kImageSize / kPatchSize) *
-                              (kImageSize / kPatchSize) * sizeof(float);
-        pool_cfg.slab_count = 4;
-        auto gpu_pool = sai::memory::GpuPool::Create(pool_cfg, gpu_pool_arena);
-        if (gpu_pool) {
-            gpu_pool_owner = std::shared_ptr<sai::memory::GpuPool>(
-                std::move(*gpu_pool));
-            std::cout << "GpuPool: " << pool_cfg.slab_count << " slabs × "
-                      << (pool_cfg.slab_size >> 20) << " MiB"
-                      << " (zero-copy embedding)\n";
-        } else {
-            std::cerr << "Warning: GpuPool creation failed — "
-                      << "embedding will use CPU fallback\n";
-        }
-    }
-
     auto global_cfg = pipeline_yaml["pipeline"]["stages"][2]["config"]["global_model"];
     bool global_embedding_enabled =
         global_cfg.IsDefined() && global_cfg["enabled"].as<bool>(false);
@@ -397,13 +376,38 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     std::vector<PositionPipeline> position_pipelines;
 
     for (auto& pos_def : position_defs) {
+        auto image_pool_arena = std::make_unique<memory::ArenaAllocator>(4096);
+        auto image_pool_result = memory::GpuPool::Create(
+            memory::MemoryPoolConfig{
+                .slab_size = kImageSize * kImageSize * 3,
+                .slab_count = 1,
+            },
+            *image_pool_arena);
+        if (!image_pool_result) return tl::make_unexpected(image_pool_result.error());
+        auto image_pool = std::shared_ptr<memory::GpuPool>(
+            std::move(*image_pool_result));
+
+        auto embedding_pool_arena = std::make_unique<memory::ArenaAllocator>(4096);
+        auto embedding_pool_result = memory::GpuPool::Create(
+            memory::MemoryPoolConfig{
+                .slab_size = kEmbedDim * (kImageSize / kPatchSize)
+                    * (kImageSize / kPatchSize) * sizeof(float),
+                .slab_count = 4,
+            },
+            *embedding_pool_arena);
+        if (!embedding_pool_result) {
+            return tl::make_unexpected(embedding_pool_result.error());
+        }
+        auto embedding_pool = std::shared_ptr<memory::GpuPool>(
+            std::move(*embedding_pool_result));
+
         auto embedder_result = seat_aoi::CreateDinoV2PatchEmbedder(
             DinoV2Engine(), kImageSize, kPatchSize, kEmbedDim);
         if (!embedder_result) {
             return tl::make_unexpected(embedder_result.error());
         }
         auto position_embedder = std::move(*embedder_result);
-        if (gpu_pool_owner) position_embedder->SetGpuPool(gpu_pool_owner.get());
+        position_embedder->SetGpuPool(embedding_pool.get());
 
         std::shared_ptr<embedding::IEmbedder> position_global_embedder;
         if (global_embedding_enabled) {
@@ -432,8 +436,7 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
         // Wire per-position inference resources and shared stateless components.
         if (auto* s = pos_pipeline->GetStage("inference")) {
             static_cast<pipeline::InferenceStage*>(s)->SetEmbedder(position_embedder);
-            if (gpu_pool_owner)
-                static_cast<pipeline::InferenceStage*>(s)->SetGpuPool(gpu_pool_owner.get());
+            static_cast<pipeline::InferenceStage*>(s)->SetGpuPool(image_pool.get());
             if (position_global_embedder)
                 static_cast<pipeline::InferenceStage*>(s)->SetGlobalEmbedder(
                     position_global_embedder);
@@ -481,7 +484,10 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
         pp.key = pos_def.key;
         pp.pipeline = std::move(pos_pipeline);
         pp.patch_core = pos_def.pc;
-        pp.gpu_pool = gpu_pool_owner;
+        pp.image_pool_arena = std::move(image_pool_arena);
+        pp.embedding_pool_arena = std::move(embedding_pool_arena);
+        pp.image_pool = std::move(image_pool);
+        pp.embedding_pool = std::move(embedding_pool);
         pp.embedder = std::move(position_embedder);
         pp.global_embedder = std::move(position_global_embedder);
         if (pos_def.evo != nullptr) {

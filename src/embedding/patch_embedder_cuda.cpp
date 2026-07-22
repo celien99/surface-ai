@@ -100,34 +100,34 @@ auto PatchEmbedder::ExtractGpu(const sai::image::Image& image) noexcept
     if (gpu_pool_ != nullptr) {
         auto slab_result = gpu_pool_->Acquire(feature_bytes);
         if (!slab_result) {
-            // Pool exhausted — fall through to CPU path rather than failing
-        } else {
-            auto slab = std::move(*slab_result);
-            cudaError_t err = cudaMemcpyAsync(
-                slab.Get(), patch_result->device_ptr, feature_bytes,
-                cudaMemcpyDeviceToDevice, stream);
-            if (err != cudaSuccess) {
-                // D2D copy failed — slab auto-released, fall through
-            } else {
-                // Sync dedicated stream: D2D copy must complete before
-                // downstream consumes the pool buffer.
-                cudaError_t sync_err = cudaStreamSynchronize(stream);
-                auto end = std::chrono::steady_clock::now();
-                meta.inference_latency =
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
-                if (sync_err != cudaSuccess) {
-                    return tl::make_unexpected(ErrorInfo{
-                        ErrorCode::Inference_EngineExecutionFailed,
-                        std::string("PatchEmbedder: stream sync failed: ")
-                            + cudaGetErrorString(sync_err),
-                    });
-                }
-                return Embedding::FromGpu(std::move(slab), std::move(meta));
-            }
+            return tl::make_unexpected(slab_result.error());
         }
+        auto slab = std::move(*slab_result);
+        cudaError_t err = cudaMemcpyAsync(
+            slab.Get(), patch_result->device_ptr, feature_bytes,
+            cudaMemcpyDeviceToDevice, stream);
+        if (err != cudaSuccess) {
+            return tl::make_unexpected(ErrorInfo{
+                ErrorCode::Inference_EngineExecutionFailed,
+                std::string("PatchEmbedder: D2D copy failed: ")
+                    + cudaGetErrorString(err),
+            });
+        }
+        cudaError_t sync_err = cudaStreamSynchronize(stream);
+        auto end = std::chrono::steady_clock::now();
+        meta.inference_latency =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
+        if (sync_err != cudaSuccess) {
+            return tl::make_unexpected(ErrorInfo{
+                ErrorCode::Inference_EngineExecutionFailed,
+                std::string("PatchEmbedder: stream sync failed: ")
+                    + cudaGetErrorString(sync_err),
+            });
+        }
+        return Embedding::FromGpu(std::move(slab), std::move(meta));
     }
 
-    // ── CPU fallback: D2H copy (compatible, not zero-copy) ────────────
+    // Offline tools without a configured output pool consume CPU embeddings.
     std::vector<float> cpu_features(patch_result->grid_h *
                                      patch_result->grid_w *
                                      patch_result->dim);
