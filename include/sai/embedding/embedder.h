@@ -53,11 +53,11 @@ public:
     // On non-CUDA builds, a stub returning an error is provided in patch_embedder.cpp.
     [[nodiscard]] auto ExtractGpu(const sai::image::Image& image) noexcept
         -> Result<Embedding>;
+    [[nodiscard]] auto InitializeGpuResources() noexcept -> Result<void>;
 
     // Inject a GpuPool for zero-copy GPU feature extraction.
     // When set, ExtractGpu copies TRT output → pool buffer (D2D) and
     // returns Embedding::FromGpu (zero host round-trip).
-    // When nullptr (default), falls back to D2H copy → Embedding::FromCpu.
     auto SetGpuPool(sai::memory::IMemoryPool* pool) noexcept -> void {
         gpu_pool_ = pool;
     }
@@ -100,12 +100,18 @@ public:
     // GPU inference path — defined in global_embedder_cuda.cpp (CUDA-gated).
     [[nodiscard]] auto ExtractGpu(const sai::image::Image& image) noexcept
         -> Result<Embedding>;
+    [[nodiscard]] auto InitializeGpuResources() noexcept -> Result<void>;
+
+    auto SetEngineHolder(std::shared_ptr<sai::inference::IInferenceEngine> engine) noexcept -> void {
+        engine_holder_ = std::move(engine);
+    }
 
 private:
     explicit GlobalEmbedder(sai::inference::ClipAdapter adapter) noexcept;
     sai::inference::ClipAdapter adapter_;
     void* cuda_stream_ = nullptr;  // 每实例独立 CUDA stream，避免默认流串行化
     bool has_adapter_ = true;
+    std::shared_ptr<sai::inference::IInferenceEngine> engine_holder_;
 };
 
 }  // namespace sai::embedding

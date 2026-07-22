@@ -14,9 +14,6 @@ namespace sai::inference {
 
 namespace {
 
-// Lazily allocate the GPU output buffer for "last_hidden_state" if it hasn't
-// been allocated yet.  The pointer is stored in the adapter's output_buffer_
-// and freed by the destructor / move-assignment.
 [[nodiscard]] auto EnsureOutputBuffer(IInferenceEngine& engine,
                                        std::size_t output_floats,
                                        void*& output_buffer) noexcept -> Result<void> {
@@ -63,6 +60,12 @@ namespace {
 
 }  // namespace
 
+auto DinoV3Adapter::Initialize() noexcept -> Result<void> {
+    auto grid = cfg_.image_size / cfg_.patch_size;
+    return EnsureOutputBuffer(
+        *engine_, (grid * grid + 1) * cfg_.embed_dim, output_buffer_);
+}
+
 // ── Lifetime management (defined here because cudaFree requires cuda_runtime.h) ──
 
 DinoV3Adapter::~DinoV3Adapter() {
@@ -103,13 +106,14 @@ auto DinoV3Adapter::Infer(const sai::image::GpuImage& image) noexcept -> Result<
         return tl::make_unexpected(set_result.error());
     }
 
-    // 2. 确保输出 GPU buffer 已分配（首次调用懒分配，后续复用）。
     auto grid_h = cfg_.image_size / cfg_.patch_size;
     auto grid_w = cfg_.image_size / cfg_.patch_size;
     std::size_t output_floats = (grid_h * grid_w + 1) * cfg_.embed_dim;  // +1 for CLS
-    auto buf_result = EnsureOutputBuffer(*engine_, output_floats, output_buffer_);
-    if (!buf_result.has_value()) {
-        return tl::make_unexpected(buf_result.error());
+    if (output_buffer_ == nullptr) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Inference_EngineExecutionFailed,
+            "DinoV3Adapter is not initialized",
+        });
     }
 
     // 3. 执行同步 GPU 推理。
@@ -165,13 +169,14 @@ auto DinoV3Adapter::InferAsync(const sai::image::GpuImage& image,
         return tl::make_unexpected(set_result.error());
     }
 
-    // 2. Ensure output GPU buffer is allocated (lazy, first-call allocation).
     auto grid_h = cfg_.image_size / cfg_.patch_size;
     auto grid_w = cfg_.image_size / cfg_.patch_size;
     std::size_t output_floats = (grid_h * grid_w + 1) * cfg_.embed_dim;  // +1 for CLS
-    auto buf_result = EnsureOutputBuffer(*engine_, output_floats, output_buffer_);
-    if (!buf_result.has_value()) {
-        return tl::make_unexpected(buf_result.error());
+    if (output_buffer_ == nullptr) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Inference_EngineExecutionFailed,
+            "DinoV3Adapter is not initialized",
+        });
     }
 
     // 3. Execute async GPU inference — no cudaStreamSynchronize.

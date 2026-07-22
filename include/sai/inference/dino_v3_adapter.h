@@ -32,6 +32,7 @@ class DinoV3Adapter {
 public:
     [[nodiscard]] static auto Create(IInferenceEngine& engine,
                                       const DinoV3Config& cfg) noexcept -> Result<DinoV3Adapter>;
+    [[nodiscard]] auto Initialize() noexcept -> Result<void>;
 
     // 从 M2 的 GpuImage 提取 patch 特征——该图像必须在 GPU 显存中。
     // 声明于此，定义留在门控 Task 3 的 .cpp 文件中。
@@ -56,7 +57,7 @@ private:
     DinoV3Adapter(IInferenceEngine* engine, DinoV3Config cfg) noexcept;
     IInferenceEngine* engine_ = nullptr;
     DinoV3Config cfg_{};
-    void* output_buffer_ = nullptr;  // GPU output buffer, lazily allocated on first Infer
+    void* output_buffer_ = nullptr;
 };
 
 // Create 工厂实现：校验 engine 的 binding 名称/形状与 config 一致。

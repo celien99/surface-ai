@@ -23,9 +23,22 @@
 
 namespace sai::embedding {
 
-static auto EnsureStream(void*& stream) -> cudaError_t {
-    if (stream != nullptr) return cudaSuccess;
-    return cudaStreamCreate(reinterpret_cast<cudaStream_t*>(&stream));
+auto GlobalEmbedder::InitializeGpuResources() noexcept -> Result<void> {
+    auto stream_err = cudaStreamCreate(reinterpret_cast<cudaStream_t*>(&cuda_stream_));
+    if (stream_err != cudaSuccess) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Inference_EngineExecutionFailed,
+            std::string("GlobalEmbedder: failed to create CUDA stream: ")
+                + cudaGetErrorString(stream_err),
+        });
+    }
+    auto adapter_result = adapter_.Initialize();
+    if (!adapter_result) {
+        cudaStreamDestroy(reinterpret_cast<cudaStream_t>(cuda_stream_));
+        cuda_stream_ = nullptr;
+        return adapter_result;
+    }
+    return {};
 }
 
 GlobalEmbedder::~GlobalEmbedder() {
@@ -51,13 +64,10 @@ auto GlobalEmbedder::ExtractGpu(const sai::image::Image& image) noexcept
         });
     }
 
-    // 懒创建独立 CUDA stream
-    cudaError_t stream_err = EnsureStream(cuda_stream_);
-    if (stream_err != cudaSuccess) {
+    if (cuda_stream_ == nullptr) {
         return tl::make_unexpected(ErrorInfo{
             ErrorCode::Inference_EngineExecutionFailed,
-            std::string("GlobalEmbedder: failed to create CUDA stream: ")
-                + cudaGetErrorString(stream_err),
+            "GlobalEmbedder GPU resources are not initialized",
         });
     }
     auto* stream = reinterpret_cast<cudaStream_t>(cuda_stream_);

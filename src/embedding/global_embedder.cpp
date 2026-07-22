@@ -12,6 +12,7 @@ GlobalEmbedder::GlobalEmbedder(GlobalEmbedder&& other) noexcept
     : adapter_(std::move(other.adapter_))
     , cuda_stream_(other.cuda_stream_)
     , has_adapter_(true)
+    , engine_holder_(std::move(other.engine_holder_))
 {
     other.has_adapter_ = false;
     other.cuda_stream_ = nullptr;
@@ -22,6 +23,7 @@ auto GlobalEmbedder::operator=(GlobalEmbedder&& other) noexcept -> GlobalEmbedde
         adapter_ = std::move(other.adapter_);
         cuda_stream_ = other.cuda_stream_;
         has_adapter_ = true;
+        engine_holder_ = std::move(other.engine_holder_);
         other.has_adapter_ = false;
         other.cuda_stream_ = nullptr;
     }
@@ -84,6 +86,13 @@ auto GlobalEmbedder::ExtractBatch(
 // Non-CUDA stub for ExtractGpu — overridden by global_embedder_cuda.cpp
 // when SAI_CUDA_ENABLED is defined.
 #if !defined(SAI_CUDA_ENABLED)
+auto GlobalEmbedder::InitializeGpuResources() noexcept -> Result<void> {
+    return tl::make_unexpected(ErrorInfo{
+        ErrorCode::Inference_EngineExecutionFailed,
+        "GlobalEmbedder GPU resources are not available on this platform",
+    });
+}
+
 auto GlobalEmbedder::ExtractGpu(const sai::image::Image& /*image*/) noexcept
     -> Result<Embedding> {
     return tl::make_unexpected(ErrorInfo{

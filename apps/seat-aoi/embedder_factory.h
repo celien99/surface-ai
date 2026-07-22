@@ -5,6 +5,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <sai/core/error.h>
 #include <sai/embedding/embedder.h>
@@ -83,8 +84,53 @@ inline auto CreateDinoV2PatchEmbedder(
 
     auto result = std::make_shared<PatchEmbedder>(std::move(*embedder));
     result->SetEngineHolder(engine);  // keep engine alive ≥ embedder lifetime
+    auto initialize_result = result->InitializeGpuResources();
+    if (!initialize_result) {
+        return tl::make_unexpected(initialize_result.error());
+    }
     std::cout << "Embedder: PatchEmbedder (DINOv2, dim=" << embed_dim << ")\n";
     return result;
+}
+
+inline auto CreateClipGlobalEmbedder(
+    const std::filesystem::path& engine_path,
+    std::size_t image_size,
+    std::size_t embed_dim) -> sai::Result<std::shared_ptr<sai::embedding::IEmbedder>> {
+    using sai::embedding::GlobalEmbedder;
+    using sai::inference::ClipAdapter;
+    using sai::inference::ClipConfig;
+    using sai::inference::TensorBinding;
+    using sai::inference::TensorRtEngine;
+
+    if (!std::filesystem::exists(engine_path)) {
+        return tl::make_unexpected(sai::ErrorInfo{
+            sai::ErrorCode::Core_ConstructionFailed,
+            "CLIP engine not found: " + engine_path.string()});
+    }
+
+    auto engine = std::make_shared<TensorRtEngine>(0);
+    std::vector<TensorBinding> inputs = {
+        {"pixel_values", {1, 3, static_cast<long>(image_size), static_cast<long>(image_size)},
+         image_size * image_size * 3, nullptr},
+    };
+    std::vector<TensorBinding> outputs = {
+        {"features", {1, static_cast<long>(embed_dim)}, embed_dim * sizeof(float), nullptr},
+    };
+    auto load_result = engine->Load(engine_path, std::move(inputs), std::move(outputs));
+    if (!load_result) return tl::make_unexpected(load_result.error());
+
+    ClipConfig cfg{.engine_path = engine_path, .image_size = image_size,
+                   .embed_dim = embed_dim};
+    auto adapter = ClipAdapter::Create(*engine, cfg);
+    if (!adapter) return tl::make_unexpected(adapter.error());
+    auto embedder = GlobalEmbedder::Create(std::move(*adapter));
+    if (!embedder) return tl::make_unexpected(embedder.error());
+
+    auto result = std::make_shared<GlobalEmbedder>(std::move(*embedder));
+    result->SetEngineHolder(engine);
+    auto initialize_result = result->InitializeGpuResources();
+    if (!initialize_result) return tl::make_unexpected(initialize_result.error());
+    return std::shared_ptr<sai::embedding::IEmbedder>(std::move(result));
 }
 
 }  // namespace seat_aoi

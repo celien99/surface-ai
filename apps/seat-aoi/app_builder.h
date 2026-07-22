@@ -45,6 +45,9 @@ struct PositionPipeline {
 
     std::unique_ptr<sai::pipeline::Pipeline> pipeline;
     std::shared_ptr<sai::detection::PatchCore> patch_core;
+    std::shared_ptr<sai::memory::GpuPool> gpu_pool;
+    std::shared_ptr<sai::embedding::PatchEmbedder> embedder;
+    std::shared_ptr<sai::embedding::IEmbedder> global_embedder;
     std::unique_ptr<sai::detection::CoresetEvolution> evolution;
     std::stop_source evolution_stop_source;
 };
@@ -65,12 +68,9 @@ struct AssembledApp {
     std::shared_ptr<sai::reasoner::IReasoner> reasoner;
     std::shared_ptr<sai::io::JsonExporter> exporter;
     std::shared_ptr<sai::retrieval::VectorPath> vector_path;
-    std::shared_ptr<sai::memory::GpuPool> gpu_pool;
-    std::shared_ptr<sai::embedding::PatchEmbedder> embedder;      // shared across all positions
     std::shared_ptr<sai::detection::FeatureBank> feature_bank;    // single-position coreset
 
     // ── Optional shared ──
-    std::shared_ptr<sai::embedding::IEmbedder> global_embedder;
     std::shared_ptr<sai::inference::Sam2Segmenter> sam2_segmenter;
     std::unique_ptr<sai::tuning::TuningScheduler> tuning_scheduler;
     std::stop_source tuning_stop_source;

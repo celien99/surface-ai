@@ -87,16 +87,7 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
             "Failed to load pipeline.yaml: " + std::string(e.what())});
     }
 
-    // =========================================================================
-    // 2. Inference / embedding setup — TensorRT + DINOv2 (768-dim)
-    // =========================================================================
-
-    auto embedder_result = seat_aoi::CreateDinoV2PatchEmbedder(
-        DinoV2Engine(), kImageSize, kPatchSize, kEmbedDim);
-    if (!embedder_result) return tl::make_unexpected(std::move(embedder_result.error()));
-    auto embedder = std::move(*embedder_result);
-
-    // Wire GpuPool for zero-copy GPU feature extraction (D2D instead of D2H).
+    // GPU pool ownership is split per position below.
     std::shared_ptr<sai::memory::GpuPool> gpu_pool_owner;
     {
         static sai::memory::ArenaAllocator gpu_pool_arena(4096);
@@ -106,7 +97,6 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
         pool_cfg.slab_count = 4;
         auto gpu_pool = sai::memory::GpuPool::Create(pool_cfg, gpu_pool_arena);
         if (gpu_pool) {
-            embedder->SetGpuPool(gpu_pool->get());
             gpu_pool_owner = std::shared_ptr<sai::memory::GpuPool>(
                 std::move(*gpu_pool));
             std::cout << "GpuPool: " << pool_cfg.slab_count << " slabs × "
@@ -118,42 +108,9 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
         }
     }
 
-    // Global embedder (CLIP) for cross-modal vector retrieval.
-    std::shared_ptr<embedding::IEmbedder> global_embedder;
-    {
-        auto global_cfg = pipeline_yaml["pipeline"]["stages"][2]["config"]["global_model"];
-        if (global_cfg.IsDefined() && global_cfg["enabled"].as<bool>(false)) {
-            if (!std::filesystem::exists(ClipEngine())) {
-                std::cerr << "Warning: CLIP engine not found at "
-                          << ClipEngine() << " — skipping global embedder\n";
-            } else {
-                auto clip_engine = std::make_shared<inference::TensorRtEngine>(
-                    /*device_ordinal=*/0);
-                inference::ClipConfig clip_cfg;
-                clip_cfg.engine_path = ClipEngine();
-                clip_cfg.image_size = 224;
-                clip_cfg.embed_dim = 512;
-
-                auto clip_adapter = inference::ClipAdapter::Create(
-                    *clip_engine, clip_cfg);
-                if (clip_adapter) {
-                    auto global_emb = embedding::GlobalEmbedder::Create(
-                        std::move(*clip_adapter));
-                    if (global_emb) {
-                        global_embedder = std::make_shared<embedding::GlobalEmbedder>(
-                            std::move(*global_emb));
-                        std::cout << "GlobalEmbedder: CLIP (enabled)\n";
-                    } else {
-                        std::cerr << "Warning: GlobalEmbedder creation failed: "
-                                  << global_emb.error().message << "\n";
-                    }
-                } else {
-                    std::cerr << "Warning: ClipAdapter creation failed: "
-                              << clip_adapter.error().message << "\n";
-                }
-            }
-        }
-    }
+    auto global_cfg = pipeline_yaml["pipeline"]["stages"][2]["config"]["global_model"];
+    bool global_embedding_enabled =
+        global_cfg.IsDefined() && global_cfg["enabled"].as<bool>(false);
 
     // =========================================================================
     // 3. Detection — PatchCore with matched embed_dim
@@ -440,6 +397,22 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     std::vector<PositionPipeline> position_pipelines;
 
     for (auto& pos_def : position_defs) {
+        auto embedder_result = seat_aoi::CreateDinoV2PatchEmbedder(
+            DinoV2Engine(), kImageSize, kPatchSize, kEmbedDim);
+        if (!embedder_result) {
+            return tl::make_unexpected(embedder_result.error());
+        }
+        auto position_embedder = std::move(*embedder_result);
+        if (gpu_pool_owner) position_embedder->SetGpuPool(gpu_pool_owner.get());
+
+        std::shared_ptr<embedding::IEmbedder> position_global_embedder;
+        if (global_embedding_enabled) {
+            auto global_result = seat_aoi::CreateClipGlobalEmbedder(
+                ClipEngine(), 224, 512);
+            if (!global_result) return tl::make_unexpected(global_result.error());
+            position_global_embedder = std::move(*global_result);
+        }
+
         auto pipeline_result = pipeline::Pipeline::LoadFromYAML(
             PipelineYaml().string(), *ctx);
         if (!pipeline_result) {
@@ -456,13 +429,14 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
             ds->AddDetector(pos_def.key.first, pos_def.key.second, pos_def.pc);
         }
 
-        // Wire shared components into this pipeline's stages
+        // Wire per-position inference resources and shared stateless components.
         if (auto* s = pos_pipeline->GetStage("inference")) {
-            static_cast<pipeline::InferenceStage*>(s)->SetEmbedder(embedder);
+            static_cast<pipeline::InferenceStage*>(s)->SetEmbedder(position_embedder);
             if (gpu_pool_owner)
                 static_cast<pipeline::InferenceStage*>(s)->SetGpuPool(gpu_pool_owner.get());
-            if (global_embedder)
-                static_cast<pipeline::InferenceStage*>(s)->SetGlobalEmbedder(global_embedder);
+            if (position_global_embedder)
+                static_cast<pipeline::InferenceStage*>(s)->SetGlobalEmbedder(
+                    position_global_embedder);
         }
         if (auto* s = pos_pipeline->GetStage("rule_eval")) {
             auto* rs = static_cast<pipeline::RuleEvalStage*>(s);
@@ -507,6 +481,9 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
         pp.key = pos_def.key;
         pp.pipeline = std::move(pos_pipeline);
         pp.patch_core = pos_def.pc;
+        pp.gpu_pool = gpu_pool_owner;
+        pp.embedder = std::move(position_embedder);
+        pp.global_embedder = std::move(position_global_embedder);
         if (pos_def.evo != nullptr) {
             pp.evolution_stop_source = std::stop_source{};
             pos_def.evo->Start(pp.evolution_stop_source.get_token());
@@ -545,14 +522,11 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     // =========================================================================
     AssembledApp app;
     app.ctx = std::move(ctx);
-    app.embedder = embedder;
-    app.gpu_pool = std::move(gpu_pool_owner);
     app.rule_engine = rule_engine;
     app.exporter = exporter;
     app.knowledge_store = std::move(ks);
     app.kg = kg;
     app.kg_evolution = kg_evolution;
-    app.global_embedder = global_embedder;
     app.sam2_segmenter = sam2_segmenter;
     app.reasoner = reasoner;
     app.feature_bank = feature_bank;

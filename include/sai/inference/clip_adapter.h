@@ -28,6 +28,7 @@ class ClipAdapter {
 public:
     [[nodiscard]] static auto Create(IInferenceEngine& engine,
                                       const ClipConfig& cfg) noexcept -> Result<ClipAdapter>;
+    [[nodiscard]] auto Initialize() noexcept -> Result<void>;
 
     // 声明于此，定义留在门控 Task 3 的 .cpp 文件中。
     [[nodiscard]] auto Infer(const sai::image::GpuImage& image) noexcept -> Result<GlobalFeatures>;
@@ -38,8 +39,9 @@ public:
 
     [[nodiscard]] auto ModelName() const noexcept -> std::string_view { return "CLIP"; }
 
-    ClipAdapter(ClipAdapter&&) noexcept = default;
-    auto operator=(ClipAdapter&&) noexcept -> ClipAdapter& = default;
+    ~ClipAdapter();
+    ClipAdapter(ClipAdapter&&) noexcept;
+    auto operator=(ClipAdapter&&) noexcept -> ClipAdapter&;
     ClipAdapter(const ClipAdapter&) = delete;
     auto operator=(const ClipAdapter&) -> ClipAdapter& = delete;
 
@@ -47,6 +49,7 @@ private:
     ClipAdapter(IInferenceEngine* engine, ClipConfig cfg) noexcept;
     IInferenceEngine* engine_ = nullptr;
     ClipConfig cfg_{};
+    void* output_buffer_ = nullptr;
 };
 
 inline auto ClipAdapter::Create(IInferenceEngine& engine,

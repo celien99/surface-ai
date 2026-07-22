@@ -28,10 +28,22 @@
 
 namespace sai::embedding {
 
-// 每实例独立 CUDA stream 的懒创建——仅 ExtractGpu 真正运行时才会分配。
-static auto EnsureStream(void*& stream) -> cudaError_t {
-    if (stream != nullptr) return cudaSuccess;
-    return cudaStreamCreate(reinterpret_cast<cudaStream_t*>(&stream));
+auto PatchEmbedder::InitializeGpuResources() noexcept -> Result<void> {
+    auto stream_err = cudaStreamCreate(reinterpret_cast<cudaStream_t*>(&cuda_stream_));
+    if (stream_err != cudaSuccess) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Inference_EngineExecutionFailed,
+            std::string("PatchEmbedder: failed to create CUDA stream: ")
+                + cudaGetErrorString(stream_err),
+        });
+    }
+    auto adapter_result = adapter_.Initialize();
+    if (!adapter_result) {
+        cudaStreamDestroy(reinterpret_cast<cudaStream_t>(cuda_stream_));
+        cuda_stream_ = nullptr;
+        return adapter_result;
+    }
+    return {};
 }
 
 PatchEmbedder::~PatchEmbedder() {
@@ -57,13 +69,10 @@ auto PatchEmbedder::ExtractGpu(const sai::image::Image& image) noexcept
         });
     }
 
-    // 懒创建独立 CUDA stream——默认流会导致多线程 GPU 操作隐式串行化
-    cudaError_t stream_err = EnsureStream(cuda_stream_);
-    if (stream_err != cudaSuccess) {
+    if (cuda_stream_ == nullptr) {
         return tl::make_unexpected(ErrorInfo{
             ErrorCode::Inference_EngineExecutionFailed,
-            std::string("PatchEmbedder: failed to create CUDA stream: ")
-                + cudaGetErrorString(stream_err),
+            "PatchEmbedder GPU resources are not initialized",
         });
     }
     auto* stream = reinterpret_cast<cudaStream_t>(cuda_stream_);

@@ -75,7 +75,7 @@ auto InferenceStage::Process(StageInput input) -> Result<StageOutput> {
 
         // Secondary: Global embedder (CLIP → global features for retrieval)
         if (!stub_ && global_embedder_) {
-            auto global_result = global_embedder_->Extract(*img);
+            auto global_result = global_embedder_->Extract(gpu_img);
             if (!global_result) return failure(global_result.error());
             const auto& global_meta = global_result->Meta();
             auto count = global_meta.count;

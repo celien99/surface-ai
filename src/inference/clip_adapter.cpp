@@ -6,11 +6,58 @@
 
 #include <sai/image/gpu_image.h>
 
+#include <cuda_runtime.h>
+
 #include <string>
 
 namespace sai::inference {
 
+auto ClipAdapter::Initialize() noexcept -> Result<void> {
+    void* ptr = nullptr;
+    auto err = cudaMalloc(&ptr, cfg_.embed_dim * sizeof(float));
+    if (err != cudaSuccess) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Inference_EngineExecutionFailed,
+            std::string("ClipAdapter: cudaMalloc failed: ") + cudaGetErrorString(err),
+        });
+    }
+    auto set_result = engine_->SetTensorAddress("features", ptr);
+    if (!set_result) {
+        cudaFree(ptr);
+        return tl::make_unexpected(set_result.error());
+    }
+    output_buffer_ = ptr;
+    return {};
+}
+
+ClipAdapter::~ClipAdapter() {
+    if (output_buffer_ != nullptr) cudaFree(output_buffer_);
+}
+
+ClipAdapter::ClipAdapter(ClipAdapter&& other) noexcept
+    : engine_(other.engine_), cfg_(std::move(other.cfg_)),
+      output_buffer_(other.output_buffer_) {
+    other.output_buffer_ = nullptr;
+}
+
+auto ClipAdapter::operator=(ClipAdapter&& other) noexcept -> ClipAdapter& {
+    if (this != &other) {
+        if (output_buffer_ != nullptr) cudaFree(output_buffer_);
+        engine_ = other.engine_;
+        cfg_ = std::move(other.cfg_);
+        output_buffer_ = other.output_buffer_;
+        other.output_buffer_ = nullptr;
+    }
+    return *this;
+}
+
 auto ClipAdapter::Infer(const sai::image::GpuImage& image) noexcept -> Result<GlobalFeatures> {
+    if (output_buffer_ == nullptr) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Inference_EngineExecutionFailed,
+            "ClipAdapter is not initialized",
+        });
+    }
     // 1. 设置 "pixel_values" 输入 tensor 的 GPU 地址。
     auto set_result = engine_->SetTensorAddress(
         "pixel_values",
@@ -68,6 +115,12 @@ auto ClipAdapter::Infer(const sai::image::GpuImage& image) noexcept -> Result<Gl
 
 auto ClipAdapter::InferAsync(const sai::image::GpuImage& image,
                               void* stream) noexcept -> Result<GlobalFeatures> {
+    if (output_buffer_ == nullptr) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Inference_EngineExecutionFailed,
+            "ClipAdapter is not initialized",
+        });
+    }
     // 1. Set input tensor address (same as sync path)
     auto set_result = engine_->SetTensorAddress(
         "pixel_values",

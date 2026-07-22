@@ -90,6 +90,13 @@ auto PatchEmbedder::ExtractBatch(
 // Non-CUDA stub for ExtractGpu — overridden by patch_embedder_cuda.cpp
 // when SAI_CUDA_ENABLED is defined.
 #if !defined(SAI_CUDA_ENABLED)
+auto PatchEmbedder::InitializeGpuResources() noexcept -> Result<void> {
+    return tl::make_unexpected(ErrorInfo{
+        ErrorCode::Inference_EngineExecutionFailed,
+        "PatchEmbedder GPU resources are not available on this platform",
+    });
+}
+
 auto PatchEmbedder::ExtractGpu(const sai::image::Image& /*image*/) noexcept
     -> Result<Embedding> {
     return tl::make_unexpected(ErrorInfo{
