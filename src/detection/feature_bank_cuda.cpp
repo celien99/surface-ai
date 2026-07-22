@@ -12,12 +12,14 @@
 
 #include <sai/detection/feature_bank.h>
 
+#include <algorithm>
 #include <cstddef>
+#include <cmath>
 #include <memory>
 #include <source_location>
 #include <vector>
 
-#include <faiss/IndexFlat.h>
+#include <faiss/IndexIVFFlat.h>
 #include <faiss/gpu/GpuCloner.h>
 #include <faiss/gpu/StandardGpuResources.h>
 
@@ -37,20 +39,11 @@ auto FeatureBank::ToGpu(int device) noexcept -> Result<void> {
     }
 
     try {
-        auto* cpu_index = dynamic_cast<faiss::IndexFlat*>(index_.get());
-        if (cpu_index == nullptr) {
-            return tl::make_unexpected(ErrorInfo{
-                ErrorCode::Detection_FeatureBankLoadFailed,
-                "FeatureBank::ToGpu: index is not IndexFlat, GPU migration unsupported",
-                std::source_location::current(),
-            });
-        }
-
         gpu_resources_ = std::make_unique<faiss::gpu::StandardGpuResources>();
-        gpu_resources_->setTempMemory(512 * 1024 * 1024);  // 512 MiB temp
+        gpu_resources_->setTempMemory(64 * 1024 * 1024);
 
         auto* gpu_index = faiss::gpu::index_cpu_to_gpu(
-            gpu_resources_.get(), device, cpu_index);
+            gpu_resources_.get(), device, index_.get());
 
         // Store the GPU index as a unique_ptr; the CPU index remains owned
         // by index_ (we don't destroy it — the GPU index wraps it).
@@ -68,6 +61,21 @@ auto FeatureBank::ToGpu(int device) noexcept -> Result<void> {
             std::source_location::current(),
         });
     }
+}
+
+auto FeatureBank::PrepareGpuIvf(int device) noexcept -> Result<void> {
+    if (num_samples_ < 2) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Detection_FeatureBankLoadFailed,
+            "FeatureBank::PrepareGpuIvf requires at least two samples",
+            std::source_location::current(),
+        });
+    }
+    auto nlist = std::min<std::size_t>(
+        256, static_cast<std::size_t>(std::floor(std::sqrt(num_samples_))));
+    auto convert_result = ConvertToIVF(nlist);
+    if (!convert_result) return convert_result;
+    return ToGpu(device);
 }
 
 auto FeatureBank::IsOnGpu() const noexcept -> bool {

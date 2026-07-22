@@ -119,7 +119,7 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
             auto loaded_detector_bank = std::make_unique<detection::FeatureBank>(
                 std::move(*fb_result));
 #if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
-            auto detector_gpu_result = loaded_detector_bank->ToGpu();
+            auto detector_gpu_result = loaded_detector_bank->PrepareGpuIvf();
             if (!detector_gpu_result) {
                 return tl::make_unexpected(detector_gpu_result.error());
             }
@@ -195,7 +195,7 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
                 auto position_bank = std::make_unique<detection::FeatureBank>(
                     std::move(*fb_result));
 #if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
-                auto position_gpu_result = position_bank->ToGpu();
+                auto position_gpu_result = position_bank->PrepareGpuIvf();
                 if (!position_gpu_result) {
                     return tl::make_unexpected(position_gpu_result.error());
                 }

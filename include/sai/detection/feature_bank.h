@@ -97,15 +97,13 @@ public:
     // changes from exact to approximate.
     auto ConvertToIVF(std::size_t nlist = 256) noexcept -> Result<void>;
 
-    // Set the number of clusters to probe during search.
-    // Higher = more accurate but slower. Typical range: 1-16.
-    auto SetNprobe(std::size_t nprobe) noexcept -> void { nprobe_ = nprobe; }
     [[nodiscard]] auto Nprobe() const noexcept -> std::size_t { return nprobe_; }
 
     // GPU acceleration (only available when SAI_CUDA_ENABLED is defined AND
     // FAISS GPU clone headers are exported by the configured faiss target.
 #if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
     [[nodiscard]] auto ToGpu(int device = 0) noexcept -> Result<void>;
+    [[nodiscard]] auto PrepareGpuIvf(int device = 0) noexcept -> Result<void>;
     [[nodiscard]] auto IsOnGpu() const noexcept -> bool;
 #endif
 

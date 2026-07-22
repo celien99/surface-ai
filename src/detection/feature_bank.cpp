@@ -12,10 +12,6 @@
 
 #include <faiss/IndexFlat.h>
 #include <faiss/IndexIVFFlat.h>
-#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
-#include <faiss/gpu/GpuIndexFlat.h>
-#include <faiss/gpu/StandardGpuResources.h>
-#endif
 
 namespace sai::detection {
 
@@ -87,12 +83,6 @@ auto FeatureBank::Search(const float* query, std::size_t query_count,
 #else
     auto* idx = index_.get();
 #endif
-
-    // Configure nprobe for IVFFlat indices — dynamic_cast is safe here
-    // because this is on the hot path and the cast is a simple vtable check.
-    if (auto* ivf = dynamic_cast<faiss::IndexIVFFlat*>(idx)) {
-        ivf->nprobe = static_cast<std::size_t>(nprobe_);
-    }
 
     idx->search(nq, query, nk, distances.data(), labels.data());
 
@@ -516,6 +506,8 @@ auto FeatureBank::ConvertToIVF(std::size_t nlist) noexcept -> Result<void> {
 
     new_index->train(static_cast<faiss::idx_t>(n), vectors.data());
     new_index->add(static_cast<faiss::idx_t>(n), vectors.data());
+    nprobe_ = std::min<std::size_t>(4, effective_nlist);
+    new_index->nprobe = nprobe_;
 
 #if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
     gpu_index_.reset();

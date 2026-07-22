@@ -473,7 +473,7 @@ auto CoresetEvolution::Start(std::stop_token /*token*/) noexcept -> void {
                 if (!fb.has_value()) continue;
                 auto new_bank = std::make_unique<FeatureBank>(std::move(*fb));
 #if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
-                auto gpu_result = new_bank->ToGpu();
+                auto gpu_result = new_bank->PrepareGpuIvf();
                 if (!gpu_result) {
                     sai::infra::Logger::Get("detection").Log(
                         sai::infra::LogLevel::Error,
@@ -679,7 +679,7 @@ auto CoresetEvolution::FullRebuild(const std::filesystem::path& save_path) noexc
 
     auto new_bank = std::make_unique<FeatureBank>(std::move(*fb_result));
 #if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
-    auto gpu_result = new_bank->ToGpu();
+    auto gpu_result = new_bank->PrepareGpuIvf();
     if (!gpu_result) {
         return tl::make_unexpected(gpu_result.error());
     }

@@ -88,7 +88,7 @@ auto PatchCore::Initialize(sai::Context& /*ctx*/) noexcept -> Result<void> {
         if (!load_result) return tl::make_unexpected(load_result.error());
         feature_bank_ = std::make_unique<FeatureBank>(std::move(*load_result));
 #if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
-        auto gpu_result = feature_bank_->ToGpu();
+        auto gpu_result = feature_bank_->PrepareGpuIvf();
         if (!gpu_result) return tl::make_unexpected(gpu_result.error());
 #endif
     }
@@ -143,7 +143,7 @@ auto PatchCore::Initialize(sai::Context& /*ctx*/) noexcept -> Result<void> {
                                                     embed_dim, wp);
                     feature_bank_->Rebuild(whitened.data(), num_samples, total_k);
 #if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
-                    auto gpu_result = feature_bank_->ToGpu();
+                    auto gpu_result = feature_bank_->PrepareGpuIvf();
                     if (!gpu_result) return tl::make_unexpected(gpu_result.error());
 #endif
                     whitening_params_ = std::move(wp);

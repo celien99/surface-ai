@@ -191,7 +191,7 @@ auto DetectStage::Process(StageInput input) -> Result<StageOutput> {
                     auto bootstrap_bank = std::make_unique<detection::FeatureBank>(
                         std::move(*fb_result));
 #if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
-                    auto gpu_result = bootstrap_bank->ToGpu();
+                    auto gpu_result = bootstrap_bank->PrepareGpuIvf();
                     if (!gpu_result) {
                         auto error = gpu_result.error();
                         bootstrap_states_.erase(key);
