@@ -366,12 +366,11 @@ auto Pipeline::Start() -> Result<void> {
                             elapsed, std::memory_order_relaxed);
                         // Stop-token-aware enqueue: if shutdown was requested
                         // while we were processing, drop the output and exit.
+                        auto output = std::move(result).value();
+                        output.AttachFrame(std::move(frame_context));
                         auto pushed = EnqueueOutputs(
                                 *stage_id_sp,
-                                std::make_unique<StageOutput>(
-                                    StageOutput::MakeWithContext(
-                                        frame_context,
-                                        std::move(result).value())),
+                                std::make_unique<StageOutput>(std::move(output)),
                                 st);
                         in_flight_frames_.fetch_sub(1, std::memory_order_acq_rel);
                         if (!pushed) {

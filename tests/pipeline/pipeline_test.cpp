@@ -79,6 +79,22 @@ TEST(IStageNodeTest, ProcessPassthrough) {
     EXPECT_NE(result.value().GetIf<RawImage>(), nullptr);
 }
 
+TEST(StageDataTest, MovingStageOutputPreservesConcreteTypeAndFrame) {
+    auto frame = std::make_shared<FrameContext>();
+    frame->frame_id = 17;
+
+    auto output = StageOutput::MakeWithContext(
+        frame,
+        RawImage::FromOwnedBuffer(
+            std::vector<std::uint8_t>{1, 2, 3}, sai::image::ImageMeta{}));
+    auto forwarded = StageOutput(std::move(output));
+    forwarded.AttachFrame(frame);
+
+    EXPECT_NE(forwarded.GetIf<RawImage>(), nullptr);
+    ASSERT_NE(forwarded.Frame(), nullptr);
+    EXPECT_EQ(forwarded.Frame()->frame_id, 17U);
+}
+
 TEST(IStageNodeTest, GetTypeAndId) {
     MockStage stage("my_id", StageType::Reason);
     EXPECT_EQ(stage.GetType(), StageType::Reason);
