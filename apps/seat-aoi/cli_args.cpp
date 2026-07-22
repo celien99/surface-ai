@@ -22,8 +22,6 @@ auto ParseArgs(int argc, char* argv[]) -> CliArgs {
         } else if (arg == "--coreset-output" && i + 1 < argc) {
             args.coreset_output_path = argv[++i];
             args.train_mode = true;
-        } else if (arg == "--coreset-algo" && i + 1 < argc) {
-            args.coreset_algo = argv[++i];
         } else if (arg == "--coreset-max-samples" && i + 1 < argc) {
             args.coreset_max_samples = static_cast<std::size_t>(std::stoull(argv[++i]));
         } else if (arg == "--cpu") {

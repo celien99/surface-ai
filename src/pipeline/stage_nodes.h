@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -19,6 +20,7 @@
 #include <sai/inference/inference_engine.h>
 #include <sai/embedding/embedder.h>
 #include <sai/detection/detector.h>
+#include <sai/detection/bounded_patch_sampler.h>
 #include <sai/rule/rule_engine.h>
 #include <sai/rule/fact_builder.h>
 #include <sai/knowledge/knowledge_graph.h>
@@ -161,7 +163,7 @@ private:
     std::size_t bootstrap_target_size_ = 10000;
 
     struct BootstrapState {
-        std::vector<float> vectors;  // accumulated patch vectors (flattened)
+        std::optional<sai::detection::BoundedPatchSampler> sampler;
         std::size_t dim = 0;
         std::size_t grid_h = 0;
         std::size_t grid_w = 0;

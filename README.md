@@ -220,7 +220,6 @@ docker compose --profile detect up seat_aoi_detect
 # 训练模式：从正常样本图像目录构建 Coreset
 ./seat_aoi train \
     --image-dir /data/normal/ \
-    --coreset-algo greedy \
     --coreset-max-samples 10000 \
     --coreset-output /app/resources/coresets/default.bin
 

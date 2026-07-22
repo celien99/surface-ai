@@ -57,40 +57,17 @@ public:
     // path: N×dim float32 值（little-endian，行主序）
     [[nodiscard]] auto SaveToFile(const std::filesystem::path& path) const noexcept -> Result<void>;
 
-    // 从多个 Embedding（正常样本）构建 coreset FeatureBank。
-    // 提取所有 patch 向量，均匀采样至 max_samples 个，构建 FAISS 索引。
-    // dim 必须与 Embedding 的 dim 一致。
+    // 从多个 CPU Embedding 流式构建有界 coreset FeatureBank。
+    // 固定种子 reservoir sampling 保证内存不随总 patch 数增长。
     [[nodiscard]] static auto BuildFromEmbeddings(
         std::span<const sai::embedding::Embedding* const> embeddings,
         std::size_t dim,
         std::size_t max_samples = 10000) noexcept -> Result<FeatureBank>;
 
-    // Greedy coreset selection via furthest-point sampling.
-    // Extracts all patch vectors from embeddings, then iteratively selects
-    // patches that maximize coverage of the normal manifold (minimize max
-    // distance to nearest coreset point). Produces a more representative
-    // coreset than uniform subsampling. Distance evaluation is batched through
-    // FAISS; CPU only maintains the furthest-point selection state.
-    [[nodiscard]] static auto BuildWithGreedyCoreset(
-        std::span<const sai::embedding::Embedding* const> embeddings,
-        std::size_t dim,
-        std::size_t max_samples = 10000) noexcept -> Result<FeatureBank>;
-
-    // FAISS IndexIVFFlat support — inverted index with K-means clustering.
-    // Reduces search cost by ~98% (only 2-3 of 256 clusters probed) with
-    // < 0.5% recall loss compared to brute-force IndexFlatL2.
-    //
-    // nlist: number of clusters (centroids), typically sqrt(N) — e.g., 256
-    //         for 10k samples.
-    // nprobe: number of clusters to probe at search time (default 4).
-    //
-    // Training uses the provided vectors for K-means clustering; after
-    // training, all vectors are added to the inverted lists.
-    [[nodiscard]] static auto BuildWithIVF(
-        std::span<const sai::embedding::Embedding* const> embeddings,
-        std::size_t dim,
-        std::size_t max_samples = 10000,
-        std::size_t nlist = 256) noexcept -> Result<FeatureBank>;
+    [[nodiscard]] static auto BuildFromVectors(const float* vectors,
+                                               std::size_t count,
+                                               std::size_t dim) noexcept
+        -> FeatureBank;
 
     // Convert an existing flat-index FeatureBank to IVFFlat by training
     // on its own vectors. The original index is replaced; search behavior

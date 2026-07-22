@@ -1,11 +1,10 @@
 // feature_bank.cpp — FeatureBank 可移植 CPU 实现（FAISS IndexFlatL2）
 #include <sai/detection/feature_bank.h>
+#include <sai/detection/bounded_patch_sampler.h>
 
-#include <cmath>
+#include <algorithm>
 #include <cstddef>
-#include <cstring>
 #include <fstream>
-#include <limits>
 #include <memory>
 #include <source_location>
 #include <span>
@@ -94,9 +93,7 @@ auto FeatureBank::ExtractAllVectors() const noexcept -> std::vector<float> {
         return {};
     }
     std::vector<float> result(num_samples_ * dim_);
-    for (std::size_t i = 0; i < num_samples_; ++i) {
-        index_->reconstruct(static_cast<faiss::idx_t>(i), result.data() + i * dim_);
-    }
+    index_->reconstruct_n(0, static_cast<faiss::idx_t>(num_samples_), result.data());
     return result;
 }
 
@@ -159,9 +156,7 @@ auto FeatureBank::BuildFromEmbeddings(
         });
     }
 
-    // Collect all patch vectors from all embeddings
-    std::vector<float> all_vectors;
-    std::size_t total_patches = 0;
+    BoundedPatchSampler sampler(dim, max_samples);
 
     for (const auto* emb : embeddings) {
         if (emb == nullptr) continue;
@@ -176,12 +171,10 @@ auto FeatureBank::BuildFromEmbeddings(
         }
         auto count = meta.count;
         if (count == 0) continue;
-        const float* data = emb->Data();
-        all_vectors.insert(all_vectors.end(), data, data + count * dim);
-        total_patches += count;
+        sampler.Add(emb->Data(), count);
     }
 
-    if (total_patches == 0) {
+    if (sampler.Size() == 0) {
         return tl::make_unexpected(ErrorInfo{
             ErrorCode::Detection_FeatureBankLoadFailed,
             "BuildFromEmbeddings: no patch vectors extracted from embeddings",
@@ -189,169 +182,14 @@ auto FeatureBank::BuildFromEmbeddings(
         });
     }
 
-    // Uniform subsampling if total exceeds max_samples
-    std::size_t num_samples = total_patches;
-    const float* sampled_data = all_vectors.data();
-
-    if (total_patches > max_samples) {
-        // Stride-based subsampling: take every Nth vector
-        num_samples = max_samples;
-        auto stride = static_cast<std::size_t>(
-            static_cast<double>(total_patches) / static_cast<double>(max_samples));
-        if (stride < 1) stride = 1;
-
-        std::vector<float> subsampled;
-        subsampled.reserve(num_samples * dim);
-        for (std::size_t i = 0; i < total_patches && subsampled.size() / dim < max_samples; i += stride) {
-            subsampled.insert(subsampled.end(),
-                              all_vectors.data() + i * dim,
-                              all_vectors.data() + (i + 1) * dim);
-        }
-        // Adjust to exact max_samples
-        while (subsampled.size() / dim < max_samples && subsampled.size() / dim < total_patches) {
-            auto idx = subsampled.size() / dim;
-            subsampled.insert(subsampled.end(),
-                              all_vectors.data() + idx * dim,
-                              all_vectors.data() + (idx + 1) * dim);
-        }
-        all_vectors = std::move(subsampled);
-        sampled_data = all_vectors.data();
-        num_samples = all_vectors.size() / dim;
-    }
-
-    FeatureBank bank;
-    bank.Rebuild(sampled_data, num_samples, dim);
-    return bank;
+    return BuildFromVectors(sampler.Vectors().data(), sampler.Size(), dim);
 }
 
-auto FeatureBank::BuildWithGreedyCoreset(
-    std::span<const sai::embedding::Embedding* const> embeddings,
-    std::size_t dim,
-    std::size_t max_samples) noexcept -> Result<FeatureBank> {
-    if (embeddings.empty()) {
-        return tl::make_unexpected(ErrorInfo{
-            ErrorCode::Detection_FeatureBankLoadFailed,
-            "BuildWithGreedyCoreset: no embeddings provided",
-            std::source_location::current(),
-        });
-    }
-
-    // Collect all patch vectors and validate dimensions.
-    std::vector<float> all_vectors;
-    std::size_t total_patches = 0;
-
-    for (const auto* emb : embeddings) {
-        if (emb == nullptr) continue;
-        const auto& meta = emb->Meta();
-        if (meta.dim != dim) {
-            return tl::make_unexpected(ErrorInfo{
-                ErrorCode::Detection_FeatureBankLoadFailed,
-                "BuildWithGreedyCoreset: embedding dim mismatch (expected "
-                    + std::to_string(dim) + ", got " + std::to_string(meta.dim) + ")",
-                std::source_location::current(),
-            });
-        }
-        auto count = meta.count;
-        if (count == 0) continue;
-        const float* data = emb->Data();
-        all_vectors.insert(all_vectors.end(), data, data + count * dim);
-        total_patches += count;
-    }
-
-    if (total_patches == 0) {
-        return tl::make_unexpected(ErrorInfo{
-            ErrorCode::Detection_FeatureBankLoadFailed,
-            "BuildWithGreedyCoreset: no patch vectors extracted",
-            std::source_location::current(),
-        });
-    }
-
-    auto num_samples = std::min(max_samples, total_patches);
-
-    // ── Greedy furthest-point sampling ──
-    // min_dist[i] = squared L2 distance from patch i to nearest coreset point.
-    std::vector<float> min_dist(total_patches, std::numeric_limits<float>::max());
-    std::vector<std::size_t> coreset_indices;
-    coreset_indices.reserve(num_samples);
-
-#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
-    std::unique_ptr<faiss::gpu::StandardGpuResources> selected_resources;
-#endif
-    std::unique_ptr<faiss::Index> selected_index;
-    std::vector<faiss::idx_t> labels(total_patches);
-    try {
-#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
-        selected_resources = std::make_unique<faiss::gpu::StandardGpuResources>();
-        auto selected_cpu = std::make_unique<faiss::IndexFlatL2>(
-            static_cast<faiss::idx_t>(dim));
-        selected_resources->setTempMemory(512 * 1024 * 1024);
-        selected_cpu->add(1, all_vectors.data());
-        selected_index = std::unique_ptr<faiss::Index>(faiss::gpu::index_cpu_to_gpu(
-            selected_resources.get(), 0, selected_cpu.get()));
-#else
-        selected_index = std::make_unique<faiss::IndexFlatL2>(
-            static_cast<faiss::idx_t>(dim));
-        selected_index->add(1, all_vectors.data());
-#endif
-
-        coreset_indices.push_back(0);
-        selected_index->search(static_cast<faiss::idx_t>(total_patches),
-                               all_vectors.data(), 1,
-                               min_dist.data(), labels.data());
-
-        // Iteratively select furthest point from current coreset.
-        for (std::size_t k = 1; k < num_samples; ++k) {
-            std::size_t best_idx = 0;
-            float best_dist = -1.0F;
-            for (std::size_t i = 0; i < total_patches; ++i) {
-                if (min_dist[i] > best_dist) {
-                    best_dist = min_dist[i];
-                    best_idx = i;
-                }
-            }
-
-            coreset_indices.push_back(best_idx);
-            selected_index->add(1, all_vectors.data() + best_idx * dim);
-            selected_index->search(static_cast<faiss::idx_t>(total_patches),
-                                   all_vectors.data(), 1,
-                                   min_dist.data(), labels.data());
-        }
-    } catch (const std::exception& e) {
-        return tl::make_unexpected(ErrorInfo{
-            ErrorCode::Detection_FeatureBankLoadFailed,
-            std::string("BuildWithGreedyCoreset FAISS selection failed: ") + e.what(),
-            std::source_location::current(),
-        });
-    }
-
-    // Build output vector from selected indices.
-    std::vector<float> coreset_data;
-    coreset_data.reserve(num_samples * dim);
-    for (auto idx : coreset_indices) {
-        coreset_data.insert(coreset_data.end(),
-                            all_vectors.data() + idx * dim,
-                            all_vectors.data() + (idx + 1) * dim);
-    }
-
-    // Compute coverage statistics.
-    float min_coverage = std::numeric_limits<float>::max();
-    float max_coverage = 0.0F;
-    double mean_coverage = 0.0;
-    for (std::size_t i = 0; i < total_patches; ++i) {
-        float d = std::sqrt(min_dist[i]);
-        if (d < min_coverage) min_coverage = d;
-        if (d > max_coverage) max_coverage = d;
-        mean_coverage += static_cast<double>(d);
-    }
-    mean_coverage /= static_cast<double>(total_patches);
-
-    // Log coverage stats (informational, not error).
-    (void)min_coverage;
-    (void)max_coverage;
-    (void)mean_coverage;
-
+auto FeatureBank::BuildFromVectors(const float* vectors,
+                                   std::size_t count,
+                                   std::size_t dim) noexcept -> FeatureBank {
     FeatureBank bank;
-    bank.Rebuild(coreset_data.data(), num_samples, dim);
+    bank.Rebuild(vectors, count, dim);
     return bank;
 }
 
@@ -361,113 +199,6 @@ auto FeatureBank::operator=(FeatureBank&&) noexcept -> FeatureBank& = default;
 FeatureBank::~FeatureBank() = default;
 
 FeatureBank::FeatureBank() noexcept = default;
-
-// ────────────────────────────────────────────────────────────────────
-// IVFFlat support: inverted index with K-means clustering
-// ────────────────────────────────────────────────────────────────────
-
-auto FeatureBank::BuildWithIVF(
-    std::span<const sai::embedding::Embedding* const> embeddings,
-    std::size_t dim,
-    std::size_t max_samples,
-    std::size_t nlist) noexcept -> Result<FeatureBank> {
-    // First, collect all vectors using the same logic as BuildFromEmbeddings
-    if (embeddings.empty()) {
-        return tl::make_unexpected(ErrorInfo{
-            ErrorCode::Detection_FeatureBankLoadFailed,
-            "BuildWithIVF: no embeddings provided",
-            std::source_location::current(),
-        });
-    }
-
-    std::vector<float> all_vectors;
-    std::size_t total_patches = 0;
-
-    for (const auto* emb : embeddings) {
-        if (emb == nullptr) continue;
-        const auto& meta = emb->Meta();
-        if (meta.dim != dim) {
-            return tl::make_unexpected(ErrorInfo{
-                ErrorCode::Detection_FeatureBankLoadFailed,
-                "BuildWithIVF: embedding dim mismatch (expected "
-                    + std::to_string(dim) + ", got " + std::to_string(meta.dim) + ")",
-                std::source_location::current(),
-            });
-        }
-        auto count = meta.count;
-        if (count == 0) continue;
-        const float* data = emb->Data();
-        all_vectors.insert(all_vectors.end(), data, data + count * dim);
-        total_patches += count;
-    }
-
-    if (total_patches == 0) {
-        return tl::make_unexpected(ErrorInfo{
-            ErrorCode::Detection_FeatureBankLoadFailed,
-            "BuildWithIVF: no patch vectors extracted from embeddings",
-            std::source_location::current(),
-        });
-    }
-
-    // Uniform subsampling if total exceeds max_samples
-    std::size_t num_samples = total_patches;
-    const float* sampled_data = all_vectors.data();
-    std::vector<float> subsampled;
-
-    if (total_patches > max_samples) {
-        num_samples = max_samples;
-        auto stride = static_cast<std::size_t>(
-            static_cast<double>(total_patches) / static_cast<double>(max_samples));
-        if (stride < 1) stride = 1;
-
-        subsampled.reserve(num_samples * dim);
-        for (std::size_t i = 0;
-             i < total_patches && subsampled.size() / dim < max_samples;
-             i += stride) {
-            subsampled.insert(subsampled.end(),
-                              all_vectors.data() + i * dim,
-                              all_vectors.data() + (i + 1) * dim);
-        }
-        sampled_data = subsampled.data();
-        num_samples = subsampled.size() / dim;
-    }
-
-    // Clamp nlist: FAISS requires nlist <= num_samples for training.
-    // For very small banks, fall back to a flat index.
-    auto effective_nlist = std::min(nlist, num_samples);
-    if (effective_nlist < 2) {
-        // Too few samples for clustering — fall back to flat index
-        FeatureBank bank;
-        bank.Rebuild(sampled_data, num_samples, dim);
-        return bank;
-    }
-
-    // Create IVFFlat quantizer + index
-    auto quantizer =
-        std::make_unique<faiss::IndexFlatL2>(static_cast<faiss::idx_t>(dim));
-    auto index = std::make_unique<faiss::IndexIVFFlat>(
-        quantizer.get(),
-        static_cast<faiss::idx_t>(dim),
-        static_cast<faiss::idx_t>(effective_nlist),
-        faiss::METRIC_L2);
-
-    // IndexIVFFlat takes ownership of quantizer — release unique_ptr
-    index->own_fields = true;
-    quantizer.release();
-
-    // Train K-means on all vectors
-    index->train(static_cast<faiss::idx_t>(num_samples), sampled_data);
-
-    // Add vectors to inverted lists
-    index->add(static_cast<faiss::idx_t>(num_samples), sampled_data);
-
-    FeatureBank bank;
-    bank.index_ = std::move(index);
-    bank.dim_ = dim;
-    bank.num_samples_ = num_samples;
-    bank.nprobe_ = 4;
-    return bank;
-}
 
 auto FeatureBank::ConvertToIVF(std::size_t nlist) noexcept -> Result<void> {
     if (!index_ || num_samples_ == 0 || dim_ == 0) {

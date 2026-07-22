@@ -20,7 +20,6 @@ services:
     command: >
       train
       --image-dir /data/normal/
-      --coreset-algo greedy
       --coreset-max-samples 10000
       --coreset-output /app/resources/coresets/default.bin
     profiles:

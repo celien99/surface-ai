@@ -1,10 +1,10 @@
 // coreset_evolution.cpp — CoresetEvolution 门面（PIMPL）
 #include <sai/detection/coreset_evolution.h>
+#include <sai/detection/bounded_patch_sampler.h>
 #include <sai/detection/detection_result.h>
 #include <sai/knowledge/knowledge_store.h>
 #include <sai/detection/feature_bank.h>
 #include <sai/detection/patch_core.h>
-#include <sai/embedding/embedding.h>
 #include <sai/infra/logger.h>
 
 #include <algorithm>
@@ -73,23 +73,32 @@ auto CheckNovelty(const float* distances, std::size_t count,
     return r;
 }
 
-// ── Internal: light greedy prefilter ──
-auto PrefilterCandidates(const std::vector<float>& vectors, std::size_t dim,
-                         std::size_t target) -> std::vector<float> {
-    auto total = vectors.size() / dim;
-    if (total <= target) return vectors;
+struct BoundedBankBuild {
+    std::unique_ptr<FeatureBank> bank;
+    std::vector<float> vectors;
+};
 
-    std::vector<float> out;
-    out.reserve(target * dim);
-    auto stride = total / target;
-    if (stride < 1) stride = 1;
-    for (std::size_t i = 0; i < target && i * stride < total; ++i) {
-        auto idx = i * stride;
-        out.insert(out.end(),
-                   vectors.begin() + static_cast<std::ptrdiff_t>(idx * dim),
-                   vectors.begin() + static_cast<std::ptrdiff_t>((idx + 1) * dim));
+auto BuildBoundedBank(const std::vector<float>& existing,
+                      const std::vector<EvolutionCandidate>& candidates,
+                      std::size_t dim,
+                      std::size_t candidate_limit,
+                      std::size_t target_size) -> BoundedBankBuild {
+    BoundedPatchSampler candidate_sampler(dim, candidate_limit);
+    for (const auto& candidate : candidates) {
+        candidate_sampler.Add(candidate.patch_vectors.get(),
+                              candidate.grid_h * candidate.grid_w);
     }
-    return out;
+
+    BoundedPatchSampler merged(dim, target_size);
+    merged.Add(existing.data(), existing.size() / dim);
+    merged.Add(candidate_sampler.Vectors().data(), candidate_sampler.Size());
+    if (merged.Size() == 0) return {};
+
+    BoundedBankBuild build;
+    build.vectors = merged.Vectors();
+    build.bank = std::make_unique<FeatureBank>(FeatureBank::BuildFromVectors(
+        build.vectors.data(), merged.Size(), dim));
+    return build;
 }
 
 }  // namespace
@@ -127,7 +136,8 @@ auto EvolutionConfig::FromYaml(const YAML::Node& node) -> Result<EvolutionConfig
             cfg.target_size = u["target_size"].as<std::size_t>(10000);
             cfg.min_update_interval = std::chrono::seconds{
                 u["min_interval_sec"].as<int>(5)};
-            cfg.greedy_prefilter = u["greedy_prefilter"].as<std::size_t>(5000);
+            cfg.candidate_sample_limit =
+                u["candidate_sample_limit"].as<std::size_t>(5000);
         }
 
         if (auto p = se["persistence"]; p.IsDefined()) {
@@ -143,8 +153,6 @@ auto EvolutionConfig::FromYaml(const YAML::Node& node) -> Result<EvolutionConfig
                 m["saturation_window"].as<std::size_t>(10);
             cfg.max_incremental_updates =
                 m["max_incremental_updates"].as<std::size_t>(100);
-            cfg.drift_auto_rebuild =
-                m["drift_auto_rebuild"].as<bool>(false);
             cfg.evolution_self_validation =
                 m["self_validation"].as<bool>(true);
             cfg.validation_degradation_threshold =
@@ -170,6 +178,7 @@ struct CoresetEvolution::Impl {
     CandidateBuffer buffer;
     EvolutionStats stats;
     std::unique_ptr<FeatureBank> standby_bank;
+    std::vector<float> selection_vectors;
 
     // Background thread
     std::jthread update_thread;
@@ -177,6 +186,7 @@ struct CoresetEvolution::Impl {
     std::mutex cv_mutex;  // required by condition_variable_any (CV protocol)
     std::condition_variable_any notify_cv;
     std::mutex stats_mutex;
+    std::chrono::steady_clock::time_point last_update;
 
     std::shared_ptr<knowledge::KnowledgeStore> knowledge_store;
     std::filesystem::path save_path;
@@ -219,20 +229,9 @@ struct CoresetEvolution::Impl {
                     "mean_displacement={} exceeds 2σ threshold={}. ",
                     new_displacement, threshold);
 
-                // Reset saturation — drifted data may need new patches
+                // Drifted data may need new patches.
                 consecutive_saturation_count = 0;
                 evolution_paused = false;
-
-                if (cfg.drift_auto_rebuild) {
-                    sai::infra::Logger::Get("detection").Log(
-                        sai::infra::LogLevel::Warning,
-                        "[CoresetEvolution] drift_auto_rebuild enabled — "
-                        "forcing full rebuild on next cycle");
-                    // Signal the background thread to do a full rebuild
-                    // by clearing the standby bank so the next update merges
-                    // from scratch (standby_bank = empty).
-                    standby_bank.reset();
-                }
             }
         }
     }
@@ -267,19 +266,9 @@ struct CoresetEvolution::Impl {
         // Restore active bank immediately (returned nullptr, discard)
         std::ignore = detector.SwapFeatureBank(std::move(active));
 
-        // Build standby clone from extracted vectors
-        sai::embedding::EmbeddingMeta meta;
-        meta.model_name = "standby_clone";
-        meta.type = sai::embedding::EmbeddingType::Patch;
-        meta.dim = dim;
-        meta.count = count;
-        meta.grid = {count, 1};
-        auto emb = sai::embedding::Embedding::FromCpu(std::move(vecs), std::move(meta));
-        std::vector<const sai::embedding::Embedding*> ptrs{&emb};
-        auto fb_result = FeatureBank::BuildFromEmbeddings(ptrs, dim, count);
-        if (fb_result.has_value()) {
-            standby_bank = std::make_unique<FeatureBank>(std::move(*fb_result));
-        }
+        standby_bank = std::make_unique<FeatureBank>(
+            FeatureBank::BuildFromVectors(vecs.data(), count, dim));
+        selection_vectors = std::move(vecs);
     }
 };
 
@@ -390,7 +379,16 @@ auto CoresetEvolution::Start(std::stop_token /*token*/) noexcept -> void {
             if (tok.stop_requested()) break;
             impl_->notify_flag.store(false, std::memory_order_release);
 
-            // Drain + prefilter + merge + greedy coreset + swap
+            auto next_update = impl_->last_update + impl_->cfg.min_update_interval;
+            if (auto now = std::chrono::steady_clock::now(); now < next_update) {
+                std::unique_lock lock(impl_->cv_mutex);
+                impl_->notify_cv.wait_until(lock, tok, next_update, [&tok] {
+                    return tok.stop_requested();
+                });
+                if (tok.stop_requested()) break;
+            }
+
+            // Drain candidates, bounded-sample, merge and publish.
             auto candidates = impl_->buffer.DrainAll();
             if (candidates.empty()) continue;
 
@@ -412,68 +410,17 @@ auto CoresetEvolution::Start(std::stop_token /*token*/) noexcept -> void {
 
             auto start = std::chrono::steady_clock::now();
 
-            // Flatten candidate patches
-            std::vector<float> candidate_vecs;
             std::size_t dim = impl_->active_profile.dim;
-            for (auto& c : candidates) {
-                auto n = c.grid_h * c.grid_w * c.dim;
-                candidate_vecs.insert(candidate_vecs.end(),
-                                      c.patch_vectors.get(),
-                                      c.patch_vectors.get() + n);
-            }
-
-            // Prefilter
-            auto prefiltered = PrefilterCandidates(
-                candidate_vecs, dim, impl_->cfg.greedy_prefilter);
-
-            // Merge with existing coreset (standby bank)
             if (!impl_->standby_bank) continue;
-
-            auto existing = impl_->standby_bank->ExtractAllVectors();
-            existing.insert(existing.end(), prefiltered.begin(), prefiltered.end());
-
-            // Greedy coreset reselect
-            auto total_count = existing.size() / dim;
-            auto target = std::min(impl_->cfg.target_size, total_count);
-
-            std::vector<float> selected;
-            if (total_count <= target) {
-                selected = std::move(existing);
-            } else {
-                sai::embedding::EmbeddingMeta meta;
-                meta.model_name = "merged_update";
-                meta.type = sai::embedding::EmbeddingType::Patch;
-                meta.dim = dim;
-                meta.count = total_count;
-                meta.grid = {total_count, 1};
-                auto emb = sai::embedding::Embedding::FromCpu(
-                    std::move(existing), std::move(meta));
-                std::vector<const sai::embedding::Embedding*> ptrs{&emb};
-                auto fb = FeatureBank::BuildWithGreedyCoreset(ptrs, dim, target);
-                if (fb.has_value()) {
-                    selected = fb->ExtractAllVectors();
-                }
-            }
-
-            if (selected.empty()) continue;
 
             // Build into a new FeatureBank
             {
-                sai::embedding::EmbeddingMeta meta;
-                meta.model_name = "updated";
-                meta.type = sai::embedding::EmbeddingType::Patch;
-                meta.dim = dim;
-                meta.count = selected.size() / dim;
-                meta.grid = {meta.count, 1};
-                std::vector<float> sel_copy = selected;
-                auto emb = sai::embedding::Embedding::FromCpu(
-                    std::move(sel_copy), std::move(meta));
-                std::vector<const sai::embedding::Embedding*> ptrs{&emb};
-                auto fb = FeatureBank::BuildFromEmbeddings(ptrs, dim, meta.count);
-                if (!fb.has_value()) continue;
-                auto new_bank = std::make_unique<FeatureBank>(std::move(*fb));
+                auto build = BuildBoundedBank(
+                    impl_->selection_vectors, candidates, dim,
+                    impl_->cfg.candidate_sample_limit, impl_->cfg.target_size);
+                if (!build.bank) continue;
 #if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
-                auto gpu_result = new_bank->PrepareGpuIvf();
+                auto gpu_result = build.bank->PrepareGpuIvf();
                 if (!gpu_result) {
                     sai::infra::Logger::Get("detection").Log(
                         sai::infra::LogLevel::Error,
@@ -483,15 +430,17 @@ auto CoresetEvolution::Start(std::stop_token /*token*/) noexcept -> void {
                 }
 #endif
 
+                auto new_profile = NormalityProfile::ComputeFast(
+                    *build.bank, impl_->cfg.normality_k,
+                    100, impl_->cfg.tail_ratio_max);
+
                 // Swap into PatchCore
-                auto old_bank = impl_->detector.SwapFeatureBank(std::move(new_bank));
+                auto old_bank = impl_->detector.SwapFeatureBank(std::move(build.bank));
                 impl_->standby_bank = std::move(old_bank);
 
-                // Update profile (fast sampling)
                 impl_->standby_profile = std::move(impl_->active_profile);
-                impl_->active_profile = NormalityProfile::ComputeFast(
-                    *impl_->standby_bank, impl_->cfg.normality_k,
-                    100, impl_->cfg.tail_ratio_max);
+                impl_->active_profile = std::move(new_profile);
+                bool accepted = true;
 
                 // ── Self-validation ──
                 if (impl_->cfg.evolution_self_validation
@@ -548,10 +497,15 @@ auto CoresetEvolution::Start(std::stop_token /*token*/) noexcept -> void {
                                 std::move(impl_->standby_bank));
                             impl_->standby_bank = std::move(rejected);
                             impl_->active_profile = std::move(impl_->standby_profile);
+                            accepted = false;
                         }
                     }
                 }
+                if (accepted) {
+                    impl_->selection_vectors = std::move(build.vectors);
+                }
             }
+            impl_->last_update = std::chrono::steady_clock::now();
 
             // ── Long-term maintenance: periodic full rebuild ──
             ++impl_->incremental_update_count;
@@ -632,8 +586,8 @@ auto CoresetEvolution::BindKnowledgeStore(
 
 auto CoresetEvolution::FullRebuild(const std::filesystem::path& save_path) noexcept
     -> Result<void> {
-    // Full rebuild: extract standby bank vectors + buffer candidates,
-    // do full greedy coreset, persist to .bin + .profile.yaml.
+    // Full rebuild: bounded-sample standby bank and buffered candidates,
+    // then persist to .bin + .profile.yaml.
     // Called from Stop() or explicitly by the caller.
 
     auto candidates = impl_->buffer.DrainAll();
@@ -643,43 +597,12 @@ auto CoresetEvolution::FullRebuild(const std::filesystem::path& save_path) noexc
         return {};
     }
 
-    // Gather vectors: standby bank + buffer candidates
-    std::vector<float> merged;
-    if (impl_->standby_bank && impl_->standby_bank->NumSamples() > 0) {
-        merged = impl_->standby_bank->ExtractAllVectors();
-    }
-
-    // Merge candidates
-    for (auto& c : candidates) {
-        auto n = c.grid_h * c.grid_w * c.dim;
-        merged.insert(merged.end(), c.patch_vectors.get(), c.patch_vectors.get() + n);
-    }
-
-    if (merged.empty()) {
-        return {};
-    }
-
-    auto total = merged.size() / dim;
-    auto target = std::min(impl_->cfg.target_size, total);
-
-    using namespace sai::embedding;
-    EmbeddingMeta meta;
-    meta.model_name = "full_rebuild";
-    meta.type = EmbeddingType::Patch;
-    meta.dim = dim;
-    meta.count = total;
-    meta.grid = {total, 1};
-    auto emb = Embedding::FromCpu(std::move(merged), std::move(meta));
-    std::vector<const Embedding*> ptrs{&emb};
-
-    auto fb_result = FeatureBank::BuildWithGreedyCoreset(ptrs, dim, target);
-    if (!fb_result.has_value()) {
-        return tl::make_unexpected(fb_result.error());
-    }
-
-    auto new_bank = std::make_unique<FeatureBank>(std::move(*fb_result));
+    auto build = BuildBoundedBank(
+        impl_->selection_vectors, candidates, dim,
+        impl_->cfg.candidate_sample_limit, impl_->cfg.target_size);
+    if (!build.bank) return {};
 #if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
-    auto gpu_result = new_bank->PrepareGpuIvf();
+    auto gpu_result = build.bank->PrepareGpuIvf();
     if (!gpu_result) {
         return tl::make_unexpected(gpu_result.error());
     }
@@ -688,9 +611,9 @@ auto CoresetEvolution::FullRebuild(const std::filesystem::path& save_path) noexc
     // Compute new profile from the rebuilt bank (fast: sqrt(N) sampling,
     // avoids O(N²·D) exhaustive k-NN — typically < 1 s for 10k samples).
     auto sample_count = static_cast<std::size_t>(std::sqrt(
-        static_cast<double>(new_bank->NumSamples())));
+        static_cast<double>(build.bank->NumSamples())));
     auto new_profile = NormalityProfile::ComputeFast(
-        *new_bank, impl_->cfg.normality_k,
+        *build.bank, impl_->cfg.normality_k,
         std::max(sample_count, std::size_t{1}), impl_->cfg.tail_ratio_max);
 
     // Compute mean displacement for drift detection
@@ -700,7 +623,7 @@ auto CoresetEvolution::FullRebuild(const std::filesystem::path& save_path) noexc
     }
 
     // Save new coreset to file
-    auto save_result = new_bank->SaveToFile(save_path);
+    auto save_result = build.bank->SaveToFile(save_path);
     if (!save_result.has_value()) {
         return save_result;
     }
@@ -729,8 +652,9 @@ auto CoresetEvolution::FullRebuild(const std::filesystem::path& save_path) noexc
     }
 
     // Swap new bank into PatchCore; old active becomes new standby
-    auto old = impl_->detector.SwapFeatureBank(std::move(new_bank));
+    auto old = impl_->detector.SwapFeatureBank(std::move(build.bank));
     impl_->standby_bank = std::move(old);
+    impl_->selection_vectors = std::move(build.vectors);
 
     // Update profiles
     impl_->standby_profile = std::move(impl_->active_profile);

@@ -261,6 +261,8 @@ self_evolution:
     tail_ratio_max: 0.15
   buffer:
     trigger_frames: 30
+  update:
+    candidate_sample_limit: 1234
 )");
 
     auto cfg_result = EvolutionConfig::FromYaml(yaml);
@@ -271,6 +273,7 @@ self_evolution:
     EXPECT_EQ(cfg.normality_k, 3U);
     EXPECT_FLOAT_EQ(cfg.tail_ratio_max, 0.15F);
     EXPECT_EQ(cfg.trigger_frames, 30U);
+    EXPECT_EQ(cfg.candidate_sample_limit, 1234U);
     // defaults
     EXPECT_EQ(cfg.coverage_threshold, 0.60F);
     EXPECT_EQ(cfg.target_size, 10000U);

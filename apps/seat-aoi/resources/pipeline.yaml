@@ -50,7 +50,7 @@ pipeline:
           update:
             target_size: 10000
             min_interval_sec: 5
-            greedy_prefilter: 5000
+            candidate_sample_limit: 5000
           persistence:
             save_on_stop: true
             backup_old_bank: true
@@ -59,7 +59,6 @@ pipeline:
             coverage_saturation_threshold: 0.95
             saturation_window: 10
             max_incremental_updates: 100
-            drift_auto_rebuild: false
             self_validation: true
             validation_degradation_threshold: 0.80
             validation_sample_count: 100
