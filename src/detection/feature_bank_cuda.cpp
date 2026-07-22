@@ -2,13 +2,13 @@
 // 仅在 CUDAToolkit_FOUND 时由 CMake 编译。
 //
 // 实现 FeatureBank 的 GPU 加速路径：
-//   - ToGpu(): 将 CPU IndexFlatL2 使用 StandardGpuResources 迁移至 GPU
+//   - ToGpu(): 使用 FAISS GPU clone API 迁移 CPU index
 //   - Search() 在 GPU 上执行（当 IsOnGpu() == true 时）
 //   - 搜索结果自动通过 FAISS GPU → CPU 拷贝返回
 //
 // FAISS GPU 后端要求 CUDA Toolkit 和 faiss-gpu（编译时链接 libfaiss_gpu）。
 // faiss::gpu::StandardGpuResources 管理临时 GPU 内存和 CUDA stream，
-// GpuIndexFlatL2 通过 index_cpu_to_gpu 从 CPU IndexFlatL2 迁移。
+// GpuCloner 提供 index_cpu_to_gpu 的正式声明。
 
 #include <sai/detection/feature_bank.h>
 
@@ -18,7 +18,7 @@
 #include <vector>
 
 #include <faiss/IndexFlat.h>
-#include <faiss/gpu/GpuIndexFlat.h>
+#include <faiss/gpu/GpuCloner.h>
 #include <faiss/gpu/StandardGpuResources.h>
 
 namespace sai::detection {

@@ -103,8 +103,7 @@ public:
     [[nodiscard]] auto Nprobe() const noexcept -> std::size_t { return nprobe_; }
 
     // GPU acceleration (only available when SAI_CUDA_ENABLED is defined AND
-    // FAISS GPU headers are present — see detection/CMakeLists.txt which sets
-    // SAI_FAISS_GPU_FOUND when faiss/gpu/StandardGpuResources.h exists).
+    // FAISS GPU clone headers are exported by the configured faiss target.
 #if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
     [[nodiscard]] auto ToGpu(int device = 0) noexcept -> Result<void>;
     [[nodiscard]] auto IsOnGpu() const noexcept -> bool;
