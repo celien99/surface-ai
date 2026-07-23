@@ -7,6 +7,15 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 
 find_package(CUDAToolkit QUIET)
+if(CUDAToolkit_FOUND)
+    include(CheckLanguage)
+    check_language(CUDA)
+    if(CMAKE_CUDA_COMPILER)
+        enable_language(CUDA)
+        set(CMAKE_CUDA_STANDARD 20)
+        set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+    endif()
+endif()
 
 # GCC on x86-64 requires -latomic for 16-byte std::atomic operations even when
 # -mcx16 is active (libstdc++ ABI limitation).  Link it globally so that any
@@ -22,7 +31,7 @@ endif()
 # that includes these headers (not just the ones that were manually annotated).
 # Invalid on arm64 (which has native 16-byte LSE atomics), so guard by arch.
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
-    add_compile_options(-mcx16)
+    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-mcx16>")
 endif()
 
 # yaml-cpp is used by many sub-libraries (retrieval, rule, reasoner, pipeline,
@@ -33,7 +42,7 @@ find_package(yaml-cpp CONFIG REQUIRED)
 
 # Warning flags: -Wall -Wextra catch switch-enum gaps, unused, sign-mismatch, etc.
 # -Wpedantic is omitted for now (Qt/QML + third-party headers generate noise).
-add_compile_options(-Wall -Wextra)
+add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra>")
 
 # Optimization: Release builds get LTO + march=native for cross-TU inlining.
 # Debug builds keep defaults (-Og/-O0) for fast iteration.

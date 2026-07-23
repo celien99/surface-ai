@@ -13,6 +13,15 @@
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "VCPKG_OVERLAY_PORTS": "${sourceDir}/vcpkg-overlays"
       }
+    },
+    {
+      "name": "linux-release",
+      "displayName": "Linux Release (Ubuntu 22.04 x64)",
+      "inherits": "linux",
+      "binaryDir": "${sourceDir}/build/linux-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
     }
   ],
   "buildPresets": [
@@ -20,6 +29,11 @@
       "name": "linux",
       "displayName": "Linux Debug",
       "configurePreset": "linux"
+    },
+    {
+      "name": "linux-release",
+      "displayName": "Linux Release",
+      "configurePreset": "linux-release"
     }
   ],
   "testPresets": [
@@ -27,6 +41,12 @@
       "name": "linux",
       "displayName": "Linux Tests",
       "configurePreset": "linux",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "linux-release",
+      "displayName": "Linux Release Tests",
+      "configurePreset": "linux-release",
       "output": { "outputOnFailure": true }
     }
   ]

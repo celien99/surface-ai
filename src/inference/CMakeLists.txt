@@ -1,4 +1,4 @@
-# tensorrt_engine.cpp / dino_v3_adapter.cpp / sam2_adapter.cpp / clip_adapter.cpp
+# TensorRT engines/adapters; DINO uses a CUDA translation unit for preprocessing.
 # 包含真实的 CUDA Runtime API 和 TensorRT API 调用，仅用于目标平台
 # (Ubuntu x64 + NVIDIA GPU)。在没有 CUDA Toolkit 或 TensorRT SDK 的宿主机上，
 # 这些文件不在源文件列表中，不会被编译——见下方的门控逻辑。
@@ -22,19 +22,21 @@ if(CUDAToolkit_FOUND)
               /usr/local/tensorrt/include
               ${CUDAToolkit_INCLUDE_DIRS}
     )
-    if(NVINFER_INCLUDE_DIR)
+    if(NVINFER_INCLUDE_DIR AND CMAKE_CUDA_COMPILER)
         list(APPEND SAI_INFERENCE_SOURCES
             tensorrt_engine.cpp
-            dino_v3_adapter.cpp
+            dino_v3_adapter.cu
             sam2_adapter.cpp
             sam2_segmenter.cpp
             clip_adapter.cpp
         )
         message(STATUS "TensorRT found — enabling GPU inference engines")
-    else()
+    elseif(NOT NVINFER_INCLUDE_DIR)
         message(WARNING "TensorRT NvInfer.h not found — "
                         "TensorRtEngine and adapters disabled. "
                         "Install TensorRT SDK (or libnvinfer-dev) to enable GPU inference.")
+    else()
+        message(WARNING "CUDA compiler not found — TensorRT adapters disabled")
     endif()
 endif()
 
@@ -43,7 +45,7 @@ add_library(sai::inference ALIAS sai_inference)
 
 target_include_directories(sai_inference PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(sai_inference PUBLIC sai::core)
-if(CUDAToolkit_FOUND AND NVINFER_INCLUDE_DIR)
+if(CUDAToolkit_FOUND AND NVINFER_INCLUDE_DIR AND CMAKE_CUDA_COMPILER)
     target_link_libraries(sai_inference PUBLIC CUDA::cudart)
     target_include_directories(sai_inference PRIVATE ${NVINFER_INCLUDE_DIR})
 
