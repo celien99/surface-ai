@@ -5,7 +5,7 @@
 find_package(CUDAToolkit QUIET)
 
 set(SAI_MEMORY_SOURCES arena_allocator.cpp)
-if(CUDAToolkit_FOUND)
+if(SAI_CUDA_ENABLED)
     # gpu_pool.h/pinned_pool.h static_assert on 16-byte lock-free atomics.
     # On x86-64, CMPXCHG16B (-mcx16) is required for lock-free 16-byte CAS.
     # GCC's std::atomic<T>::is_always_lock_free is a libstdc++ ABI constant
@@ -42,7 +42,7 @@ add_library(sai::memory ALIAS sai_memory)
 
 target_include_directories(sai_memory PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(sai_memory PUBLIC sai::core)
-if(CUDAToolkit_FOUND AND SAI_MEMORY_HAS_LOCKFREE_16)
+if(SAI_CUDA_ENABLED AND SAI_MEMORY_HAS_LOCKFREE_16)
     target_link_libraries(sai_memory PUBLIC CUDA::cudart)
 endif()
 target_compile_features(sai_memory PUBLIC cxx_std_20)

@@ -22,7 +22,7 @@ set(SAI_DETECTION_SOURCES
 # CUDA greedy FPS only needs the CUDA runtime. GPU search additionally needs
 # the FAISS GPU clone API, so keep the two capabilities independently gated.
 find_package(CUDAToolkit QUIET)
-if(CUDAToolkit_FOUND AND CMAKE_CUDA_COMPILER)
+if(SAI_CUDA_ENABLED)
     list(APPEND SAI_DETECTION_SOURCES greedy_coreset_cuda.cu)
 
     get_target_property(SAI_FAISS_INCLUDE_DIRS faiss INTERFACE_INCLUDE_DIRECTORIES)
@@ -53,11 +53,11 @@ add_library(sai::detection ALIAS sai_detection)
 target_include_directories(sai_detection PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(sai_detection PUBLIC sai::core sai::embedding sai::infra faiss OpenMP::OpenMP_CXX yaml-cpp::yaml-cpp
                       PRIVATE sai::knowledge)
-if(CUDAToolkit_FOUND AND CMAKE_CUDA_COMPILER)
+if(SAI_CUDA_ENABLED)
     target_link_libraries(sai_detection PUBLIC CUDA::cudart)
     target_compile_definitions(sai_detection PUBLIC SAI_CUDA_ENABLED)
 endif()
-if(CUDAToolkit_FOUND AND CMAKE_CUDA_COMPILER AND SAI_FAISS_GPU_FOUND)
+if(SAI_CUDA_ENABLED AND SAI_FAISS_GPU_FOUND)
     target_include_directories(sai_detection PRIVATE
         ${SAI_FAISS_GPU_CLONER_INCLUDE_DIR}
         ${SAI_FAISS_GPU_RESOURCES_INCLUDE_DIR})

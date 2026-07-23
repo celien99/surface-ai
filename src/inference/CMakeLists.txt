@@ -9,7 +9,7 @@ set(SAI_INFERENCE_SOURCES
     multi_layer_aggregator.cpp
     saliency_mask.cpp
 )
-if(CUDAToolkit_FOUND)
+if(SAI_CUDA_ENABLED)
     # TensorRT SDK is separate from CUDA Toolkit — check for its header before
     # compiling any CUDA-gated sources. On systems with CUDA but without
     # TensorRT (e.g. WSL with nvidia-smi but no TensorRT installed), the
@@ -22,7 +22,7 @@ if(CUDAToolkit_FOUND)
               /usr/local/tensorrt/include
               ${CUDAToolkit_INCLUDE_DIRS}
     )
-    if(NVINFER_INCLUDE_DIR AND CMAKE_CUDA_COMPILER)
+    if(NVINFER_INCLUDE_DIR)
         list(APPEND SAI_INFERENCE_SOURCES
             tensorrt_engine.cpp
             dino_v3_adapter.cu
@@ -45,7 +45,7 @@ add_library(sai::inference ALIAS sai_inference)
 
 target_include_directories(sai_inference PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(sai_inference PUBLIC sai::core)
-if(CUDAToolkit_FOUND AND NVINFER_INCLUDE_DIR AND CMAKE_CUDA_COMPILER)
+if(SAI_CUDA_ENABLED AND NVINFER_INCLUDE_DIR)
     target_link_libraries(sai_inference PUBLIC CUDA::cudart)
     target_include_directories(sai_inference PRIVATE ${NVINFER_INCLUDE_DIR})
 

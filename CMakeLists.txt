@@ -7,13 +7,23 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 
 find_package(CUDAToolkit QUIET)
+set(SAI_CUDA_ENABLED OFF)
 if(CUDAToolkit_FOUND)
     include(CheckLanguage)
     check_language(CUDA)
     if(CMAKE_CUDA_COMPILER)
         enable_language(CUDA)
-        set(CMAKE_CUDA_STANDARD 20)
-        set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+        # CUDA kernels use C++17-compatible syntax. Keep the host code at C++20,
+        # but avoid requiring CUDA 12's optional CUDA C++20 dialect.
+        if("cuda_std_17" IN_LIST CMAKE_CUDA_COMPILE_FEATURES)
+            set(CMAKE_CUDA_STANDARD 17)
+            set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+            set(SAI_CUDA_ENABLED ON)
+        else()
+            message(WARNING
+                "CMake does not expose a CUDA C++17 dialect for this compiler; "
+                "CUDA sources are disabled.")
+        endif()
     endif()
 endif()
 
