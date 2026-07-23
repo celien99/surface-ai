@@ -168,48 +168,24 @@ auto RunGui(int argc, char* argv[], AssembledApp& app, const CliArgs& cli) -> in
                 Q_ARG(std::vector<sai::detection::RegionProposal>, dr.regions));
         });
 
-    // Result callback on primary pipeline (UI updates)
-    bool has_evolution = false;
-    for (auto& pp : app.positions) {
-        if (pp.evolution != nullptr) { has_evolution = true; break; }
-    }
+    primary_pipeline.SetResultCallback(
+        [&](const std::shared_ptr<const pipeline::FrameContext>& frame,
+            const reasoner::ReasoningResult& result) {
+            const auto fid = frame ? static_cast<int>(frame->frame_id) : -1;
+            inspection_vm->UpdateResult(fid, result);
+            visualization::FrameSummary summary;
+            summary.frame_id = fid;
+            summary.verdict = result.verdict;
+            summary.severity = std::to_string(result.severity);
+            summary.timestamp = std::chrono::system_clock::now();
+            dashboard_vm->AppendFrameSummary(std::move(summary));
 
-    if (!has_evolution) {
-        primary_pipeline.SetResultCallback(
-            [=](int fid, const reasoner::ReasoningResult& result) {
-                inspection_vm->UpdateResult(fid, result);
-                visualization::FrameSummary summary;
-                summary.frame_id = fid;
-                summary.verdict = result.verdict;
-                summary.severity = std::to_string(result.severity);
-                summary.timestamp = std::chrono::system_clock::now();
-                dashboard_vm->AppendFrameSummary(std::move(summary));
-            });
-    } else {
-        primary_pipeline.SetDetectionCallback(
-            [defect_model_ptr](const sai::detection::DetectionResult& dr) {
-                QMetaObject::invokeMethod(
-                    defect_model_ptr, "UpdateDefects", Qt::QueuedConnection,
-                    Q_ARG(std::vector<sai::detection::RegionProposal>, dr.regions));
-            });
-        primary_pipeline.SetResultCallback(
-            [&](int fid, const reasoner::ReasoningResult& result) {
-                inspection_vm->UpdateResult(fid, result);
-                visualization::FrameSummary summary;
-                summary.frame_id = fid;
-                summary.verdict = result.verdict;
-                summary.severity = std::to_string(result.severity);
-                summary.timestamp = std::chrono::system_clock::now();
-                dashboard_vm->AppendFrameSummary(std::move(summary));
-
-                // Route to correct position's evolution
-                auto* pp = app.FindPosition(result.surface_id, result.position_id);
-                if (pp && pp->evolution != nullptr) {
-                    seat_aoi::OfferToEvolution(*pp->evolution, pp->patch_core->LastContext(),
-                                               result);
-                }
-            });
-    }
+            auto* position = app.FindPosition(result.surface_id, result.position_id);
+            if (position && position->evolution && frame && frame->patchcore_context) {
+                seat_aoi::OfferToEvolution(
+                    *position->evolution, *frame->patchcore_context, result);
+            }
+        });
 
     // Create one FakeCamera per position pipeline
     auto* fp = frame_provider;

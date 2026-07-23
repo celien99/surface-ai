@@ -158,17 +158,8 @@ auto DetectStage::Process(StageInput input) -> Result<StageOutput> {
                     std::vector<float> vecs = std::move(state.vectors);
                     auto sample_count = vecs.size() / dim;
 
-                    sai::embedding::EmbeddingMeta meta;
-                    meta.model_name = "bootstrap";
-                    meta.type = sai::embedding::EmbeddingType::Patch;
-                    meta.dim = dim;
-                    meta.count = sample_count;
-                    meta.grid = {1, sample_count};
-                    auto tmp_emb = sai::embedding::Embedding::FromCpu(
-                        std::move(vecs), std::move(meta));
-                    std::vector<const sai::embedding::Embedding*> ptrs{&tmp_emb};
-                    auto fb_result = detection::FeatureBank::BuildWithGreedyCoreset(
-                        ptrs, dim, std::min(bootstrap_target_size_, sample_count));
+                    auto fb_result = detection::FeatureBank::BuildGreedyFromVectors(
+                        vecs, dim, std::min(bootstrap_target_size_, sample_count));
                     if (!fb_result) {
                         auto error = fb_result.error();
                         bootstrap_states_.erase(key);
@@ -191,7 +182,7 @@ auto DetectStage::Process(StageInput input) -> Result<StageOutput> {
                     auto bootstrap_bank = std::make_unique<detection::FeatureBank>(
                         std::move(*fb_result));
 #if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
-                    auto gpu_result = bootstrap_bank->PrepareGpuIvf();
+                    auto gpu_result = bootstrap_bank->ToGpu();
                     if (!gpu_result) {
                         auto error = gpu_result.error();
                         bootstrap_states_.erase(key);
@@ -265,7 +256,17 @@ auto DetectStage::Process(StageInput input) -> Result<StageOutput> {
             });
         }
 
-        auto det_result = detector->Detect(*emb);
+        std::shared_ptr<const detection::PatchCoreDetectionContext> patchcore_context;
+        Result<detection::DetectionResult> det_result = [&]()
+            -> Result<detection::DetectionResult> {
+            if (auto* patch_core = dynamic_cast<detection::PatchCore*>(detector)) {
+                auto output = patch_core->DetectWithContext(*emb);
+                if (!output) return tl::make_unexpected(output.error());
+                patchcore_context = std::move(output->second);
+                return std::move(output->first);
+            }
+            return detector->Detect(*emb);
+        }();
         if (!det_result) {
             return StageOutput::MakeWithContext(input, PipelineFailure{
                 .code = det_result.error().code,
@@ -285,6 +286,9 @@ auto DetectStage::Process(StageInput input) -> Result<StageOutput> {
             result.surface_id = emb->SurfaceId();
         }
         result.position_id = emb->PositionId();
+        if (auto frame = input.Frame(); frame && patchcore_context) {
+            frame->patchcore_context = std::move(patchcore_context);
+        }
         return StageOutput::MakeWithContext(input, std::move(result));
     }
     return tl::make_unexpected(ErrorInfo{ErrorCode::Pipeline_StageTypeMismatch,

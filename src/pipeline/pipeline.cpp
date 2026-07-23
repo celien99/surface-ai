@@ -351,10 +351,7 @@ auto Pipeline::Start() -> Result<void> {
                                         1, std::memory_order_relaxed);
                                 }
                                 if (result_callback_) {
-                                    int frame_id = variant.Frame()
-                                        ? static_cast<int>(variant.Frame()->frame_id)
-                                        : -1;
-                                    result_callback_(frame_id, *rr);
+                                    result_callback_(variant.Frame(), *rr);
                                 }
                             }
                         }

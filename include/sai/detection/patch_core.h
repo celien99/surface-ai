@@ -1,6 +1,7 @@
 // patch_core.h — 批次 3.3 PatchCore 检测器
 #pragma once
 
+#include <atomic>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -13,6 +14,19 @@
 #include <sai/embedding/dimension_reducer.h>
 
 namespace sai::detection {
+
+struct PatchCoreDetectionContext {
+    std::vector<float> knn_distances;
+    std::size_t k_nearest = 0;
+    std::shared_ptr<const std::vector<float>> embedding_data;
+    std::size_t grid_h = 0;
+    std::size_t grid_w = 0;
+    std::size_t dim = 0;
+    DetectionResult detection_result;
+    float effective_threshold = 0.0F;
+    float pca_image_score = 0.0F;
+    float pca_self_query_p95 = 0.0F;
+};
 
 // PatchCore：基于 coreset k-NN 的工业异常检测算法
 //
@@ -62,6 +76,11 @@ public:
     [[nodiscard]] auto Detect(const sai::embedding::Embedding& embedding) noexcept
         -> Result<DetectionResult> override;
 
+    [[nodiscard]] auto DetectWithContext(
+        const sai::embedding::Embedding& embedding) noexcept
+        -> Result<std::pair<DetectionResult,
+                            std::shared_ptr<const PatchCoreDetectionContext>>>;
+
     [[nodiscard]] auto DetectBatch(
         std::span<const sai::embedding::Embedding* const> embeddings) noexcept
         -> Result<std::vector<DetectionResult>> override;
@@ -72,44 +91,25 @@ public:
     // 注入已加载的 FeatureBank（替代从 feature_bank_path 加载）。
     // 调用方负责确保 dim 与 embed_dim 匹配。在 Initialize() 之前调用。
     auto SetFeatureBank(std::unique_ptr<FeatureBank> fb) noexcept -> void {
-        feature_bank_ = std::move(fb);
+        feature_bank_.store(std::shared_ptr<const FeatureBank>(std::move(fb)));
     }
 
-    // 原子替换 FeatureBank，返回旧 bank。
-    // 用于 CoresetEvolution 的 double-buffer swap——旧 bank 由调用方回收作为 standby。
-    // 可在运行时调用（检测线程正在读取旧 bank → 旧 bank 由返回的 unique_ptr 保持存活）。
+    // 发布完整构建的不可变 bank；在途检测持有旧快照直至结束。
     [[nodiscard]] auto SwapFeatureBank(std::unique_ptr<FeatureBank> new_bank) noexcept
-        -> std::unique_ptr<FeatureBank> {
-        auto old = std::move(feature_bank_);
-        feature_bank_ = std::move(new_bank);
-        return old;
+        -> std::shared_ptr<const FeatureBank> {
+        return feature_bank_.exchange(
+            std::shared_ptr<const FeatureBank>(std::move(new_bank)));
     }
 
-    // 只读访问当前 FeatureBank（用于进化后自检验证）。
-    [[nodiscard]] auto GetFeatureBank() const noexcept -> const FeatureBank* {
-        return feature_bank_.get();
-    }
-    [[nodiscard]] auto GetFeatureBank() noexcept -> FeatureBank* {
-        return feature_bank_.get();
+    [[nodiscard]] auto SwapFeatureBank(
+        std::shared_ptr<const FeatureBank> new_bank) noexcept
+        -> std::shared_ptr<const FeatureBank> {
+        return feature_bank_.exchange(std::move(new_bank));
     }
 
-    // ── 最近一帧检测上下文（供 CoresetEvolution 访问） ──
-    // 每次 Detect() 调用后更新。调用方在 ResultCallback 中使用。
-    struct DetectionContext {
-        std::vector<float> knn_distances;      // query_count × k_nearest
-        std::size_t k_nearest = 0;
-        std::shared_ptr<const std::vector<float>> embedding_data;  // shared, zero-copy to AssessAndOffer
-        std::size_t grid_h = 0;
-        std::size_t grid_w = 0;
-        std::size_t dim = 0;
-        DetectionResult detection_result;      // 最近一帧检测结果
-        float effective_threshold = 0.0F;
-        float pca_image_score = 0.0F;          // 0.0 = PCA 未启用
-        float pca_self_query_p95 = 0.0F;       // 0.0 = PCA 未启用
-    };
-
-    [[nodiscard]] auto LastContext() const noexcept -> const DetectionContext& {
-        return last_ctx_;
+    [[nodiscard]] auto GetFeatureBankSnapshot() const noexcept
+        -> std::shared_ptr<const FeatureBank> {
+        return feature_bank_.load();
     }
 
     // Capture the per-frame data consumed by CoresetEvolution.
@@ -124,11 +124,8 @@ public:
 
 private:
     Config cfg_;
-    std::unique_ptr<FeatureBank> feature_bank_;
+    std::atomic<std::shared_ptr<const FeatureBank>> feature_bank_{nullptr};
     bool capture_context_ = false;
-
-    // 最近一帧检测上下文（每次 Detect 后更新）
-    DetectionContext last_ctx_;
 
     // E1+E2: 白化参数
     std::optional<sai::embedding::DimensionReducer::WhiteningParams> whitening_params_;
@@ -136,9 +133,8 @@ private:
     // E4: 自检计算的阈值（已归一化到 ref_dist_ 尺度，默认 1.0）
     float effective_threshold_ = 0.8F;
 
-    // 全局归一化参考值：coreset 自查询距离 99th 分位数。
-    // Detect() 用此值（而非 per-image max）归一化 patch scores，
-    // 使得 OK 图 scores ~ [0, 1]，NG 图 scores > 1.0，保留可区分性。
+    // 全局归一化参考值：coreset 自查询距离最大值。
+    // Detect() 用此值（而非 per-image max）归一化 patch scores。
     float ref_dist_ = 1.0F;
 
     // E5: 已加载的 PCA 模型

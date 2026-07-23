@@ -49,7 +49,9 @@ class Scheduler;
 namespace sai::pipeline {
 
 // M7: result callback type — invoked in Export worker thread per completed frame
-using ResultCallback = std::function<void(int frame_id, const sai::reasoner::ReasoningResult&)>;
+using ResultCallback = std::function<void(
+    const std::shared_ptr<const FrameContext>&,
+    const sai::reasoner::ReasoningResult&)>;
 
 // M7: detection callback — invoked in Detect worker thread per frame.
 // Enables live defect overlay in QML via DefectModel::UpdateDefects().

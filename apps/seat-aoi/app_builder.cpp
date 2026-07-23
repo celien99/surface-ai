@@ -119,7 +119,7 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
             auto loaded_detector_bank = std::make_unique<detection::FeatureBank>(
                 std::move(*fb_result));
 #if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
-            auto detector_gpu_result = loaded_detector_bank->PrepareGpuIvf();
+            auto detector_gpu_result = loaded_detector_bank->ToGpu();
             if (!detector_gpu_result) {
                 return tl::make_unexpected(detector_gpu_result.error());
             }
@@ -149,7 +149,7 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
     auto patch_core = std::make_shared<detection::PatchCore>(pc_cfg);
     if (detector_bank) {
         patch_core->SetFeatureBank(std::move(detector_bank));
-        auto* bank = patch_core->GetFeatureBank();
+        auto bank = patch_core->GetFeatureBankSnapshot();
         std::cout << "FeatureBank loaded: " << bank->NumSamples()
                   << " samples, dim=" << bank->Dim() << "\n";
         std::cout << "VectorPath: ready\n";
@@ -195,7 +195,7 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
                 auto position_bank = std::make_unique<detection::FeatureBank>(
                     std::move(*fb_result));
 #if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
-                auto position_gpu_result = position_bank->PrepareGpuIvf();
+                auto position_gpu_result = position_bank->ToGpu();
                 if (!position_gpu_result) {
                     return tl::make_unexpected(position_gpu_result.error());
                 }
@@ -213,7 +213,7 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
                 patch_core_paths[key] = bank.path;
 
                 std::cout << "  Position " << bank.position_id << ": "
-                          << pos_patch_core->LastContext().k_nearest << " k-NN ready\n";
+                          << pos_pc_cfg.k_nearest << " k-NN ready\n";
             }
         }
     }
@@ -462,11 +462,14 @@ auto AssembleApplication(const CliArgs& cli) -> sai::Result<AssembledApp> {
         // Per-position result callback → evolution routing
         if (pos_def.evo != nullptr) {
             pos_def.pc->SetContextCaptureEnabled(true);
-            auto* pc_raw = pos_def.pc.get();
             auto* evo_raw = pos_def.evo.get();
             pos_pipeline->SetResultCallback(
-                [pc_raw, evo_raw](int /*fid*/, const reasoner::ReasoningResult& result) {
-                    seat_aoi::OfferToEvolution(*evo_raw, pc_raw->LastContext(), result);
+                [evo_raw](const std::shared_ptr<const pipeline::FrameContext>& frame,
+                          const reasoner::ReasoningResult& result) {
+                    if (frame && frame->patchcore_context) {
+                        seat_aoi::OfferToEvolution(
+                            *evo_raw, *frame->patchcore_context, result);
+                    }
                 });
         }
 

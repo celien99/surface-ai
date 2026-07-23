@@ -22,7 +22,10 @@
 // Forward declarations — StageData only needs complete types at the
 // point of Make<T>() / GetIf<T>() instantiation, which happens in .cpp files.
 namespace sai::embedding { class Embedding; }
-namespace sai::detection { struct DetectionResult; }
+namespace sai::detection {
+struct DetectionResult;
+struct PatchCoreDetectionContext;
+}
 namespace sai::reasoner { struct ReasoningResult; }
 namespace sai::pipeline { struct RuleEvalOutput; }
 
@@ -51,6 +54,8 @@ struct FrameContext {
     std::uint16_t position_id = 0;
     std::optional<sai::image::SurfaceImage> image;
     std::optional<FrameAnomalySnapshot> anomaly;
+    std::shared_ptr<const sai::detection::PatchCoreDetectionContext>
+        patchcore_context;
     std::shared_ptr<detail::FrameCompletionToken> completion;
 };
 

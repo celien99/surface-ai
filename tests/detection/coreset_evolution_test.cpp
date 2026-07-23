@@ -254,15 +254,14 @@ TEST(CandidateBufferTest, TriggerByPatches) {
 
 TEST(EvolutionConfigTest, ParseFromYaml) {
     YAML::Node yaml = YAML::Load(R"(
-self_evolution:
-  enabled: true
-  normality:
-    k_self_query: 3
-    tail_ratio_max: 0.15
-  buffer:
-    trigger_frames: 30
-  update:
-    greedy_prefilter: 1234
+enabled: true
+normality:
+  k_self_query: 3
+  tail_ratio_max: 0.15
+buffer:
+  trigger_frames: 30
+update:
+  greedy_prefilter: 1234
 )");
 
     auto cfg_result = EvolutionConfig::FromYaml(yaml);

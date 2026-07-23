@@ -13,7 +13,7 @@ namespace seat_aoi {
 /// in both AppBuilder (headless callback) and GuiRunner (GUI callback).
 inline void OfferToEvolution(
     sai::detection::CoresetEvolution& evo,
-    const sai::detection::PatchCore::DetectionContext& ctx,
+    const sai::detection::PatchCoreDetectionContext& ctx,
     const sai::reasoner::ReasoningResult& result) noexcept {
     if (!evo.IsRunning()) return;
     if (ctx.knn_distances.empty()) return;
