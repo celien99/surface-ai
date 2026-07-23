@@ -1,21 +1,17 @@
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <vector>
 
 #include <gtest/gtest.h>
 
 #include <sai/detection/feature_bank.h>
-#include <sai/embedding/embedding.h>
 
 namespace {
 
 using sai::detection::FeatureBank;
-using sai::embedding::Embedding;
-using sai::embedding::EmbeddingMeta;
-using sai::embedding::EmbeddingType;
-
 // Build a 4-D embedding with three well-separated clusters in the first two
-// dimensions. FPS (BuildWithGreedyCoreset) should pick one representative from
+// dimensions. Exact FPS should pick one representative from
 // each cluster when max_samples == 3, proving coverage-aware selection.
 TEST(FeatureBankGreedyCoresetTest, PicksOnePerCluster) {
     constexpr std::size_t kDim = 4;
@@ -43,16 +39,7 @@ TEST(FeatureBankGreedyCoresetTest, PicksOnePerCluster) {
         }
     }
 
-    EmbeddingMeta meta;
-    meta.model_name = "test";
-    meta.type = EmbeddingType::Patch;
-    meta.dim = kDim;
-    meta.count = vectors.size() / kDim;
-    meta.grid = {meta.count, 1};
-    auto emb = Embedding::FromCpu(std::move(vectors), std::move(meta));
-
-    std::vector<const Embedding*> ptrs{&emb};
-    auto bank_result = FeatureBank::BuildWithGreedyCoreset(ptrs, kDim, 3);
+    auto bank_result = FeatureBank::BuildGreedyFromVectors(vectors, kDim, 3);
     ASSERT_TRUE(bank_result.has_value()) << bank_result.error().message;
     auto bank = std::move(*bank_result);
 
@@ -79,6 +66,33 @@ TEST(FeatureBankGreedyCoresetTest, PicksOnePerCluster) {
     EXPECT_TRUE(cluster_used[0]) << "No selected point near cluster 0";
     EXPECT_TRUE(cluster_used[1]) << "No selected point near cluster 1";
     EXPECT_TRUE(cluster_used[2]) << "No selected point near cluster 2";
+}
+
+TEST(FeatureBankGreedyCoresetTest, PreservesExactGreedyOrderAndTieBreak) {
+    // Starting at 0: furthest is 10 (index 3), then -10 (index 4), then the
+    // tied points 5/-5 have equal coverage and the smaller index 1 wins.
+    const std::vector<float> vectors = {0.0F, 5.0F, -5.0F, 10.0F, -10.0F};
+    auto bank = FeatureBank::BuildGreedyFromVectors(vectors, 1, 4);
+    ASSERT_TRUE(bank.has_value()) << bank.error().message;
+    EXPECT_EQ(bank->ExtractAllVectors(),
+              (std::vector<float>{0.0F, 10.0F, -10.0F, 5.0F}));
+}
+
+TEST(FeatureBankGreedyCoresetTest, StopsWhenOnlyDuplicateVectorsRemain) {
+    const std::vector<float> vectors = {
+        1.0F, 2.0F,
+        1.0F, 2.0F,
+        1.0F, 2.0F,
+    };
+    auto bank = FeatureBank::BuildGreedyFromVectors(vectors, 2, 3);
+    ASSERT_TRUE(bank.has_value()) << bank.error().message;
+    EXPECT_EQ(bank->NumSamples(), 1U);
+}
+
+TEST(FeatureBankGreedyCoresetTest, RejectsNonFiniteVectors) {
+    const std::vector<float> vectors = {0.0F, std::numeric_limits<float>::quiet_NaN()};
+    auto bank = FeatureBank::BuildGreedyFromVectors(vectors, 1, 2);
+    ASSERT_FALSE(bank.has_value());
 }
 
 }  // namespace

@@ -7,7 +7,6 @@
 
 #include <faiss/Index.h>
 #include <faiss/IndexFlat.h>
-#include <faiss/IndexIVFFlat.h>
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/IDSelector.h>
 
@@ -59,13 +58,6 @@ auto VectorPath::Search(const float* query, std::size_t dim, const Config& cfg) 
             "FeatureBank is empty",
             std::source_location::current(),
         });
-    }
-
-    // Configure nprobe for IVFFlat indices — must match FeatureBank::Search().
-    // Without this, IVFFlat defaults to nprobe=1, dropping ~75% recall
-    // when FeatureBank calls go through VectorPath (FactBuilder retrieval).
-    if (auto* ivf = dynamic_cast<faiss::IndexIVFFlat*>(index)) {
-        ivf->nprobe = static_cast<size_t>(bank_.nprobe_);
     }
 
     switch (cfg.mode) {

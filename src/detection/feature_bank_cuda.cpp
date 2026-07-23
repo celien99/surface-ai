@@ -12,14 +12,11 @@
 
 #include <sai/detection/feature_bank.h>
 
-#include <algorithm>
 #include <cstddef>
-#include <cmath>
 #include <memory>
 #include <source_location>
 #include <vector>
 
-#include <faiss/IndexIVFFlat.h>
 #include <faiss/gpu/GpuCloner.h>
 #include <faiss/gpu/StandardGpuResources.h>
 
@@ -61,21 +58,6 @@ auto FeatureBank::ToGpu(int device) noexcept -> Result<void> {
             std::source_location::current(),
         });
     }
-}
-
-auto FeatureBank::PrepareGpuIvf(int device) noexcept -> Result<void> {
-    if (num_samples_ < 2) {
-        return tl::make_unexpected(ErrorInfo{
-            ErrorCode::Detection_FeatureBankLoadFailed,
-            "FeatureBank::PrepareGpuIvf requires at least two samples",
-            std::source_location::current(),
-        });
-    }
-    auto nlist = std::min<std::size_t>(
-        256, static_cast<std::size_t>(std::floor(std::sqrt(num_samples_))));
-    auto convert_result = ConvertToIVF(nlist);
-    if (!convert_result) return convert_result;
-    return ToGpu(device);
 }
 
 auto FeatureBank::IsOnGpu() const noexcept -> bool {

@@ -64,14 +64,10 @@ public:
         std::size_t dim,
         std::size_t max_samples = 10000) noexcept -> Result<FeatureBank>;
 
-    // Greedy coreset selection via furthest-point sampling.
-    // Extracts all patch vectors from embeddings, then iteratively selects
-    // patches that maximize coverage of the normal manifold (minimize max
-    // distance to nearest coreset point). Produces a more representative
-    // coreset than uniform subsampling. Distance evaluation is batched through
-    // FAISS; CPU only maintains the furthest-point selection state.
-    [[nodiscard]] static auto BuildWithGreedyCoreset(
-        std::span<const sai::embedding::Embedding* const> embeddings,
+    // Exact furthest-point sampling over a contiguous row-major vector matrix.
+    // Each round updates every candidate using only the newly selected point.
+    [[nodiscard]] static auto BuildGreedyFromVectors(
+        std::span<const float> vectors,
         std::size_t dim,
         std::size_t max_samples = 10000) noexcept -> Result<FeatureBank>;
 
@@ -80,18 +76,10 @@ public:
                                                std::size_t dim) noexcept
         -> FeatureBank;
 
-    // Convert an existing flat-index FeatureBank to IVFFlat by training
-    // on its own vectors. The original index is replaced; search behavior
-    // changes from exact to approximate.
-    auto ConvertToIVF(std::size_t nlist = 256) noexcept -> Result<void>;
-
-    [[nodiscard]] auto Nprobe() const noexcept -> std::size_t { return nprobe_; }
-
     // GPU acceleration (only available when SAI_CUDA_ENABLED is defined AND
     // FAISS GPU clone headers are exported by the configured faiss target.
 #if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
     [[nodiscard]] auto ToGpu(int device = 0) noexcept -> Result<void>;
-    [[nodiscard]] auto PrepareGpuIvf(int device = 0) noexcept -> Result<void>;
     [[nodiscard]] auto IsOnGpu() const noexcept -> bool;
 #endif
 
@@ -111,8 +99,6 @@ private:
     std::unique_ptr<faiss::Index> index_;
     std::size_t dim_ = 0;
     std::size_t num_samples_ = 0;
-    std::size_t nprobe_ = 4;  // default: probe 4 clusters per query
-
 #if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
     std::unique_ptr<faiss::gpu::StandardGpuResources> gpu_resources_;
     std::unique_ptr<faiss::Index> gpu_index_;
