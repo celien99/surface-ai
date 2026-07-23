@@ -128,14 +128,16 @@ TEST_F(InferencePipelineTest, MockEngineToEmbedderConstruction) {
     // Output includes CLS token → buffer sized for patches + CLS.
     auto input_shape = std::vector<std::int64_t>{
         1, 3, static_cast<std::int64_t>(kImageSize), static_cast<std::int64_t>(kImageSize)};
-    TensorBinding in{"pixel_values", input_shape, 0, nullptr};
+    TensorBinding in{"pixel_values", input_shape, 0, nullptr,
+                     sai::inference::TensorDataType::Float32};
 
     std::vector<float> output_buffer((kPatchCount + 1) * kEmbedDim);
     auto output_shape = std::vector<std::int64_t>{
         1, static_cast<std::int64_t>(kPatchCount + 1),
         static_cast<std::int64_t>(kEmbedDim)};
     std::size_t output_bytes = output_buffer.size() * sizeof(float);
-    TensorBinding out{"last_hidden_state", output_shape, output_bytes, output_buffer.data()};
+    TensorBinding out{"last_hidden_state", output_shape, output_bytes, output_buffer.data(),
+                      sai::inference::TensorDataType::Float32};
 
     ASSERT_TRUE(engine.Load("dino.engine", {in}, {out}).has_value());
 

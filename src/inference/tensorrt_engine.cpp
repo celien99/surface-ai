@@ -17,6 +17,83 @@ namespace sai::inference {
 
 namespace {
 
+[[nodiscard]] auto FromTensorRtDataType(nvinfer1::DataType dtype) noexcept
+    -> TensorDataType {
+    switch (dtype) {
+        case nvinfer1::DataType::kFLOAT: return TensorDataType::Float32;
+        case nvinfer1::DataType::kHALF: return TensorDataType::Float16;
+        case nvinfer1::DataType::kINT8: return TensorDataType::Int8;
+        case nvinfer1::DataType::kINT32: return TensorDataType::Int32;
+        case nvinfer1::DataType::kBOOL: return TensorDataType::Bool;
+        default: return TensorDataType::Unknown;
+    }
+}
+
+[[nodiscard]] auto TensorRtShape(nvinfer1::Dims dims) -> std::vector<std::int64_t> {
+    std::vector<std::int64_t> shape;
+    shape.reserve(static_cast<std::size_t>(dims.nbDims));
+    for (std::int32_t i = 0; i < dims.nbDims; ++i) {
+        shape.push_back(static_cast<std::int64_t>(dims.d[i]));
+    }
+    return shape;
+}
+
+[[nodiscard]] auto PopulateAndValidateBindings(
+    nvinfer1::ICudaEngine& engine,
+    std::vector<TensorBinding>& bindings,
+    nvinfer1::TensorIOMode expected_mode) noexcept -> std::optional<ErrorInfo> {
+    for (auto& binding : bindings) {
+        if (engine.getTensorIOMode(binding.name.c_str()) != expected_mode) {
+            return ErrorInfo{
+                ErrorCode::Inference_InvalidBinding,
+                "TensorRtEngine: tensor '" + binding.name + "' has wrong I/O direction",
+            };
+        }
+
+        const auto engine_shape = TensorRtShape(engine.getTensorShape(binding.name.c_str()));
+        if (!binding.shape.empty() && binding.shape != engine_shape) {
+            return ErrorInfo{
+                ErrorCode::Inference_InvalidBinding,
+                "TensorRtEngine: tensor '" + binding.name + "' shape mismatch",
+            };
+        }
+        binding.shape = engine_shape;
+
+        const auto engine_dtype = FromTensorRtDataType(
+            engine.getTensorDataType(binding.name.c_str()));
+        if (engine_dtype == TensorDataType::Unknown) {
+            return ErrorInfo{
+                ErrorCode::Inference_InvalidBinding,
+                "TensorRtEngine: tensor '" + binding.name + "' uses an unsupported dtype",
+            };
+        }
+        if (binding.dtype != TensorDataType::Unknown && binding.dtype != engine_dtype) {
+            return ErrorInfo{
+                ErrorCode::Inference_InvalidBinding,
+                "TensorRtEngine: tensor '" + binding.name + "' dtype mismatch",
+            };
+        }
+        binding.dtype = engine_dtype;
+
+        const auto actual_bytes = binding.ExpectedSizeBytes();
+        if (actual_bytes == 0) {
+            return ErrorInfo{
+                ErrorCode::Inference_InvalidBinding,
+                "TensorRtEngine: tensor '" + binding.name +
+                    "' has a dynamic or invalid runtime shape",
+            };
+        }
+        if (binding.size_bytes != 0 && binding.size_bytes != actual_bytes) {
+            return ErrorInfo{
+                ErrorCode::Inference_InvalidBinding,
+                "TensorRtEngine: tensor '" + binding.name + "' byte size mismatch",
+            };
+        }
+        binding.size_bytes = actual_bytes;
+    }
+    return std::nullopt;
+}
+
 // TensorRT 日志适配器——将 TRT 内部日志转发到 sai::Logger 或 stderr。
 // 静态单例，与 NVIDIA 官方 samples 的 Logger 模式一致。
 class TrtLogger : public nvinfer1::ILogger {
@@ -289,6 +366,15 @@ auto TensorRtEngine::Load(const std::filesystem::path& engine_path,
     auto state_result = DeserializeAndValidate(engine_path, inputs, outputs);
     if (!state_result.has_value()) {
         return tl::make_unexpected(state_result.error());
+    }
+
+    if (auto error = PopulateAndValidateBindings(
+            *(*state_result)->engine, inputs, nvinfer1::TensorIOMode::kINPUT)) {
+        return tl::make_unexpected(std::move(*error));
+    }
+    if (auto error = PopulateAndValidateBindings(
+            *(*state_result)->engine, outputs, nvinfer1::TensorIOMode::kOUTPUT)) {
+        return tl::make_unexpected(std::move(*error));
     }
 
     inputs_ = std::move(inputs);

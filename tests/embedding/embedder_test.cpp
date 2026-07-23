@@ -21,6 +21,7 @@ using sai::inference::DinoV3Adapter;
 using sai::inference::DinoV3Config;
 using sai::inference::MockEngine;
 using sai::inference::TensorBinding;
+using sai::inference::TensorDataType;
 using sai::image::ImageMeta;
 using sai::image::PixelFormat;
 using sai::image::SurfaceImage;
@@ -38,10 +39,14 @@ auto MakeSurfaceImage() -> SurfaceImage {
 // 构建 DinoV3Adapter——MockEngine 必须比返回的 adapter 长寿（adapter 持有其指针）。
 // 调用方在同一作用域内保持 engine 存活即可。
 auto BuildDinoV3Adapter(MockEngine& engine) -> DinoV3Adapter {
-    auto outputs = std::vector<TensorBinding>{
-        {"last_hidden_state", {1, 37, 37, 1024}, 0, nullptr},
+    auto inputs = std::vector<TensorBinding>{
+        {"pixel_values", {1, 3, 518, 518}, 0, nullptr, TensorDataType::Float32},
     };
-    auto load_ok = engine.Load("dino_v3.engine", {}, outputs);
+    auto outputs = std::vector<TensorBinding>{
+        {"last_hidden_state", {1, 1370, 1024}, 0, nullptr,
+         TensorDataType::Float32},
+    };
+    auto load_ok = engine.Load("dino_v3.engine", inputs, outputs);
     EXPECT_TRUE(load_ok.has_value());
 
     DinoV3Config cfg{.engine_path = "dino_v3.engine",

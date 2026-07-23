@@ -202,10 +202,14 @@ TEST(DinoV3Adapter, CreateReturnsErrorWhenEngineHasNoOutputBindings) {
 
 TEST(DinoV3Adapter, CreateSucceedsWhenBindingsMatchConfig) {
     MockEngine engine;
-    auto outputs = std::vector<TensorBinding>{
-        {"last_hidden_state", {1, 37, 37, 1024}, 0, nullptr},
+    auto inputs = std::vector<TensorBinding>{
+        {"pixel_values", {1, 3, 518, 518}, 0, nullptr, TensorDataType::Float16},
     };
-    ASSERT_TRUE(engine.Load("dino.engine", {}, outputs).has_value());
+    auto outputs = std::vector<TensorBinding>{
+        {"last_hidden_state", {1, 1370, 1024}, 0, nullptr,
+         TensorDataType::Float16},
+    };
+    ASSERT_TRUE(engine.Load("dino.engine", inputs, outputs).has_value());
 
     DinoV3Config cfg{.engine_path = "dino.engine",
                      .image_size = 518,
@@ -218,10 +222,14 @@ TEST(DinoV3Adapter, CreateSucceedsWhenBindingsMatchConfig) {
 
 TEST(DinoV3Adapter, CreateFailsWhenEmbedDimMismatch) {
     MockEngine engine;
-    auto outputs = std::vector<TensorBinding>{
-        {"last_hidden_state", {1, 37, 37, 512}, 0, nullptr},
+    auto inputs = std::vector<TensorBinding>{
+        {"pixel_values", {1, 3, 518, 518}, 0, nullptr, TensorDataType::Float32},
     };
-    ASSERT_TRUE(engine.Load("dino.engine", {}, outputs).has_value());
+    auto outputs = std::vector<TensorBinding>{
+        {"last_hidden_state", {1, 1370, 512}, 0, nullptr,
+         TensorDataType::Float32},
+    };
+    ASSERT_TRUE(engine.Load("dino.engine", inputs, outputs).has_value());
 
     DinoV3Config cfg{.engine_path = "dino.engine",
                      .image_size = 518,
@@ -236,6 +244,18 @@ TEST(DinoV3Adapter, TypeTraits) {
     static_assert(!std::is_copy_assignable_v<DinoV3Adapter>);
     static_assert(std::is_move_constructible_v<DinoV3Adapter>);
     static_assert(std::is_move_assignable_v<DinoV3Adapter>);
+}
+
+TEST(TensorBinding, ComputesExpectedByteSizeFromDtype) {
+    TensorBinding fp16{"pixel_values", {1, 3, 2, 2}, 0, nullptr,
+                       TensorDataType::Float16};
+    TensorBinding fp32{"last_hidden_state", {1, 5, 4}, 0, nullptr,
+                       TensorDataType::Float32};
+
+    EXPECT_EQ(fp16.ElementCount(), 12U);
+    EXPECT_EQ(fp16.ExpectedSizeBytes(), 24U);
+    EXPECT_EQ(fp32.ElementCount(), 20U);
+    EXPECT_EQ(fp32.ExpectedSizeBytes(), 80U);
 }
 
 // ============================================================================

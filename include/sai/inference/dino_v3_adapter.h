@@ -4,6 +4,8 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <string_view>
+#include <utility>
 
 #include <sai/core/error.h>
 #include <sai/inference/inference_engine.h>
@@ -54,16 +56,49 @@ public:
     auto operator=(const DinoV3Adapter&) -> DinoV3Adapter& = delete;
 
 private:
-    DinoV3Adapter(IInferenceEngine* engine, DinoV3Config cfg) noexcept;
+    DinoV3Adapter(IInferenceEngine* engine, DinoV3Config cfg,
+                  TensorDataType input_dtype,
+                  TensorDataType output_dtype) noexcept;
+    [[nodiscard]] auto InferImpl(const sai::image::GpuImage& image,
+                                 void* stream, bool synchronize) noexcept
+        -> Result<PatchFeatures>;
+    auto ReleaseBuffers() noexcept -> void;
     IInferenceEngine* engine_ = nullptr;
     DinoV3Config cfg_{};
-    void* output_buffer_ = nullptr;
+    TensorDataType input_dtype_ = TensorDataType::Unknown;
+    TensorDataType output_dtype_ = TensorDataType::Unknown;
+    void* input_buffer_ = nullptr;
+    void* raw_output_buffer_ = nullptr;
+    float* patch_output_buffer_ = nullptr;
 };
 
 // Create 工厂实现：校验 engine 的 binding 名称/形状与 config 一致。
 inline auto DinoV3Adapter::Create(IInferenceEngine& engine,
                                    const DinoV3Config& cfg) noexcept -> Result<DinoV3Adapter> {
+    const auto& inputs = engine.InputBindings();
     const auto& outputs = engine.OutputBindings();
+    const TensorBinding* input_binding = nullptr;
+    for (const auto& b : inputs) {
+        if (b.name == "pixel_values") {
+            input_binding = &b;
+            break;
+        }
+    }
+    if (input_binding == nullptr) {
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Inference_ModelConfigMismatch,
+            "DinoV3Adapter: engine missing 'pixel_values' input binding"});
+    }
+    if (input_binding->shape != std::vector<std::int64_t>{
+            1, 3, static_cast<std::int64_t>(cfg.image_size),
+            static_cast<std::int64_t>(cfg.image_size)}) {
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Inference_ModelConfigMismatch,
+            "DinoV3Adapter: 'pixel_values' must have shape [1,3,H,W]"});
+    }
+    if (input_binding->dtype != TensorDataType::Float16 &&
+        input_binding->dtype != TensorDataType::Float32) {
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Inference_ModelConfigMismatch,
+            "DinoV3Adapter: 'pixel_values' must be float16 or float32"});
+    }
     if (outputs.empty()) {
         return tl::make_unexpected(ErrorInfo{ErrorCode::Inference_ModelConfigMismatch, "DinoV3Adapter: engine has no output bindings"});
     }
@@ -79,6 +114,18 @@ inline auto DinoV3Adapter::Create(IInferenceEngine& engine,
     if (features_binding == nullptr) {
         return tl::make_unexpected(ErrorInfo{ErrorCode::Inference_ModelConfigMismatch, "DinoV3Adapter: engine missing 'last_hidden_state' output binding"});
     }
+    if (features_binding->dtype != TensorDataType::Float16 &&
+        features_binding->dtype != TensorDataType::Float32) {
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Inference_ModelConfigMismatch,
+            "DinoV3Adapter: 'last_hidden_state' must be float16 or float32"});
+    }
+    const auto grid = cfg.image_size / cfg.patch_size;
+    if (features_binding->shape != std::vector<std::int64_t>{
+            1, static_cast<std::int64_t>(grid * grid + 1),
+            static_cast<std::int64_t>(cfg.embed_dim)}) {
+        return tl::make_unexpected(ErrorInfo{ErrorCode::Inference_ModelConfigMismatch,
+            "DinoV3Adapter: unexpected 'last_hidden_state' shape"});
+    }
 
     // 校验 embed_dim（取 shape 最后一维）
     if (features_binding->shape.empty()) {
@@ -92,10 +139,14 @@ inline auto DinoV3Adapter::Create(IInferenceEngine& engine,
                                    ", engine=" + std::to_string(binding_embed_dim) + ")"});
     }
 
-    return DinoV3Adapter{&engine, cfg};
+    return DinoV3Adapter{
+        &engine, cfg, input_binding->dtype, features_binding->dtype};
 }
 
-inline DinoV3Adapter::DinoV3Adapter(IInferenceEngine* engine, DinoV3Config cfg) noexcept
-    : engine_(engine), cfg_(std::move(cfg)) {}
+inline DinoV3Adapter::DinoV3Adapter(
+    IInferenceEngine* engine, DinoV3Config cfg,
+    TensorDataType input_dtype, TensorDataType output_dtype) noexcept
+    : engine_(engine), cfg_(std::move(cfg)),
+      input_dtype_(input_dtype), output_dtype_(output_dtype) {}
 
 }  // namespace sai::inference

@@ -50,17 +50,16 @@ inline auto CreateDinoV2PatchEmbedder(
     //   input:  "pixel_values"      (1, 3, H, W)  — set at inference time
     //   output: "last_hidden_state" (1, grid²+1, embed_dim)  — includes CLS token
     auto grid_size = image_size / patch_size;
-    std::size_t output_floats = (grid_size * grid_size + 1) * embed_dim;  // patches + CLS token
     long is = static_cast<long>(image_size);
     long gs = static_cast<long>(grid_size);
     long ed = static_cast<long>(embed_dim);
     std::vector<sai::inference::TensorBinding> inputs = {
-        {"pixel_values", {1, 3, is, is},
-         static_cast<std::size_t>(is * is * 3), nullptr}
+        {"pixel_values", {1, 3, is, is}, 0, nullptr,
+         sai::inference::TensorDataType::Unknown}
     };
     std::vector<sai::inference::TensorBinding> outputs = {
-        {"last_hidden_state", {1, gs * gs + 1, ed},
-         output_floats * sizeof(float), nullptr}
+        {"last_hidden_state", {1, gs * gs + 1, ed}, 0, nullptr,
+         sai::inference::TensorDataType::Unknown}
     };
     auto load_result = engine->Load(engine_path, std::move(inputs), std::move(outputs));
     if (!load_result) {
@@ -111,10 +110,11 @@ inline auto CreateClipGlobalEmbedder(
     auto engine = std::make_shared<TensorRtEngine>(0);
     std::vector<TensorBinding> inputs = {
         {"pixel_values", {1, 3, static_cast<long>(image_size), static_cast<long>(image_size)},
-         image_size * image_size * 3, nullptr},
+         0, nullptr, sai::inference::TensorDataType::Unknown},
     };
     std::vector<TensorBinding> outputs = {
-        {"features", {1, static_cast<long>(embed_dim)}, embed_dim * sizeof(float), nullptr},
+        {"features", {1, static_cast<long>(embed_dim)}, 0, nullptr,
+         sai::inference::TensorDataType::Unknown},
     };
     auto load_result = engine->Load(engine_path, std::move(inputs), std::move(outputs));
     if (!load_result) return tl::make_unexpected(load_result.error());

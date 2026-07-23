@@ -11,11 +11,48 @@
 
 namespace sai::inference {
 
+enum class TensorDataType : std::uint8_t {
+    Unknown = 0,
+    Float16,
+    Float32,
+    Int8,
+    Int32,
+    Bool,
+};
+
+[[nodiscard]] constexpr auto TensorDataTypeSize(TensorDataType dtype) noexcept
+    -> std::size_t {
+    switch (dtype) {
+        case TensorDataType::Float16: return 2;
+        case TensorDataType::Float32: return 4;
+        case TensorDataType::Int8: return 1;
+        case TensorDataType::Int32: return 4;
+        case TensorDataType::Bool: return 1;
+        case TensorDataType::Unknown: return 0;
+    }
+    return 0;
+}
+
 struct TensorBinding {
     std::string name;
     std::vector<std::int64_t> shape;
     std::size_t size_bytes = 0;
     void* device_ptr = nullptr;
+    TensorDataType dtype = TensorDataType::Unknown;
+
+    [[nodiscard]] auto ElementCount() const noexcept -> std::size_t {
+        if (shape.empty()) return 0;
+        std::size_t count = 1;
+        for (auto extent : shape) {
+            if (extent <= 0) return 0;
+            count *= static_cast<std::size_t>(extent);
+        }
+        return count;
+    }
+
+    [[nodiscard]] auto ExpectedSizeBytes() const noexcept -> std::size_t {
+        return ElementCount() * TensorDataTypeSize(dtype);
+    }
 };
 
 class IInferenceEngine : public Object {
