@@ -9,12 +9,13 @@
 
 **Surface AI** 是一套从零设计的 C++20 工业表面缺陷检测框架，覆盖 **采集 → 成像 → AI 推理 → 异常检测 → 知识检索 → 规则决策 → 贝叶斯自动调优 → 可视化** 的完整链路。框架不与任何具体产品耦合，产品仅作为元数据注入。
 
-- 🧠 **PatchCore + PCA 双检测器**，FAISS 向量检索引擎，GPU 加速
+- 🧠 **PatchCore + PCA 双检测器**，FAISS 精确 FlatL2 检索，CPU/CUDA 双路径
+- 🎯 **精确贪心 Coreset**：增量最远点采样，固定首点、确定性 tie-break，保持 PatchCore 覆盖语义
 - 📚 **SQLite 知识图谱** + FAISS 混合检索（向量 + 元数据双路径 + RRF/加权融合）
 - ⚖️ **自研 AST 规则引擎** + 决策树推理器，YAML 存储，全链路可溯源
-- 🔄 **在线自进化**：多信号共识门控 + 新颖性检测 + 双缓冲热更新 FeatureBank，支持多 SKU/多工位独立进化
+- 🔄 **在线自进化**：多信号共识门控 + 新颖性检测 + 不可变 FeatureBank 快照更新，支持多 SKU/多工位独立进化
 - 🎯 **贝叶斯自动调优**（GP + EI），离线优化 detection 参数，熔断自动回滚
-- ⚡ **C++20 协程** + 无锁 SPSC 队列 + CUDA Stream 异步推理，工业级吞吐
+- ⚡ **C++20 协程** + 无锁 SPSC 队列 + CUDA Stream 异步推理；训练按机位流式处理，减少峰值内存
 - 🖥️ **Qt6/QML 工业深色 UI**，4 屏仪表板（Pipeline / 检测 / 仪表板 / 配置）
 - 🐳 **Docker 一键部署**，systemd 守护，OPC UA 工业协议
 
@@ -35,7 +36,7 @@ graph TB
 
     subgraph L3["🧠 AI 推理"]
         Engine["IInferenceEngine<br/>TensorRT / Mock"]
-        Adapt["模型适配器<br/>DINOv3 · CLIP"]
+        Adapt["模型适配器<br/>DINOv2/v3 · CLIP"]
         Emb["IEmbedder<br/>PatchEmbedder · GlobalEmbedder"]
         Det["IDetector<br/>PatchCore · PcaDetector"]
         Engine --> Adapt --> Emb --> Det
@@ -43,7 +44,7 @@ graph TB
 
     subgraph L4["📚 知识 & 检索"]
         KG["KnowledgeGraph<br/>SQLite 属性图"]
-        VP["VectorPath<br/>FAISS TopK / Range"]
+        VP["VectorPath<br/>FAISS FlatL2 TopK / Range"]
         MP["MetadataPath<br/>SQLite 过滤"]
         Fusion["IScoreFusion<br/>Weighted · RRF"]
         KG --> VP & MP --> Fusion
@@ -108,7 +109,7 @@ graph TB
                                          ┌────────────▼───────────────┐        │
                                          │   CoresetEvolution (后台)   │◀───────┘
                                          │   多信号共识 · 新颖性检测   │  result callback
-                                         │   双缓冲热更新 FeatureBank   │  per-BankKey 路由
+                                         │   FeatureBank 快照更新      │  per-BankKey 路由
                                          └────────────────────────────┘
 ```
 
@@ -116,13 +117,13 @@ graph TB
 |---|------|------------|---------|
 | 1 | Capture | — → `RawImage` | 相机帧抓取（GenICam / FakeCamera），支持硬件/软件/自由运行触发模式 |
 | 2 | Preprocess | `RawImage` → `SurfaceImage` | 去拜耳、白平衡、缩放、ROI 提取、HDR 合成 |
-| 3 | Inference | `SurfaceImage` → `Embedding` | DINOv3 补丁特征 / CLIP 全局特征提取（TensorRT） |
+| 3 | Inference | `SurfaceImage` → `Embedding` | DINOv2/v3 补丁特征 / CLIP 全局特征提取（TensorRT） |
 | 4 | Detect | `Embedding` → `DetectionResult` | PatchCore k-NN 异常评分 / PCA 子空间建模，BankKey(surface_id, position_id) 多工位路由 |
 | 5 | RuleEval | `DetectionResult` → `FactBase` + `ResolvedRules` | 构建事实库（检测结果 + KG 路径解析 + FAISS 向量检索），AST 规则评估，冲突消解 |
 | 6 | Reason | `FactBase` + `ResolvedRules` → `ReasoningResult` | 决策树遍历，加权 Sigmoid 评分，生成裁决（OK/NG/WARN）+ 证据链 + 全链路溯源 |
 | 7 | Export | `ReasoningResult` → JSON + PPM | 检测报告输出，缺陷区域标注图，回调 UI 更新 |
 
-**后台自进化闭环：** 每帧检测完成后，结果回调根据 `(surface_id, position_id)` 路由到对应工位的 `CoresetEvolution` 实例 → `AssessAndOffer` 评估帧的正常性（5 路信号共识）和新颖性（覆盖率 < 60%）→ `CandidateBuffer` 累积候选帧 → 后台线程合并 + 贪心 coreset 重选 + 双缓冲热切换 `FeatureBank` → 写入 `KnowledgeGraph` 演化记录。单工位和 Multi-Position 模式均支持。
+**后台自进化闭环：** 每帧检测完成后，结果回调根据 `(surface_id, position_id)` 路由到对应工位的 `CoresetEvolution` 实例 → `AssessAndOffer` 评估帧的正常性（5 路信号共识）和新颖性（覆盖率 < 60%）→ `CandidateBuffer` 累积候选帧 → 后台线程合并 + 精确贪心 coreset 重选 + FeatureBank 快照更新 → 写入 `KnowledgeGraph` 演化记录。单工位和 Multi-Position 模式均支持，逐帧上下文随 `FrameContext` 传递。
 
 **后台调优闭环（离线）：** `TuningScheduler` 周期性从 `KnowledgeGraph` 读取历史检测记录 → 用高斯过程 + 预期改进（GP+EI）在 `TuningSpace` 中寻优 → 产出最优参数向量。参数热重载接口（`ParameterApplier`）已预留但尚未与 detection 参数联动。
 
@@ -131,7 +132,8 @@ graph TB
 ## 功能特性
 
 ### AI 检测
-- **PatchCore**：coreset k-NN 异常检测，PCA 白化，自适应阈值（目标 FPR），混合 k-NN×PCA 评分
+- **PatchCore**：coreset k-NN 异常检测，精确 FlatL2 检索，支持 PCA 白化、自适应阈值（目标 FPR）和混合 k-NN×PCA 评分
+- **精确 Coreset FPS**：训练主路径在完整候选向量集上执行增量贪心最远点采样，CPU/CUDA 结果保持确定性；重复向量自动早停
 - **PcaDetector**：PCA 子空间建模，4 种评分（重建误差 / 马氏 / 余弦 / 欧几里得）
 - **后处理**：高斯平滑、双线性上采样、4-连通分量标记、区域提案排序
 - **镜面反射过滤**：四线索融合（亮度/去饱和度/LoG曲率/过曝剪切），抑制光泽表面伪影
@@ -139,21 +141,28 @@ graph TB
 
 ### 多 SKU & 在线自进化
 - **BankKey 路由**：`(surface_id, position_id)` 键值路由，每个产品/工位独立 PatchCore 实例 + FeatureBank
-- **CoresetEvolution**：后台线程周期性评估每帧正常性/新颖性，双缓冲热更新 FeatureBank
+- **CoresetEvolution**：后台线程周期性评估每帧正常性/新颖性，构建完成后更新 FeatureBank 快照
 - **NoveltyFilter**：覆盖率阈值判定（< 60% 为新类型），触发 coreset 扩展
 - **CandidateBuffer**：有界缓冲累积候选帧（max 50 帧 / 50000 patch），双触发条件（20 帧或 20000 patch）
 - **NormalityScorer**：基于 FeatureBank 自查询的 P50/P95/P99/均值/标准差统计量
 - **安全门控**：正常性分数 < 0.80 时跳过进化，防止缺陷帧污染 coreset
 
+### Coreset 训练与性能
+- **按机位流式训练**：一次只保留当前机位的连续 `float32` 候选向量，完成选择、保存后立即释放
+- **公共向量入口**：训练、bootstrap 和在线演化统一使用 `BuildGreedyFromVectors`，避免 Embedding 包装和重复拼接
+- **阶段计时**：输出 import、preprocess、HtoD、inference、DtoH、FPS、save 和 total 耗时，便于定位瓶颈
+- **训练产物**：每个 `pos_<id>.bin` 同步生成 `pos_<id>.bin.profile.yaml`，供在线自进化加载
+
 ### 特征提取
-- **DINOv3**（ViT 补丁特征）、**CLIP**（全局 [CLS] 特征）
+- **DINOv2/v3 Adapter**（ViT 补丁特征）、**CLIP**（全局 [CLS] 特征）
+- DINO 输入统一为 RGB8 HWC，适配器转换为 NCHW FP16/FP32，并执行 `/255` 与 ImageNet mean/std 归一化；下游 patch 特征统一为 float32
 - 多层特征聚合（Concat / Mean / Group），显著性掩码（Percentile / Otsu）
 - PCA 降维 + 球化白化 + 空间池化（Avg / Max），流式 PCA 支持大数据集
 - 双存储 Embedding（GPU/CPU），零拷贝共享指针，LRU 特征缓存
 
 ### 知识 & 检索
 - **知识图谱**：SQLite 属性图，节点 + 边 + JSON 属性，最大深度 3 遍历
-- **向量检索**：FAISS TopK / Range / Hybrid 三种模式，GPU 加速
+- **向量检索**：VectorPath 支持 FAISS TopK / Range / Hybrid；在线 FeatureBank 固定使用精确 FlatL2，GPU FAISS 为可选能力
 - **元数据检索**：SQLite 结构化过滤（=、≠、<、>、Like、In）
 - **混合检索**：Weighted 线性加权 / RRF 倒数排名融合，双路径编排
 - 知识演化变更日志，SAVEPOINT 快照，统一 KnowledgeStore 门面
@@ -207,8 +216,13 @@ graph TB
 # 1. 构建镜像
 docker compose build
 
-# 2. 训练 Coreset（使用正常样本构建特征库）
-docker compose --profile train run seat_aoi_train
+# 2. 使用 YAML 数据集清单训练 Coreset
+docker run --runtime=nvidia \
+    -v "$PWD/datasets:/data/datasets:ro" \
+    -v "$PWD/resources/coresets:/app/resources/coresets" \
+    surface-ai:latest --train \
+    --dataset /data/datasets/normal.yaml \
+    --coreset-output /app/resources/coresets/
 
 # 3. 批量检测
 docker compose --profile detect up seat_aoi_detect
@@ -217,15 +231,20 @@ docker compose --profile detect up seat_aoi_detect
 ### 运行模式
 
 ```bash
-# 训练模式：从正常样本图像目录构建 Coreset
-./seat_aoi train \
-    --image-dir /data/normal/ \
+# 训练模式：从 YAML 数据集清单构建 Coreset
+./seat_aoi --train \
+    --dataset /data/normal/dataset.yaml \
     --coreset-max-samples 10000 \
-    --coreset-output /app/resources/coresets/default.bin
+    --coreset-output /app/resources/coresets/
 
 # 批量检测模式（Headless）：处理待检图像目录，输出 JSON 报告
 ./seat_aoi --image-dir /data/samples/ \
     --coreset /app/resources/coresets/default.bin \
+    --output-dir /data/results/
+
+# 多机位检测：加载 position -> .bin 的 YAML manifest
+./seat_aoi --image-dir /data/samples/ \
+    --coreset-manifest /app/resources/coresets/manifest.yaml \
     --output-dir /data/results/
 
 # GUI 实时模式：FakeCamera 模拟帧源，全链路可视化
@@ -237,19 +256,37 @@ docker compose --profile detect up seat_aoi_detect
 
 ### Docker 服务说明
 
-`docker-compose.yml` 定义了两个活跃服务，均使用 `nvidia` runtime：
+`docker-compose.yml` 定义了三个服务，均使用 `nvidia` runtime：
 
 | 服务 | Profile | 用途 |
 |------|---------|------|
-| `seat_aoi_train` | `--profile train` | 一次性训练，生成 coreset 文件 |
+| `seat_aoi_train` | `--profile train` | 训练服务模板；需挂载 YAML 数据集清单并同步 command |
 | `seat_aoi_detect` | `--profile detect` | 批量检测，处理完退出 |
+| `seat_aoi_daemon` | `--profile daemon` | 相机 + OPC UA 持续检测 |
 
 ```bash
-# 训练
-docker compose --profile train run seat_aoi_train
-
 # 批量检测
 docker compose --profile detect up seat_aoi_detect
+
+# 持续检测守护进程
+docker compose --profile daemon up seat_aoi_daemon
+```
+
+> 训练模式需要 YAML 数据集清单；`--dataset` 是训练入口的正式参数。清单至少包含 `surface` 和 `images`，每项可指定 `path`、`position`、`light` 和 `expected`。`--coreset-output` 指定输出目录；训练会按机位生成 `pos_<id>.bin`、对应的 `.bin.profile.yaml` 以及 manifest YAML。
+>
+> 注意：`docker-compose.yml` 中的训练服务仍是旧的目录参数模板；使用 Docker 训练时请按上面的 `docker run` 命令挂载并传入 YAML 清单。
+
+示例：
+
+```yaml
+surface: seat_leather
+images:
+  - path: images/normal_001.png
+    position: 1
+    light: 0
+  - path: images/normal_002.png
+    position: 1
+    light: 1
 ```
 
 ---
@@ -277,9 +314,13 @@ export VCPKG_ROOT=~/vcpkg
 ### 构建 & 测试
 
 ```bash
-cmake --preset linux           # 配置
-cmake --build --preset linux   # 构建
-ctest --preset linux           # 运行全部测试
+cmake --preset linux                 # Debug 配置
+cmake --build --preset linux -j      # Debug 构建
+ctest --preset linux                 # Debug 全部测试
+
+cmake --preset linux-release         # Release 配置
+cmake --build --preset linux-release -j
+ctest --preset linux-release
 
 # 按名称过滤
 ctest --preset linux -R "tuning"
@@ -287,9 +328,11 @@ ctest --preset linux -R "tuning"
 # 运行单个测试用例
 cd build/linux && ctest -R "BayesianOptimizer.FindsMinimumOfQuadratic" --output-on-failure
 
-# 直接运行测试二进制（支持 --gtest_filter）
-cd build/linux && ./tests/detection/sai_detection_test --gtest_filter="PatchCore*"
+# 直接运行测试二进制（支持 --gtest_filter；具体目标名以构建目录为准）
+cd build/linux && ./tests/detection/sai_patch_core_test --gtest_filter="PatchCore*"
 ```
+
+CUDA、TensorRT 和 FAISS GPU 为目标 Linux 环境的可选能力。CMake 只有在检测到 CUDA 编译器时才启用 `.cu` 源文件；无 CUDA 环境保留 CPU 参考路径。
 
 ---
 
@@ -301,7 +344,7 @@ cd build/linux && ./tests/detection/sai_detection_test --gtest_filter="PatchCore
 | 并发模型 | **C++20 Coroutines** + 固定 WorkerPool | GPU 通过 CUDA Stream + callback 恢复协程 |
 | 错误处理 | **`tl::expected`**（别名 `Result<T>`） | 默认返回 `Result<T>`；异常仅用于构造/初始化失败 |
 | 推理后端 | **TensorRT** | FP16/INT8、动态 shape、多 GPU |
-| 向量检索 | **FAISS** | 进程内检索，可选 faiss-gpu |
+| 向量检索 | **FAISS IndexFlatL2** | 在线 FeatureBank 保持精确检索，可选 faiss-gpu |
 | 规则引擎 | **自研 AST 表达式引擎** + YAML | 不用 Lua — 避免任意代码执行风险 |
 | 知识图谱 | **SQLite**（进程内属性图） | SAVEPOINT 快照，演化变更日志 |
 | 配置格式 | **YAML**（yaml-cpp） | Pipeline / 规则 / 决策树 / 调优参数统一 YAML |
@@ -317,7 +360,7 @@ cd build/linux && ./tests/detection/sai_detection_test --gtest_filter="PatchCore
 
 ## 模块总览
 
-19 个模块，每个模块对应一个命名空间 `sai::<module>`，编译为独立静态库 `sai_<module>`。
+18 个模块，每个模块对应一个命名空间 `sai::<module>`，编译为独立静态库 `sai_<module>`。
 
 | # | 模块 | 核心职责 |
 |---|------|---------|
@@ -329,7 +372,7 @@ cd build/linux && ./tests/detection/sai_detection_test --gtest_filter="PatchCore
 | 6 | `device` | IDevice/ICamera/ILightController 硬件抽象、RingBuffer、FakeCamera |
 | 7 | `image` | Image/RawImage/SurfaceImage/GpuImage 类型体系、ROI、预处理链 |
 | 8 | `io` | IImporter/BasicImporter、IExporter/JsonExporter |
-| 9 | `inference` | IInferenceEngine（TensorRT/Mock）、DINOv3/CLIP/SAM2 适配器、多层特征聚合 |
+| 9 | `inference` | IInferenceEngine（TensorRT/Mock）、DINOv2/v3、CLIP、SAM2 适配器、多层特征聚合 |
 | 10 | `embedding` | Embedding（double 存储）、PatchEmbedder/GlobalEmbedder、DimensionReducer/PCA、FeatureCache |
 | 11 | `detection` | PatchCore、PcaDetector、FeatureBank（FAISS）、CoresetEvolution、MultiSignalConsensus、SpecularFilter |
 | 12 | `knowledge` | KnowledgeGraph（SQLite 属性图）、KnowledgeEvolution、KnowledgeSnapshot、KnowledgeStore |
@@ -340,7 +383,7 @@ cd build/linux && ./tests/detection/sai_detection_test --gtest_filter="PatchCore
 | 17 | `pipeline` | Pipeline（YAML 驱动 7-Stage）、PipelineBuilder、StageQueue\<T\>（SPSC 无锁）、Scheduler |
 | 18 | `visualization` | PipelineViewModel、InspectionViewModel、DashboardViewModel、FrameProvider、QML 4 屏 UI |
 
-> 注：原独立的 `scheduler` 模块（#18）已合并入 `pipeline` 模块。模块总数 18 个。
+> 注：原独立的 `scheduler` 模块已合并入 `pipeline` 模块，当前模块总数为 18 个。
 
 ---
 
@@ -348,6 +391,7 @@ cd build/linux && ./tests/detection/sai_detection_test --gtest_filter="PatchCore
 
 ```
 surface-ai/
+├── AGENTS.md                               # 贡献、构建、测试与提交规范
 ├── CMakePresets.json                       # CMake preset（Linux x64, vcpkg）
 ├── vcpkg.json                              # vcpkg 清单
 ├── vcpkg-overlays/                         # 自定义 vcpkg ports（FAISS w/ GPU）
@@ -373,6 +417,8 @@ surface-ai/
 │
 ├── include/sai/                            # 公开头文件（18 个模块）
 ├── src/                                    # 实现文件 + per-module CMakeLists.txt
+│   ├── detection/greedy_coreset_cuda.cu    # CUDA 精确贪心 FPS
+│   └── inference/dino_v3_adapter.cu        # DINO CUDA 预处理与输出转换
 └── tests/                                  # GoogleTest 套件（模块测试 + 集成测试）
 ```
 
