@@ -46,10 +46,6 @@ add_library(sai::inference ALIAS sai_inference)
 target_include_directories(sai_inference PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(sai_inference PUBLIC sai::core)
 if(SAI_CUDA_ENABLED AND NVINFER_INCLUDE_DIR)
-    # dino_v3_adapter.cu includes ErrorInfo, which uses std::source_location.
-    # Keep the CUDA frontend in C++20 without asking CMake 3.21 to resolve the
-    # unavailable cuda_std_20 feature mapping.
-    sai_enable_cuda_cxx20(sai_inference)
     target_link_libraries(sai_inference PUBLIC CUDA::cudart)
     target_include_directories(sai_inference PRIVATE ${NVINFER_INCLUDE_DIR})
 

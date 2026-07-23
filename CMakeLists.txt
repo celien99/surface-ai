@@ -18,16 +18,18 @@ if(CUDAToolkit_FOUND)
     endif()
 
     enable_language(CUDA)
+    # CMake 3.21 knows the CUDA20 dialect but its NVIDIA compiler module does
+    # not define the corresponding nvcc flag. Define the documented NVCC flag
+    # here so transitive cxx_std_20 requirements can be resolved for targets
+    # containing CUDA sources instead of failing during generation.
+    if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA")
+        set(CMAKE_CUDA20_STANDARD_COMPILE_OPTION "--std=c++20")
+        set(CMAKE_CUDA20_EXTENSION_COMPILE_OPTION "--std=c++20")
+    endif()
+    set(CMAKE_CUDA_STANDARD 20)
+    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
     set(SAI_CUDA_ENABLED ON)
 endif()
-
-# CMake 3.21 does not know the CUDA C++20 flag for NVCC, despite NVCC accepting
-# it. Apply the flag directly to CUDA sources instead of using CUDA_STANDARD,
-# whose feature resolution fails during generation on that CMake version.
-function(sai_enable_cuda_cxx20 target)
-    target_compile_options(${target} PRIVATE
-        "$<$<COMPILE_LANGUAGE:CUDA>:--std=c++20>")
-endfunction()
 
 # GCC on x86-64 requires -latomic for 16-byte std::atomic operations even when
 # -mcx16 is active (libstdc++ ABI limitation).  Link it globally so that any
