@@ -18,13 +18,16 @@ if(CUDAToolkit_FOUND)
     endif()
 
     enable_language(CUDA)
-    # ErrorInfo and CUDA-facing headers use C++20 facilities such as
-    # std::source_location. REQUIRED makes CMake reject an unsupported nvcc
-    # during configuration instead of silently compiling CUDA in an older mode.
-    set(CMAKE_CUDA_STANDARD 20)
-    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
     set(SAI_CUDA_ENABLED ON)
 endif()
+
+# CMake 3.21 does not know the CUDA C++20 flag for NVCC, despite NVCC accepting
+# it. Apply the flag directly to CUDA sources instead of using CUDA_STANDARD,
+# whose feature resolution fails during generation on that CMake version.
+function(sai_enable_cuda_cxx20 target)
+    target_compile_options(${target} PRIVATE
+        "$<$<COMPILE_LANGUAGE:CUDA>:--std=c++20>")
+endfunction()
 
 # GCC on x86-64 requires -latomic for 16-byte std::atomic operations even when
 # -mcx16 is active (libstdc++ ABI limitation).  Link it globally so that any

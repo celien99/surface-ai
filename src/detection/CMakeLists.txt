@@ -54,6 +54,10 @@ target_include_directories(sai_detection PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(sai_detection PUBLIC sai::core sai::embedding sai::infra faiss OpenMP::OpenMP_CXX yaml-cpp::yaml-cpp
                       PRIVATE sai::knowledge)
 if(SAI_CUDA_ENABLED)
+    # greedy_coreset_cuda.cu includes ErrorInfo, which uses
+    # std::source_location. See sai_enable_cuda_cxx20() in the root CMake file
+    # for why this is a direct CUDA option rather than CUDA_STANDARD.
+    sai_enable_cuda_cxx20(sai_detection)
     target_link_libraries(sai_detection PUBLIC CUDA::cudart)
     target_compile_definitions(sai_detection PUBLIC SAI_CUDA_ENABLED)
 endif()
