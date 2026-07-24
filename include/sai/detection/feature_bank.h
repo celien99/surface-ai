@@ -26,7 +26,8 @@ namespace sai::detection {
 //
 // 设计决策：
 // - 使用 FAISS CPU 后端（IndexFlatL2）作为可移植路径，在 Linux x64 上构建和测试。
-// - GPU 路径（feature_bank_cuda.cpp）通过 CMAKE 门控编译，仅在 CUDA SDK 可用时启用。
+// - GPU 加速路径在本文件的实现中通过 CMake 门控，仅在 CUDA SDK 与 FAISS GPU
+//   clone API 可用时启用。
 // - 构造为 move-only——FeatureBank 持有 FAISS Index 所有权，禁止拷贝。
 // - LoadFromFile 读取原始 float32 little-endian 二进制文件（N×dim 矩阵），不依赖序列化格式。
 class FeatureBank final {

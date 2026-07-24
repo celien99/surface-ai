@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <exception>
 #include <fstream>
 #include <limits>
 #include <memory>
@@ -13,6 +14,10 @@
 #include <string_view>
 
 #include <faiss/IndexFlat.h>
+#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
+#include <faiss/gpu/GpuCloner.h>
+#include <faiss/gpu/StandardGpuResources.h>
+#endif
 
 namespace sai::detection {
 
@@ -341,6 +346,42 @@ auto FeatureBank::BuildFromVectors(const float* vectors,
     bank.Rebuild(vectors, count, dim);
     return bank;
 }
+
+#if defined(SAI_CUDA_ENABLED) && defined(SAI_FAISS_GPU_ENABLED)
+auto FeatureBank::ToGpu(int device) noexcept -> Result<void> {
+    if (!index_) {
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Detection_FeatureBankLoadFailed,
+            "FeatureBank::ToGpu: no index loaded",
+            std::source_location::current(),
+        });
+    }
+
+    if (on_gpu_) return {};
+
+    try {
+        gpu_resources_ = std::make_unique<faiss::gpu::StandardGpuResources>();
+        gpu_resources_->setTempMemory(64 * 1024 * 1024);
+        gpu_index_ = std::unique_ptr<faiss::Index>(
+            faiss::gpu::index_cpu_to_gpu(gpu_resources_.get(), device, index_.get()));
+        on_gpu_ = true;
+        return {};
+    } catch (const std::exception& e) {
+        gpu_index_.reset();
+        gpu_resources_.reset();
+        on_gpu_ = false;
+        return tl::make_unexpected(ErrorInfo{
+            ErrorCode::Detection_FeatureBankLoadFailed,
+            std::string("FeatureBank::ToGpu failed: ") + e.what(),
+            std::source_location::current(),
+        });
+    }
+}
+
+auto FeatureBank::IsOnGpu() const noexcept -> bool {
+    return on_gpu_;
+}
+#endif
 
 FeatureBank::FeatureBank(FeatureBank&&) noexcept = default;
 auto FeatureBank::operator=(FeatureBank&&) noexcept -> FeatureBank& = default;

@@ -40,7 +40,6 @@ if(SAI_CUDA_ENABLED)
     endif()
     if(SAI_FAISS_GPU_FOUND)
         message(STATUS "CUDA + FAISS GPU found — enabling GPU FeatureBank")
-        list(APPEND SAI_DETECTION_SOURCES feature_bank_cuda.cpp)
     else()
         message(WARNING "CUDA found but the configured faiss target has no GPU clone API — "
                         "GPU FeatureBank disabled; CUDA greedy coreset remains enabled.")
